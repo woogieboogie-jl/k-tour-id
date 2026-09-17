@@ -59,7 +59,7 @@ export async function cxStart(opts: { operationId: string; mobile: boolean }): P
   const c = hkConfig().cx
   const expiresAt = plusMs(HK_TTL.identityHandoffMs)
   if (c.mode === "mock") {
-    return { handoff: { kind: "mock", label: "SIMULATION · Mobile ID sample", expiresAt } }
+    return { handoff: { kind: "mock", label: "Mobile ID sample", expiresAt } }
   }
   const trans = await cxPost("/oacx/api/v1.0/trans", { serviceType: "MID", provider: `${c.provider}_v1.5`, contentInfo: { signType: "ENT_MID" }, extraParams: { zkpType: c.zkpType }, compareCI: false, reference: opts.operationId })
   const token = String(trans.token ?? ""), txId = String(trans.txId ?? "")

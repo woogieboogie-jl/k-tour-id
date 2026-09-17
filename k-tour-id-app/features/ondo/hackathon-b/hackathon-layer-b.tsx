@@ -12,7 +12,7 @@ import { useOndoB } from "../shared/state/ondo-b-provider"
 import { ONDO_MODAL_PRIORITY } from "../shared/ui/modal-layer-priority"
 import { useDocumentScrollLock, useModalIsolation } from "../shared/ui/use-modal-isolation"
 import { HACKATHON_ENABLED, HACKATHON_DEMO_ENTRY, HACKATHON_OPEN_EVENT_B, manualHackathonDetail, openHackathonVenueB, readPendingHackathon, writePendingHackathon, type HackathonOpenDetail } from "./hackathon-campaign"
-import { ApiError, api, beginZkLogin, canonicalJson, clearJourneySecrets, createDemoSigner, ensureHolderKey, fetchCxBrowserQr, CX_BROWSER_QR, type CxBrowserQr, finishZkLogin, holderSign, readSigner, sha256Hex, signPersonalMessage, signTransactionBytes, fromBase64, type EntitlementInfo, type PublicConfig, type StoredSigner } from "./hackathon-client"
+import { ApiError, api, beginZkLogin, canonicalJson, clearJourneySecrets, createDemoSigner, ensureHolderKey, finishZkLogin, holderSign, readSigner, sha256Hex, signPersonalMessage, signTransactionBytes, fromBase64, type EntitlementInfo, type PublicConfig, type StoredSigner } from "./hackathon-client"
 import styles from "./hackathon-b.module.css"
 
 type Locale = "ko" | "en" | "ja"
@@ -21,11 +21,8 @@ const T = {
     title: "체험 혜택", sub: "신원 확인 → 패스 → 혜택 확인 → 사용", close: "닫기", back: "같은 장소로 돌아가기",
     steps: ["동의", "신원 확인", "K-Tour 패스", "패스 제시", "혜택 제안", "실행 승인", "실행", "사용 확정", "기록"],
     consentTitle: "이용 조건 확인", consentBody: "해커톤 체험용 비금전 혜택 1회입니다. 실제 결제·예약·매장의 제공 의무가 없고, 신원 확인 결과는 혜택 자격 판단에만 쓰이며 신분증·패스 원문은 체인에 올리지 않습니다.",
-    consentCheck: "위 내용을 확인했고 이 장소의 체험 혜택 1회를 진행합니다.", start: "확인하고 시작", startIdentity: "모바일 신분증으로 확인", mockApprove: "샘플 확인 승인", mockCancel: "취소 결과 보기", mockFail: "실패 결과 보기",
-    identityWait: "모바일 신분증 앱에서 확인을 마치면 아래 버튼으로 결과를 가져옵니다.", fetchResult: "결과 확인", sampleInstead: "샘플 결과로 계속",
-    cxQrTitle: "외부 신분증 확인 QR",
-    cxQrNote: "외부 서비스에 QR을 요청합니다. QR 표시만으로 신원 확인이 완료되지는 않으며, 이 화면의 후속 체험은 샘플로 기록됩니다.",
-    cxQrLoad: "확인 QR 요청", cxQrFail: "현재 QR을 받지 못했어요. 연결 상태나 서비스 설정을 확인해 주세요.",
+    consentCheck: "위 내용을 확인했고 이 장소의 체험 혜택 1회를 진행합니다.", start: "확인하고 시작", startIdentity: "모바일 신분증으로 확인", mockApprove: "샘플 확인 승인",
+    identityWait: "모바일 신분증 앱에서 확인을 마치면 아래 버튼으로 결과를 가져옵니다.", fetchResult: "결과 확인",
     sampleNote: "샘플 결과로 확인 과정을 체험합니다. 실제 신분증 확인 결과가 아니며 샘플로 기록됩니다.", issuing: "K-Tour 패스를 발급하고 보관 중…", present: "패스 제시", deny: "제시하지 않기",
     presentBody: "이 장소의 혜택에 필요한 확인 결과와 패스 유효기간만 제시합니다.", propose: "혜택 제안 받기", approveTitle: "진행 범위 확인", approveBody: "허용한 장소·혜택·횟수·기한을 확인해 주세요. 아래 범위의 1회 진행에만 동의합니다.",
     approveCheck: "이 범위에 동의하고 한 번만 진행하도록 승인합니다.", signerZk: "Google로 계속", signerDemo: "샘플 계정으로 계속", signDelegate: "한 번만 진행하도록 승인", runAgent: "혜택 진행", redeem: "확인하고 사용하기",
@@ -36,11 +33,8 @@ const T = {
     title: "Experience perk", sub: "Identity → pass → perk → use", close: "Close", back: "Return to this place",
     steps: ["Consent", "Identity", "K-Tour pass", "Present", "Proposal", "Approve", "Execute", "Confirm", "Record"],
     consentTitle: "Before you start", consentBody: "One non-financial hackathon perk. No payment, reservation or merchant obligation. The identity result is used only for eligibility; ID and pass originals never go on-chain.",
-    consentCheck: "I understand and want to use this place's one-time perk.", start: "Confirm and start", startIdentity: "Check with Mobile ID", mockApprove: "Approve sample check", mockCancel: "Sample cancellation", mockFail: "Sample failure",
-    identityWait: "Finish in the Mobile ID app, then fetch the result.", fetchResult: "Fetch result", sampleInstead: "Continue with a sample result",
-    cxQrTitle: "External identity QR",
-    cxQrNote: "Request a QR from the external service. Displaying it does not confirm identity; continuing with this experience is recorded as a sample.",
-    cxQrLoad: "Request identity QR", cxQrFail: "The QR is unavailable. Check the connection or service settings.",
+    consentCheck: "I understand and want to use this place's one-time perk.", start: "Confirm and start", startIdentity: "Check with Mobile ID", mockApprove: "Approve sample check",
+    identityWait: "Finish in the Mobile ID app, then fetch the result.", fetchResult: "Fetch result",
     sampleNote: "Explore the check using a sample result. This is not a real identity check and is recorded as a sample.", issuing: "Issuing and storing your K-Tour pass…", present: "Present pass", deny: "Don't present",
     presentBody: "Share only the check result and pass validity needed for this place's perk.", propose: "Get a perk proposal", approveTitle: "Confirm the scope", approveBody: "Review the place, perk, use limit and expiry. You are approving one action within this scope.",
     approveCheck: "I agree to this scope and approve one action.", signerZk: "Continue with Google", signerDemo: "Continue with sample account", signDelegate: "Approve one action", runAgent: "Continue with perk", redeem: "Confirm and use",
@@ -51,9 +45,8 @@ const T = {
     title: "体験特典", sub: "本人確認 → パス → 特典確認 → 利用", close: "閉じる", back: "同じ場所に戻る",
     steps: ["同意", "本人確認", "K-Tourパス", "パスの提示", "特典の提案", "承認", "実行", "利用確認", "記録"],
     consentTitle: "利用条件の確認", consentBody: "ハッカソン体験用の金銭を伴わない1回限りの特典です。実際の決済・予約や店舗の提供義務はありません。本人確認の結果は利用資格の判断にのみ使います。",
-    consentCheck: "条件を確認し、この場所の特典を1回体験します。", start: "確認して始める", startIdentity: "モバイル身分証で確認", mockApprove: "サンプル確認を承認", mockCancel: "キャンセルを体験", mockFail: "失敗を体験",
-    identityWait: "身分証アプリで確認後、下のボタンで結果を取得してください。", fetchResult: "結果を確認", sampleInstead: "サンプル結果で続ける",
-    cxQrTitle: "外部の本人確認QR", cxQrNote: "外部サービスにQRをリクエストします。QRの表示だけでは本人確認は完了しません。この画面で続ける体験はサンプルとして記録されます。", cxQrLoad: "確認QRをリクエスト", cxQrFail: "QRを取得できません。接続やサービス設定を確認してください。",
+    consentCheck: "条件を確認し、この場所の特典を1回体験します。", start: "確認して始める", startIdentity: "モバイル身分証で確認", mockApprove: "サンプル確認を承認",
+    identityWait: "身分証アプリで確認後、下のボタンで結果を取得してください。", fetchResult: "結果を確認",
     sampleNote: "サンプル結果で体験できます。実際の身分証確認ではなく、サンプルとして記録されます。", issuing: "K-Tourパスを発行・保存中…", present: "パスを提示", deny: "提示しない",
     presentBody: "この場所の特典に必要な確認結果とパスの有効期間だけを提示します。", propose: "特典の提案を受ける", approveTitle: "進める範囲の確認", approveBody: "場所・特典・回数・期限を確認してください。この範囲の1回の操作だけを承認します。",
     approveCheck: "この範囲に同意し、1回だけの操作を承認します。", signerZk: "Googleで続ける", signerDemo: "サンプルアカウントで続ける", signDelegate: "1回だけの操作を承認", runAgent: "特典を進める", redeem: "確認して利用する",
@@ -225,18 +218,9 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   const sampleSeed = op ? `sample-${op.operationId}`.slice(0, 64) : "sample-person-1"
   const approveSample = () => identityComplete({ outcome: "verified", subjectSeed: sampleSeed })
 
-  // Live CX QR requested by the visitor's browser (see hackathon-client).
-  const [cxQr, setCxQr] = useState<CxBrowserQr | null>(null)
-  const [cxQrError, setCxQrError] = useState<string | null>(null)
-  const loadCxQr = () => run("cxqr", async () => {
-    setCxQrError(null)
-    try { setCxQr(await fetchCxBrowserQr()) } catch (e) { setCxQrError(e instanceof Error ? e.message : "unknown"); setCxQr(null) }
-  })
-
   const stepIndex = op ? STEP_OF_PHASE[op.phase] ?? 0 : 0
   const modes = info?.modes ?? config?.modes ?? {}
   const isolated = config?.isolatedMock !== false
-  const tone = (m: string | undefined) => !isolated && (m === "cx" || m === "opendid" || m === "gemini") ? "live" : "sample"
   const stateOf = (i: number) => (op?.status === "cancelled" || op?.status === "failed" || op?.status === "expired" ? (i < stepIndex ? "done" : i === stepIndex ? "blocked" : "todo") : i < stepIndex ? "done" : i === stepIndex ? "current" : "todo")
   const title = useMemo(() => info?.campaign?.title?.[locale] ?? c.title, [info, locale, c.title])
 
@@ -270,36 +254,20 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
 
           {op?.phase === "identity" ? (
             <section className={styles.card}>
-              <h3>{c.steps[1]} <span className={styles.badge} data-tone={tone(modes.cx)}>{!isolated && modes.cx === "cx" ? c.live : c.sample}</span></h3>
+              <h3>{c.steps[1]}</h3>
               {!op.identity?.handoff ? <>
                 <p>{isolated ? c.sampleNote : tr("연결된 신분증 서비스에서 확인을 시작합니다. 결과를 받은 뒤 다음 단계로 진행합니다.", "Start a check with the connected identity service, then retrieve the result.", "接続された身分証サービスで確認後、結果を取得して次に進みます。")}</p>
                 <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={identityStart} data-testid="hackathon-identity-start">{isolated ? tr("샘플 확인 시작", "Start sample check", "サンプル確認を始める") : c.startIdentity}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
               </> : op.identity.handoff.kind === "mock" ? <>
                 <div className={styles.notice}>{c.sampleNote}</div>
-                {CX_BROWSER_QR && !isolated ? (
-                  <section className={styles.card} data-testid="hackathon-cx-browser-qr">
-                    <h3>{c.cxQrTitle} <span className={styles.badge} data-tone="live">{c.live}</span></h3>
-                    {cxQr ? <img className={styles.qr} alt="OmniOne CX QR" src={`data:image/png;base64,${cxQr.qrBase64}`} /> : null}
-                    <div className={styles.notice}>{cxQrError ? c.cxQrFail : c.cxQrNote}</div>
-                    <div className={styles.actions}>
-                      <button type="button" className={styles.secondary} disabled={busy === "cxqr"} onClick={loadCxQr} data-testid="hackathon-cx-qr-load">{busy === "cxqr" ? <span className={styles.spinner} /> : null}{c.cxQrLoad}</button>
-                    </div>
-                  </section>
-                ) : null}
                 <div className={styles.actions}>
                   <button type="button" className={styles.primary} disabled={!!busy} onClick={approveSample} data-testid="hackathon-identity-approve">{busy === "identity" ? <span className={styles.spinner} /> : null}{c.mockApprove}</button>
-                </div>
-                <div className={styles.actions}>
-                  <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => identityComplete({ outcome: "cancelled", subjectSeed: sampleSeed })} data-testid="hackathon-identity-cancel">{c.mockCancel}</button>
-                  <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => identityComplete({ outcome: "failed", subjectSeed: sampleSeed })} data-testid="hackathon-identity-fail">{c.mockFail}</button>
                   <button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button>
                 </div>
               </> : op.identity.handoff.kind === "qr" ? <>
                 <img className={styles.qr} alt="Mobile ID QR" src={`data:image/png;base64,${op.identity.handoff.qrBase64}`} />
                 <p>{c.identityWait}</p>
                 <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={() => identityComplete()}>{c.fetchResult}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
-                <div className={styles.notice}>{c.sampleNote}</div>
-                <div className={styles.actions}><button type="button" className={styles.secondary} disabled={!!busy} onClick={approveSample} data-testid="hackathon-identity-sample">{c.sampleInstead}</button></div>
               </> : <>
                 <div className={styles.actions}>
                   {!isolated && op.identity.handoff.ssPayLink ? <a className={styles.primary} href={op.identity.handoff.ssPayLink}>Samsung Wallet</a> : null}
@@ -308,14 +276,12 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
                 </div>
                 <p>{c.identityWait}</p>
                 <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={() => identityComplete()}>{c.fetchResult}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
-                <div className={styles.notice}>{c.sampleNote}</div>
-                <div className={styles.actions}><button type="button" className={styles.secondary} disabled={!!busy} onClick={approveSample} data-testid="hackathon-identity-sample">{c.sampleInstead}</button></div>
               </>}
             </section>
           ) : null}
 
           {op?.phase === "issuance" ? <section className={styles.card}>
-            <h3>{c.steps[2]} <span className={styles.badge} data-tone={tone(modes.opendid)}>{!isolated && modes.opendid === "opendid" ? c.live : c.sample}</span></h3>
+            <h3>{c.steps[2]}</h3>
             <p>{busy === "issue" ? c.issuing : tr("이 체험에서 사용할 패스를 받아 보관합니다.", "Receive and keep a pass for this experience.", "この体験で使うパスを受け取り、保存します。")}</p>
             <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={issueAndAck} data-testid="hackathon-issue">{busy === "issue" ? <span className={styles.spinner} /> : null}{tr("패스 받기", "Get pass", "パスを受け取る")}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
           </section> : null}
@@ -346,8 +312,8 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
                 <dt>{tr("수령 계정", "Recipient", "受取アカウント")}</dt><dd>{signer?.address ? signer.address.slice(0, 12) + "…" : "—"}</dd>
               </dl>
               {!signer || (signer.kind === "zklogin" && signer.jwtPending) ? <div className={styles.actions}>
-                {!isolated ? <button type="button" className={styles.primary} disabled={!!busy} onClick={() => chooseSigner("zklogin")} data-testid="hackathon-signer-google">{c.signerZk}</button> : null}
-                <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => chooseSigner("demo")} data-testid="hackathon-signer-demo">{c.signerDemo}</button>
+                {!isolated && modes.zklogin === "google" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={() => chooseSigner("zklogin")} data-testid="hackathon-signer-google">{c.signerZk}</button> : null}
+                {isolated || modes.zklogin !== "google" ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => chooseSigner("demo")} data-testid="hackathon-signer-demo">{c.signerDemo}</button> : null}
               </div> : <>
                 <div className={styles.notice}>{signer.kind === "zklogin" ? tr("Google 계정 연결됨", "Google account connected", "Googleアカウント接続済み") : tr("샘플 계정이 준비됐어요", "Sample account ready", "サンプルアカウントの準備ができました")}</div>
                 <label className={styles.check}><input type="checkbox" id="hk-approve" checked={approve} onChange={(e) => setApprove(e.target.checked)} /> <span>{c.approveCheck}</span></label>
@@ -374,7 +340,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
 
           {op ? <details className={styles.card} data-testid="hackathon-technical-details">
             <summary>{tr("기술 정보", "Technical details", "技術情報")}</summary>
-            <pre className={styles.evidence}>{JSON.stringify({ modes, isolatedMock: isolated, credential: op.credential, presentation: op.presentation, proposalDigest: op.proposal?.proposalDigest, grant: op.delegation?.grant, chain: op.chain, cx: cxQr, cxError: cxQrError }, null, 2)}</pre>
+            <pre className={styles.evidence}>{JSON.stringify({ modes, isolatedMock: isolated, credential: op.credential, presentation: op.presentation, proposalDigest: op.proposal?.proposalDigest, grant: op.delegation?.grant, chain: op.chain }, null, 2)}</pre>
           </details> : null}
           {op ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={loadEvidence} data-testid="hackathon-evidence">{c.evidence}</button> : null}
           {evidence ? <section className={styles.card}><h3>{c.evidence}</h3><pre className={styles.evidence}>{JSON.stringify(evidence, null, 2)}</pre>{!isolated && config?.sui.explorer && op?.agent?.txDigest ? <a className={styles.link} href={`${config.sui.explorer}/tx/${op.agent.txDigest}`} target="_blank" rel="noreferrer">Sui explorer · agent tx</a> : null}</section> : null}
