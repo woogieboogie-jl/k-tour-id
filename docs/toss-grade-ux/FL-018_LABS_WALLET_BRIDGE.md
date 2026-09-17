@@ -2,6 +2,22 @@
 
 상태: `THREE-DESIGNER CONSENSUS · IMPLEMENTATION READY`
 
+## 2026-09-16 로컬 후속 계약 · 기념품 분기 우선
+
+아래 본문의 일반 Labs/bridge 규격은 유지한다. 다만 소비자 기념품 분기는 [Journey–Pass 로컬 변경](../KTOUR_JOURNEY_PASS_LOCAL_2026-09-16.md)과 [모바일 인계 변경](../KTOUR_MOBILE_REFINEMENT_LOCAL_2026-09-16.md)이 우선한다. 아직 미커밋/미푸시/미배포이며 과거 운영 증거와 구분한다.
+
+```text
+Pass → 방문 컬렉션(서로 다른10곳) → [선택] 여행 기념품
+ → 샘플 signer 준비 → 별도 만들기 동의 → 필요한 Person 확인
+ → 현재 권한 재확인·1회 실행 → 샘플 결과 → 원 컬렉션·opener 복귀
+```
+
+- 일반 Labs·기술 자산 선택·bridge 화면을 기념품의 필수 경유지로 만들지 않는다. 샘플/미공개 결과 안내와 개인정보·별도 동의는 유지하며, 기술 네트워크 상세는 소비자 첫 화면의 선행 과제가 아니다.
+- 결제·가이드 저장·단순 열람은 방문 스탬프나 mint를 자동 실행하지 않는다. 기념품도 기본 해커톤 필수 연동 범위를 늘리지 않는다.
+- **일반 bridge**의 제출 후 닫기는 같은 pending phase를 보존한다. **집중형 기념품**의 준비 중 취소는 해당 pending action/token을 폐기해 뒤늦은 결과를 막는다. 두 취소 의미를 혼동하지 않는다.
+- 아래 `USDC/USDT/OOKRW는 Labs` 원칙은 기본 여행 잔액을 기술 ticker로 대체하지 않는다는 뜻이다. 별도 명시적 스테이블코인 충전에서 자산·네트워크를 선택하는 기존 흐름을 금지하지 않는다. 자산 표현 분리와 출발 확정≠도착 반영은 그대로다.
+- 실제 공개 tx 없이 `TESTNET` 실행 완료·explorer·공개 NFT를 만들지 않는다. 다크 완료 화면의 body/header만 공통 Sheet surface로 맞추며 일반 Labs/bridge 처리에는 영향이 없다.
+
 ## 1. Flow contract
 
 | 항목 | 값 |

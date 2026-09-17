@@ -30,6 +30,7 @@
 }
 
 .sheet {
+  --ondo-sheet-inset: 20px;
   position: relative;
   display: flex;
   width: 100%;
@@ -106,8 +107,13 @@
   gap: 8px;
   padding: 8px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
   border-bottom: 1px solid var(--ondo-line);
-  background: color-mix(in srgb, var(--ondo-surface-raised) 96%, transparent);
-  backdrop-filter: blur(18px);
+  /* Chrome is outside the scrolling viewport, so it needs no backdrop blur.
+     A separate square blur layer can paint into the parent's rounded cutout.
+     Give the chrome its own matching edge rather than masking the whole sheet
+     (which would also clip its shadow and focus indicators). */
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
+  background: var(--ondo-surface-raised);
 }
 
 .sheetHeader .close { position: static; }
@@ -122,11 +128,12 @@
   display: grid;
   flex: 0 0 auto;
   gap: 8px;
-  padding: 12px max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  padding: 12px max(var(--ondo-sheet-inset), env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(var(--ondo-sheet-inset), env(safe-area-inset-left));
   border-top: 1px solid var(--ondo-line);
-  background: color-mix(in srgb, var(--ondo-surface-raised) 97%, transparent);
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
+  background: var(--ondo-surface-raised);
   box-shadow: var(--ondo-shadow);
-  backdrop-filter: blur(18px);
 }
 
 .sheetFooter > button,
@@ -230,6 +237,10 @@
   .sheetFooter { padding-top: 8px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 }
 
+@media (max-width: 360px) {
+  .sheet { --ondo-sheet-inset: 16px; }
+}
+
 @media (max-width: 340px) {
   .sheetHeader {
     grid-template-columns: 44px minmax(0, 1fr) 44px;
@@ -238,7 +249,6 @@
   }
   .sheetHeader .close,
   .headerSpacer { width: 44px; height: 44px; }
-  .sheetFooter { padding-inline: 12px; }
 }
 
 @media (forced-colors: active) {

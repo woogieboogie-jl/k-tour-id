@@ -10,14 +10,14 @@
 .quote > div + div { border-top: 1px solid var(--ondo-line, #dedee3); }
 .quote dt { color: var(--ondo-muted, #64646b); font-size: 13px; }
 .quote dd { margin: 0; font-size: 14px; font-weight: 740; text-align: right; font-variant-numeric: tabular-nums; }
-.consent { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--ondo-line, #dedee3); border-radius: 16px; padding: 14px; color: var(--ondo-ink, #171717); font-size: 13px; line-height: 1.5; }
+.consent { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--ondo-line, #dedee3); border-radius: 16px; padding: 14px; color: var(--ondo-ink, #171717); font-size: 15px; line-height: 1.5; }
 .consent input { flex: 0 0 auto; width: 20px; height: 20px; margin: 0; accent-color: var(--ondo-ink, #171717); }
 .actions { display: grid; gap: 8px; }
 .primary, .secondary { display: flex; min-height: 52px; width: 100%; align-items: center; justify-content: center; gap: 8px; border: 1px solid transparent; border-radius: 17px; padding: 13px 16px; font-size: 15px; font-weight: 760; }
 .primary { background: var(--ondo-ink, #171717); color: var(--ondo-surface, #fff); }
 .primary:disabled { opacity: .4; }
 .secondary { border-color: var(--ondo-line, #dedee3); background: var(--ondo-surface, #fff); color: var(--ondo-ink, #171717); }
-.note { color: var(--ondo-muted, #64646b); font-size: 12px; line-height: 1.5; }
+.note { color: var(--ondo-muted, #64646b); font-size: 15px; line-height: 1.5; }
 .status { display: grid; justify-items: center; gap: 20px; padding: 18px 0; text-align: center; }
 .mark { display: grid; width: 68px; height: 68px; place-items: center; border-radius: 24px; background: var(--ondo-surface-soft, #f3f3f6); color: var(--ondo-ink, #171717); }
 .status h3 { font-size: clamp(24px, 7vw, 32px); line-height: 1.2; letter-spacing: -.035em; }

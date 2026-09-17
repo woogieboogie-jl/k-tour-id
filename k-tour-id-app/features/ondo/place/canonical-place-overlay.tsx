@@ -43,6 +43,7 @@ import { canonicalVenueMoodImage } from "../map/canonical-venue-capsule-b"
 import { ONDO_B_TABLES, ondoBTableTimeline } from "../connect/table-model"
 import { capturePlaceServiceMapReturnB } from "../map/place-service-map-return-b"
 import { PlacePeekActionsB, PlaceServiceActionsB } from "./place-service-actions-b"
+import { JourneyVisitEntryB } from "../commerce-b/journey-visit-b"
 import {
   canonicalFactFreshness,
   canonicalFactState,
@@ -1141,6 +1142,7 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
           </details>
 
           <PlaceServiceActionsB placeId={currentVenueId} locale={locale} onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open" />
+          <JourneyVisitEntryB key={`journey-${currentVenueId}`} locale={locale} venueId={currentVenueId} />
           {placeTable ? (
             <section className={styles.tableActions} aria-label={locale === "ko" ? "이 장소의 테이블" : locale === "ja" ? "この場所のテーブル" : "Table at this place"} data-place-return-section="table">
               <button type="button" className={styles.tablePrimary} onClick={openTableFromPlace} data-testid="canonical-place-table" data-place-service="table">
@@ -1156,7 +1158,7 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
           ) : null}
           <div className={styles.decisionActions} data-testid="canonical-place-decisions" data-place-return-section="decisions">
             <button type="button" onClick={toggleSave} aria-label={saved ? copy.removeSaved : copy.save} aria-pressed={saved} data-testid="canonical-venue-save" data-visual-priority="secondary" data-place-return-focus="save"><Bookmark size={18} /><span className={styles.saveActionLabel}>{saved ? copy.removeSaved : copy.save}</span></button>
-            <a href={directions} target="_blank" rel="noreferrer" data-testid="canonical-venue-primary-directions" data-visual-priority="secondary" data-place-return-focus="directions"><Navigation size={18} />{copy.directions}</a>
+            <a href={directions} target="_blank" rel="noreferrer" aria-label={copy.directions} title={copy.directions} data-testid="canonical-venue-primary-directions" data-visual-priority="secondary" data-place-return-focus="directions"><Navigation size={18} aria-hidden="true" /></a>
           </div>
 
           <section className={styles.before} data-testid="canonical-place-details-to-check" data-place-return-section="pre_visit" tabIndex={-1}>

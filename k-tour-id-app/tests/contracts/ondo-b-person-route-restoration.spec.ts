@@ -56,7 +56,10 @@ test("FL-005/006 Person route restoration stays inside the common exact-return g
 test("FL-005/006 route card preserves the mobile type and touch floors", () => {
   const styles = source("features/ondo/identity-b/action-gate-coordinator-b.module.css")
   expect(styles).toMatch(/\.personRoute small \{[^}]*font-size:\s*12px/)
-  expect(styles).toMatch(/\.routeNote \{[^}]*font-size:\s*12px/)
+  const routeNote = styles.match(/\.routeNote \{([^}]+)\}/)?.[1] ?? ""
+  // Explanatory route meaning is decision body text, not the compact label.
+  expect(Number(routeNote.match(/font-size:\s*([\d.]+)px/)?.[1])).toBeGreaterThanOrEqual(15)
+  expect(Number(routeNote.match(/line-height:\s*([\d.]+)/)?.[1])).toBeGreaterThanOrEqual(1.45)
   expect(styles).toContain(".dialog button,.disclosure summary { min-width: 44px; min-height: 44px;")
   expect(styles).toMatch(/\.content \{[^}]*overflow-y:\s*auto/)
   expect(styles).toMatch(/\.body \{[^}]*grid-template-rows:\s*minmax\(0, 1fr\) auto/)

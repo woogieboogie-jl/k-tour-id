@@ -14,6 +14,8 @@
 .heading p { margin: 0; }
 .heading h3 { font-size: 15px; font-weight: 830; letter-spacing: -.025em; }
 .heading p { margin-top: 3px; color: #6d6965; font-size: 12px; line-height: 1.4; }
+.root[data-mode="unavailable"] .heading { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+.root[data-mode="unavailable"] .heading p { margin-top: 7px; font-size: 15px; line-height: 1.5; }
 .heading > strong { font-size: 23px; font-variant-numeric: tabular-nums; letter-spacing: -.05em; }
 .heading > strong small { color: #6f6963; font-size: 12px; letter-spacing: 0; }
 .track { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; }

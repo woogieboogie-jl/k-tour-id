@@ -3,23 +3,27 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from "react"
 import { CANONICAL_MAP_VENUES_COMPACT } from "@/lib/ondo/venues/map-data"
 import { VisitStampReceiptB } from "../commerce-b/visit-stamp-receipt-b"
-import { AlertTriangle, ArrowLeft, ArrowRight, Check, ChevronRight, CircleDollarSign, CircleHelp, CircleMinus, Clock3, FlaskConical, Link2, LoaderCircle, ShieldCheck, WalletCards } from "lucide-react"
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, ChevronRight, CircleDollarSign, CircleHelp, CircleMinus, Clock3, FlaskConical, Link2, LoaderCircle, ShieldCheck, Stamp, WalletCards } from "lucide-react"
 import { estimatedUsdTotal, type BridgePhase } from "../contracts/commerce"
 import { createReviewFixtureAuthority, providerUnavailable, reviewFixture, type ReviewFixtureExecution } from "../contracts/execution-mode"
 import { InlineNotice, SheetB } from "../shared/ui/sheet-b"
-import type { SheetPresencePhase } from "../shared/ui/use-sheet-presence"
+import { useSheetPresence, type SheetPresencePhase } from "../shared/ui/use-sheet-presence"
+import { isRenderedFocusable } from "../shared/ui/is-rendered-focusable"
 import { useOndoB } from "../shared/state/ondo-b-provider"
 import { useBActivityProfile } from "../identity-b/activity-profile-b-provider"
+import { JOURNEY_KEEPSAKE_OPEN_EVENT_B } from "../identity-b/journey-stamps-navigation-b"
 import type { OndoBLocale } from "../shared/state/ondo-b-preferences"
 import { enterReviewSample, qaReviewFixtureOptions, readQaScenario, useQaControls, useReviewSampleSession } from "../shared/ui/use-qa-controls"
 import {
   abandonPendingBAction,
+  B_ACTION_AXIS_SESSION_EVENT,
   B_ACTION_GATE_CANCEL_EVENT,
   B_ACTION_GATE_COMPLETE_EVENT,
   B_ACTION_GATE_READY_EVENT,
   consumePendingBActionAtMutation,
   createBBadgeActionReturn,
   finalizeConsumedBAction,
+  isBActionReturnPending,
   requestBActionGate,
   restoreBActionGateSession,
   restoreConsumedBActionAfterMutationFailure,
@@ -206,6 +210,57 @@ type LabsEntryCoreProps = {
   sampleVisit?: ReactNode
   onLoadSampleVisits?: () => boolean
   presenceState?: Exclude<SheetPresencePhase, "closed">
+  purpose?: "general" | "keepsake"
+}
+
+/** A nested task: the place, receipt, or Journey collection stays mounted below it. */
+export function JourneyKeepsakeB() {
+  const { state } = useOndoB()
+  const { state: activity } = useBActivityProfile()
+  const [requestedOrigin, setRequestedOrigin] = useState<{ tab: LabsOriginTab; opener: HTMLElement | null } | null>(null)
+  const presence = useSheetPresence(requestedOrigin)
+  const lastOriginRef = useRef<typeof requestedOrigin>(null)
+
+  useEffect(() => {
+    function open() {
+      const active = document.activeElement
+      setRequestedOrigin((current) => current ?? {
+        tab: state.tab,
+        opener: active instanceof HTMLElement && active !== document.body ? active : null,
+      })
+    }
+    window.addEventListener(JOURNEY_KEEPSAKE_OPEN_EVENT_B, open)
+    return () => window.removeEventListener(JOURNEY_KEEPSAKE_OPEN_EVENT_B, open)
+  }, [state.tab])
+
+  useEffect(() => {
+    if (presence.value) {
+      lastOriginRef.current = presence.value
+      return
+    }
+    const opener = lastOriginRef.current?.opener
+    lastOriginRef.current = null
+    if (!opener) return
+    // Restore the actual trigger after the retained exit and isolation cleanup.
+    // SheetB retains its normal fallback when that trigger no longer exists.
+    const timer = window.setTimeout(() => {
+      if (isRenderedFocusable(opener)) opener.focus({ preventScroll: true })
+    }, 90)
+    return () => window.clearTimeout(timer)
+  }, [presence.value])
+
+  if (!presence.value) return null
+  return <LabsEntryCore
+    locale={state.locale}
+    credential={state.identityCredential}
+    originTab={presence.value.tab}
+    stamps={activity.stamps}
+    provider="b"
+    purpose="keepsake"
+    sessionKey={B_LABS_SESSION_KEY}
+    presenceState={presence.phase}
+    onDismiss={() => setRequestedOrigin(null)}
+  />
 }
 
 export function LabsEntryB({ presenceState = "open" }: { presenceState?: Exclude<SheetPresencePhase, "closed"> }) {
@@ -240,7 +295,8 @@ export function LabsEntryB({ presenceState = "open" }: { presenceState?: Exclude
   )
 }
 
-export function LabsEntryCore({ locale, credential, originTab: originTabValue, stamps, provider, sessionKey, onDismiss, sampleVisit, onLoadSampleVisits, presenceState = "open" }: LabsEntryCoreProps) {
+export function LabsEntryCore({ locale, credential, originTab: originTabValue, stamps, provider, sessionKey, onDismiss, sampleVisit, onLoadSampleVisits, presenceState = "open", purpose = "general" }: LabsEntryCoreProps) {
+  const isKeepsake = purpose === "keepsake"
   const liveCredentialRef = useRef(credential)
   liveCredentialRef.current = credential
   const qaControls = useQaControls()
@@ -310,18 +366,18 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
   const signerIssueCopy = signerIssue === "oauth_cancel"
     ? text("로그인을 취소했어요. 다시 시작할 수 있어요.", "Sign-in was cancelled. You can start again.", "ログインをキャンセルしました。もう一度始められます。")
     : signerIssue === "epoch_expired"
-      ? text("서명 세션이 만료됐어요. 다시 로그인하세요.", "The signer session expired. Sign in again.", "署名セッションの期限が切れました。再ログインしてください。")
+      ? isKeepsake ? text("준비 시간이 만료됐어요. 다시 시작해 주세요.", "Preparation expired. Please start again.", "準備の有効期限が切れました。もう一度始めてください。") : text("서명 세션이 만료됐어요. 다시 로그인하세요.", "The signer session expired. Sign in again.", "署名セッションの期限が切れました。再ログインしてください。")
       : signerIssue === "salt_recovery"
-        ? text("서명 복구가 필요해요. 샘플 복구 후 이어갈 수 있어요.", "Signer recovery is needed. Retry to recover the sample signer.", "署名の復旧が必要です。再試行するとサンプルを復旧します。")
+        ? isKeepsake ? text("준비를 다시 완료해야 해요. 다시 시도해 주세요.", "Preparation needs to be restored. Please try again.", "準備を復旧する必要があります。再試行してください。") : text("서명 복구가 필요해요. 샘플 복구 후 이어갈 수 있어요.", "Signer recovery is needed. Retry to recover the sample signer.", "署名の復旧が必要です。再試行するとサンプルを復旧します。")
         : signerIssue === "prover_failed"
-          ? text("증명 서비스를 연결하지 못했어요. 다시 시도하세요.", "The proof service did not respond. Try again.", "証明サービスが応答しませんでした。再試行してください。")
+          ? isKeepsake ? text("미리보기를 준비하지 못했어요. 다시 시도해 주세요.", "The preview could not be prepared. Please try again.", "プレビューを準備できませんでした。再試行してください。") : text("증명 서비스를 연결하지 못했어요. 다시 시도하세요.", "The proof service did not respond. Try again.", "証明サービスが応答しませんでした。再試行してください。")
           : null
   const bridgeFailureCopy = sampleCase === "wrong_network"
     ? text("Sui Testnet 경로가 필요해요. 새 견적에서 네트워크를 다시 확인하세요.", "This route needs Sui Testnet. Check the network with a fresh quote.", "この経路にはSui Testnetが必要です。新しい見積もりで確認してください。")
     : sampleCase === "sponsor_denied"
       ? text("가스 지원이 승인되지 않았어요. 자산 이동 없이 다시 확인할 수 있어요.", "Gas sponsorship was declined. No assets moved; check again with a fresh quote.", "ガス支援が承認されませんでした。資産移動なしで再確認できます。")
       : text("경로 확인을 완료하지 못했어요. 잔고는 그대로이며 새 예상 조건으로 다시 시작할 수 있어요.", "Route check did not complete. Balances remain unchanged; start again with a fresh quote.", "経路チェックを完了できませんでした。残高は変わらず、新しい見積もりでやり直せます。")
-  const labsLabel = provider === "b" ? "Labs" : text("기술 실험실", "Labs", "技術ラボ")
+  const labsLabel = isKeepsake ? text("여행 기념", "Travel keepsake", "旅の記念") : provider === "b" ? "Labs" : text("기술 실험실", "Labs", "技術ラボ")
   const labsBoundarySummary = text("기술 세부정보", "Technical details", "技術詳細")
   const labsBoundaryBody = text(
     "예시 데이터를 사용합니다. 실제 돈·계정·외부 서비스와 연결되지 않으며, Sui↔OmniOne 경로·NFT·거래를 만들지 않습니다.",
@@ -379,7 +435,7 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
 
     const bridgeNeedsReview = stored.bridge === "BRG-PENDING" || stored.bridge === "BRG-SIMULATED-SUCCESS"
     const bBridgeReady = bWalletReady && (!bridgeNeedsReview || stored.bridgeReview != null)
-    if (mayRestoreReviewOutcome && stored.bridge) {
+    if (!isKeepsake && mayRestoreReviewOutcome && stored.bridge) {
       if (provider !== "b" || bBridgeReady) {
         setBridge(stored.bridge)
         if (stored.phase) setPhase(stored.phase)
@@ -403,7 +459,7 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
       }
     }
     if (mayRestoreReviewOutcome && stamps === 10 && stored.consent === true) setConsent(true)
-    if (mayRestoreReviewOutcome && typeof stored.quoteExpiresAt === "number") {
+    if (!isKeepsake && mayRestoreReviewOutcome && typeof stored.quoteExpiresAt === "number") {
       const hasRestorableQuote = provider !== "b"
         || (bWalletReady && (stored.bridgeReview != null || stored.quoteExpiresAt > Date.now()))
       if (hasRestorableQuote) setQuoteExpiresAt(stored.quoteExpiresAt)
@@ -411,20 +467,24 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
         bridgeQuoteRef.current = createLabsBridgeQuote(stored.quoteExpiresAt)
       }
     }
-    if (mayRestoreReviewOutcome && stored.traitStates && typeof stored.traitStates === "object") setTraitStates(stored.traitStates)
+    if (!isKeepsake && mayRestoreReviewOutcome && stored.traitStates && typeof stored.traitStates === "object") setTraitStates(stored.traitStates)
     sessionWasRestored.current = true
     setSessionLoaded(true)
-  }, [provider, qaControls, sessionKey, stamps])
+  }, [isKeepsake, provider, qaControls, sessionKey, stamps])
 
   useEffect(() => {
     if (!sessionLoaded || !sessionWasRestored.current) return
-    const snapshot: LabsSession = { acknowledged, wallet, bridge, phase, mint, consent, quoteExpiresAt, traitStates, walletReview, bridgeReview, badgeReview }
+    // The focused journey shares the existing receipt and signer, but must not
+    // reset or advance the unrelated Labs route, balances, or merchant checks.
+    const snapshot: Partial<LabsSession> = isKeepsake
+      ? { ...readLabsSession(sessionKey), wallet, mint, consent, walletReview, badgeReview }
+      : { acknowledged, wallet, bridge, phase, mint, consent, quoteExpiresAt, traitStates, walletReview, bridgeReview, badgeReview }
     try {
       window.sessionStorage.setItem(sessionKey, JSON.stringify(snapshot))
     } catch {
       // Labs remains a usable in-memory preview when session storage is blocked.
     }
-  }, [acknowledged, badgeReview, bridge, bridgeReview, consent, mint, phase, quoteExpiresAt, sessionKey, sessionLoaded, traitStates, wallet, walletReview])
+  }, [acknowledged, badgeReview, bridge, bridgeReview, consent, isKeepsake, mint, phase, quoteExpiresAt, sessionKey, sessionLoaded, traitStates, wallet, walletReview])
 
   useEffect(() => {
     if (stamps === 10 && mint === "NFT-LOCKED") setMint("NFT-ELIGIBLE")
@@ -436,10 +496,10 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
   }, [mint, stamps])
 
   useEffect(() => {
-    if (!sessionLoaded || qaControls || bridge !== "BRG-PENDING") return
+    if (isKeepsake || !sessionLoaded || qaControls || bridge !== "BRG-PENDING") return
     const timer = window.setTimeout(advanceBridge, 650)
     return () => window.clearTimeout(timer)
-  }, [bridge, phase, qaControls, sessionLoaded])
+  }, [bridge, isKeepsake, phase, qaControls, sessionLoaded])
 
   useEffect(() => {
     if (wallet !== "WAL-FAILED") return
@@ -550,6 +610,32 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
   }, [consent, provider, qaControls, stamps, wallet])
 
   function close() {
+    if (isKeepsake) {
+      // Close is cancellation, including the short ready-to-result interval.
+      // Keep the task open if its durable pending action cannot be abandoned.
+      if (badgeTimerRef.current !== null) {
+        window.clearTimeout(badgeTimerRef.current)
+        badgeTimerRef.current = null
+      }
+      const pendingBadge = badgeReturnRef.current
+      const cancelledAt = new Date()
+      if (pendingBadge && isBActionReturnPending(pendingBadge, cancelledAt)
+        && !abandonPendingBAction(window.sessionStorage, pendingBadge, cancelledAt, actionGateSessionOptions())) {
+        setBadgeReview(null)
+        setMint("NFT-FAILED")
+        focusAfterTransition(badgeResultRef)
+        return
+      }
+      badgeReturnRef.current = null
+      if (pendingBadge) window.dispatchEvent(new Event(B_ACTION_AXIS_SESSION_EVENT))
+      if (mint === "NFT-MINTING") setMint(consent ? "NFT-OPTED-IN" : "NFT-ELIGIBLE")
+      for (const timer of sampleTimersRef.current) window.clearTimeout(timer)
+      sampleTimersRef.current.clear()
+      if (wallet === "WAL-CONNECTING") {
+        setWallet("WAL-DISCONNECTED")
+        setWalletReview(null)
+      }
+    }
     onDismiss()
   }
 
@@ -558,7 +644,7 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
     setAcknowledged(true)
   }
 
-  const returnLabel = originTab === "id"
+  const returnLabel = isKeepsake ? text("뒤로", "Back", "戻る") : originTab === "id"
     ? locale === "ko" ? "ID로 돌아가기" : locale === "ja" ? "IDに戻る" : "Return to ID"
     : originTab === "my"
       ? locale === "ko" ? "My Korea로 돌아가기" : locale === "ja" ? "マイ韓国に戻る" : "Return to My Korea"
@@ -837,7 +923,7 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
     </div>
   ) : null
 
-  if (!acknowledged) {
+  if (!acknowledged && !isKeepsake) {
     return (
       <LabsSheet provider={provider} locale={locale} label={labsLabel} onClose={close} size="full" presenceState={presenceState}>
         <div className={styles.boundary}>
@@ -878,17 +964,7 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
         estimated: asset.estimatedUsd ? `≈ $${asset.estimatedUsd} · 2026-08-19` : null,
       }))
 
-  return (
-    <LabsSheet provider={provider} locale={locale} label={labsLabel} onClose={close} showClose={false} size="full" presenceState={presenceState} initialFocusSelector="[data-testid='labs-back']">
-      <div className={styles.body} data-wallet-state={wallet} data-bridge-state={bridge} data-bridge-phase={phase} data-mint-state={mint} data-testid="labs-overlay">
-        <header className={styles.header}>
-          <button type="button" data-sheet-initial-focus data-testid="labs-back" onClick={close} aria-label={returnLabel}><ArrowLeft size={20} /></button>
-          <div>{provider === "b" ? null : <p className={styles.eyebrow}>{text("기술 실험실 · 시뮬레이션", "LABS · SIMULATED", "技術ラボ · シミュレーション")}</p>}<h2>{labsLabel}</h2></div>
-          {provider === "b" ? null : <span className={styles.truthBadge}>{text("시뮬레이션", "SIMULATED", "シミュレーション")}</span>}
-        </header>
-
-        {labsTargetTruth}
-        {provider === "b" && qaControls ? <details className={styles.sampleScenarios} data-testid="labs-sample-scenarios">
+  const sampleScenarioControls = provider === "b" && qaControls ? <details className={styles.sampleScenarios} data-testid="labs-sample-scenarios">
           <summary><FlaskConical size={16} aria-hidden="true" /><span>{text("샘플 시나리오", "Sample scenarios", "サンプルシナリオ")}</span><ChevronRight size={16} aria-hidden="true" /></summary>
           <label><span>{text("다음 실행", "Next attempt", "次の実行")}</span><select
             data-testid="labs-sample-case"
@@ -904,37 +980,62 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
                 setWallet("WAL-FAILED")
               }
             }}>
-            {LABS_SAMPLE_CASES.map(value => <option key={value} value={value}>{sampleCaseLabels[value]}</option>)}
+            {LABS_SAMPLE_CASES.filter(value => !isKeepsake || ["success", "oauth_cancel", "epoch_expired", "salt_recovery", "prover_failed", "mint_failed"].includes(value)).map(value => <option key={value} value={value}>{sampleCaseLabels[value]}</option>)}
           </select></label>
           <small>{text("다음 행동에 적용돼요. 재시도하면 성공 경로로 돌아갑니다.", "Applies to the next action. Retry returns to the success path.", "次の操作に適用します。再試行すると成功経路に戻ります。")}</small>
           {mint === "NFT-MINTED" && badgeReview ? <><button type="button" className={styles.secondary} data-testid="labs-badge-repeat" onClick={() => setDuplicateBadge(true)}>{text("같은 배지 다시 요청", "Repeat this badge request", "同じバッジを再要求")}</button>{duplicateBadge ? <p role="status" data-testid="labs-badge-duplicate">{text("이미 준비된 배지를 반환했어요. 새 배지는 만들지 않았습니다.", "Returned the existing badge. No second badge was created.", "既存のバッジを返しました。新しいバッジは作成していません。")}</p> : null}</> : null}
-        </details> : null}
+        </details> : null
+
+  return (
+    <LabsSheet provider={provider} locale={locale} label={labsLabel} onClose={close} showClose={false} size="full" presenceState={presenceState} initialFocusSelector="[data-testid='labs-back']" modalPriority={isKeepsake ? 142 : undefined}>
+      <div className={`${styles.body} ${isKeepsake ? styles.keepsakeBody : ""}`} data-wallet-state={wallet} data-bridge-state={isKeepsake ? undefined : bridge} data-bridge-phase={isKeepsake ? undefined : phase} data-mint-state={mint} data-testid={isKeepsake ? "journey-keepsake-overlay" : "labs-overlay"}>
+        <header className={styles.header}>
+          <button type="button" data-sheet-initial-focus data-testid="labs-back" onClick={close} aria-label={returnLabel}><ArrowLeft size={20} /></button>
+          <div>{provider === "b" ? null : <p className={styles.eyebrow}>{text("기술 실험실 · 시뮬레이션", "LABS · SIMULATED", "技術ラボ · シミュレーション")}</p>}<h2>{labsLabel}</h2></div>
+          {provider === "b" ? null : <span className={styles.truthBadge}>{text("시뮬레이션", "SIMULATED", "シミュレーション")}</span>}
+        </header>
+
+        {isKeepsake && mint === "NFT-MINTED" ? <section className={styles.keepsakeSuccess} aria-labelledby="journey-keepsake-success-title">
+          <div ref={badgeResultRef} className={styles.keepsakeSuccessResult} tabIndex={-1} role="status" data-testid="labs-badge-result" data-review-provenance={badgeReview ? "simulated" : undefined}>
+            <span className={styles.keepsakeSuccessMark}><Stamp size={32} strokeWidth={1.5} aria-hidden="true" /></span>
+            <p className={styles.keepsakeSuccessContext}>{text("서로 다른 장소 열 곳의 추억", "Ten different places. A journey to remember.", "異なる10か所の、旅の思い出。")}</p>
+            <h3 id="journey-keepsake-success-title">{text("여행 기념 배지가 준비됐어요", "Your travel keepsake is ready", "旅の記念バッジを準備しました")}</h3>
+            <p className={styles.finePrint} data-testid="journey-keepsake-truth">{text("샘플 미리보기예요. 공개된 내용은 없습니다.", "Sample preview only. Nothing was published.", "サンプルプレビューです。公開された内容はありません。")}</p>
+          </div>
+          <button type="button" className={styles.primary} data-testid="journey-keepsake-done" onClick={close}>{text("내 기록으로 돌아가기", "Back to my journey", "旅の記録に戻る")}</button>
+        </section> : <>
+        {isKeepsake ? <div className={styles.keepsakeIntro} data-testid="journey-keepsake-truth">
+          <p>{text("서로 다른 장소 열 곳, 나만의 여행 기념.", "Ten different places. One keepsake of your journey.", "異なる10か所。旅を振り返るひとつの記念。")}</p>
+          <span>{text("선택 사항이에요. 방문 기록은 그대로이며, 할인이나 입장 혜택은 제공하지 않아요.", "Entirely optional. Your visit records stay unchanged. This does not provide discounts or admission.", "任意の機能です。訪問記録は変わらず、割引や入場特典はありません。")}</span>
+          <small>{text("샘플 미리보기예요. 아무것도 공개하거나 외부로 보내지 않습니다.", "Sample preview only. Nothing is published or sent outside this app.", "サンプルプレビューです。公開したり、アプリの外へ送信したりすることはありません。")}</small>
+        </div> : labsTargetTruth}
+        {!isKeepsake ? sampleScenarioControls : null}
         {provider === "b" ? null : <InlineNotice tone="neutral"><ShieldCheck size={18} /><span>{text("실제 자산 이동이나 운영 서비스가 아닙니다.", "No real assets move and this is not a production service.", "実際の資産移動はなく、運用中のサービスでもありません。")}</span></InlineNotice>}
 
         <section className={styles.card} aria-labelledby="labs-signer-title">
-          <div className={styles.sectionHeading}><span><WalletCards size={18} /></span><div><h3 id="labs-signer-title">{provider === "b" ? text("지갑 서명", "Wallet signer", "ウォレット署名") : text("Sui zkLogin · 서명 방식 식별자", "Sui zkLogin signer", "Sui zkLogin · 署名方式")}</h3></div></div>
-          <p className={styles.bodyCopy}>{provider === "b" ? text("경로를 시작할 서명을 준비합니다.", "Prepare the signer used to start the route.", "経路を開始する署名を準備します。") : text("Sui 주소와 트랜잭션 서명 경로를 보여줍니다. K-Tour ID 계정, 본인 확인(KYC) 또는 멀티체인 지갑을 만들지는 않습니다.", "Shows a Sui address and transaction-signing route. It does not create a K-Tour ID account, KYC, or multichain wallet.", "Suiアドレスとトランザクションの署名経路を表示します。K-Tour ID アカウント、本人確認（KYC）、マルチチェーンウォレットは作成されません。")}</p>
+          <div className={styles.sectionHeading}><span><WalletCards size={18} /></span><div><h3 id="labs-signer-title">{isKeepsake ? text("기념 배지 준비", "Keepsake preparation", "記念バッジの準備") : provider === "b" ? text("지갑 서명", "Wallet signer", "ウォレット署名") : text("Sui zkLogin · 서명 방식 식별자", "Sui zkLogin signer", "Sui zkLogin · 署名方式")}</h3></div></div>
+          <p className={styles.bodyCopy}>{isKeepsake ? text("기념 배지를 선택하기 전에 미리보기를 준비해요. 준비만으로 배지가 만들어지지는 않습니다.", "Set up the preview before choosing your keepsake. Setup alone does not create it.", "記念バッジを選ぶ前にプレビューを準備します。準備だけでバッジは作成されません。") : provider === "b" ? text("경로를 시작할 서명을 준비합니다.", "Prepare the signer used to start the route.", "経路を開始する署名を準備します。") : text("Sui 주소와 트랜잭션 서명 경로를 보여줍니다. K-Tour ID 계정, 본인 확인(KYC) 또는 멀티체인 지갑을 만들지는 않습니다.", "Shows a Sui address and transaction-signing route. It does not create a K-Tour ID account, KYC, or multichain wallet.", "Suiアドレスとトランザクションの署名経路を表示します。K-Tour ID アカウント、本人確認（KYC）、マルチチェーンウォレットは作成されません。")}</p>
           {wallet === "WAL-READY" ? provider === "b"
-            ? <div className={styles.readySummary}><Check size={17} aria-hidden="true" /><span><strong>{text("준비됨", "Ready", "準備完了")}</strong><small>{text("샘플 서명", "Sample signer", "サンプル署名")}</small></span></div>
+            ? <div className={styles.readySummary}><Check size={17} aria-hidden="true" /><span><strong>{text("준비됨", "Ready", "準備完了")}</strong><small>{isKeepsake ? text("샘플 미리보기", "Sample preview", "サンプルプレビュー") : text("샘플 서명", "Sample signer", "サンプル署名")}</small></span></div>
             : <div><small className={styles.identifierLabel}>{text("미리보기 주소 식별자", "Preview address identifier", "プレビュー用アドレス識別子")}</small><code className={styles.address}>{qaControls ? "0x8a71…ondo_fixture" : "0x8a71…ondo_preview"}</code></div> : null}
           {wallet === "WAL-FAILED" ? <div id={walletOutcomeId} className={styles.walletOutcome} role="alert" aria-atomic="true" data-testid="labs-wallet-outcome" data-signer-issue={signerIssue ?? "provider"}><AlertTriangle size={17} /><span>{provider === "b"
-            ? signerIssueCopy ?? text("서명 준비를 완료하지 못했어요. 아무것도 제출되지 않았습니다.", "Signer preparation did not complete. Nothing was submitted.", "署名の準備を完了できませんでした。何も送信されていません。")
+            ? signerIssueCopy ?? (isKeepsake ? text("준비를 완료하지 못했어요. 아무것도 보내지 않았습니다.", "Preparation did not finish. Nothing was sent.", "準備を完了できませんでした。何も送信していません。") : text("서명 준비를 완료하지 못했어요. 아무것도 제출되지 않았습니다.", "Signer preparation did not complete. Nothing was submitted.", "署名の準備を完了できませんでした。何も送信されていません。"))
             : qaControls
               ? text("테스트용 연결을 완료하지 못했어요. K-Tour ID 계정, 본인 확인(KYC), 멀티체인 지갑, 실제 자산, 거래 또는 실제 계정에는 아무 영향이 없습니다.", "The test connection did not complete. No K-Tour ID account, KYC, multichain wallet, real asset, transaction, or real account was affected.", "テスト接続を完了できませんでした。K-Tour ID アカウント、本人確認（KYC）、マルチチェーンウォレット、実際の資産・取引・アカウントには影響ありません。")
               : text("미리보기 연결을 완료하지 못했어요. K-Tour ID 계정, 본인 확인(KYC), 멀티체인 지갑, 실제 자산, 거래 또는 실제 계정에는 아무 영향이 없습니다.", "The preview connection did not complete. No K-Tour ID account, KYC, multichain wallet, real asset, transaction, or real account was affected.", "プレビュー接続を完了できませんでした。K-Tour ID アカウント、本人確認（KYC）、マルチチェーンウォレット、実際の資産・取引・アカウントには影響ありません。")}</span></div> : null}
           {wallet === "WAL-DISCONNECTED" || (wallet === "WAL-FAILED" && (provider !== "b" || qaControls)) ? <button ref={walletRetryRef} type="button" className={styles.secondary} onClick={connectWallet} aria-describedby={wallet === "WAL-FAILED" ? walletOutcomeId : undefined} data-testid="labs-connect-wallet">{wallet === "WAL-FAILED"
             ? text("다시 시도", "Try again", "もう一度試す")
             : provider === "b"
-              ? text("서명 준비", "Prepare signer", "署名を準備")
+              ? isKeepsake ? text("미리보기 준비", "Set up preview", "プレビューを準備") : text("서명 준비", "Prepare signer", "署名を準備")
               : qaControls
               ? text("서명 기능 연결 시뮬레이션", "Simulate signer connection", "署名機能の接続をシミュレーション")
               : text("미리보기 서명 기능 연결", "Connect preview signer", "プレビュー用署名機能を接続")}</button> : null}
           {wallet === "WAL-FAILED" && provider === "b" && !qaControls ? <button ref={walletRetryRef} type="button" className={styles.primary} onClick={continueWalletSample} aria-describedby={walletOutcomeId} data-testid="labs-wallet-sample">{text("샘플로 계속", "Continue with sample", "サンプルで続ける")}</button> : null}
-          {wallet === "WAL-CONNECTING" ? <button type="button" className={styles.secondary} aria-busy="true" disabled>{text("연결 중", "Connecting", "接続中")}</button> : null}
-          {wallet === "WAL-READY" ? <button type="button" className={styles.textButton} disabled={!canDisconnect} onClick={disconnectWallet}>{text("연결 해제", "Disconnect", "接続を解除")}</button> : null}
+          {wallet === "WAL-CONNECTING" ? <button type="button" className={styles.secondary} aria-busy="true" disabled>{isKeepsake ? text("준비 중", "Preparing", "準備中") : text("연결 중", "Connecting", "接続中")}</button> : null}
+          {wallet === "WAL-READY" ? <button type="button" className={styles.textButton} disabled={!canDisconnect} onClick={disconnectWallet}>{isKeepsake ? text("준비 취소", "Reset preparation", "準備をリセット") : text("연결 해제", "Disconnect", "接続を解除")}</button> : null}
         </section>
 
-        <section className={styles.card} aria-labelledby="labs-assets-title">
+        {!isKeepsake ? <><section className={styles.card} aria-labelledby="labs-assets-title">
           <div className={styles.sectionHeading}><span><CircleDollarSign size={18} /></span><div><h3 id="labs-assets-title">{provider === "b" ? text("자산", "Assets", "資産") : text("자산별 잔고", "Balances by asset", "資産別残高")}</h3><p>{provider === "b" ? text("각 자산은 따로 유지됩니다", "Each asset stays separate", "各資産は分けて表示されます") : text(`예상 USD 환산액 · $${estimatedTotal.toFixed(2)}`, `Estimated USD value · $${estimatedTotal.toFixed(2)}`, `推定USD換算額 · $${estimatedTotal.toFixed(2)}`)}</p></div></div>
           <div className={styles.assetList} data-testid={provider === "b" ? "labs-consumer-balances" : undefined}>
             {displayedAssets.map((asset) => {
@@ -1066,8 +1167,10 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
           <div className={styles.disclosureBody}><p className={styles.bodyCopy}>{text("AMM 교환은 이번 후보 범위에 포함되지 않습니다.", "AMM swaps are not included in this candidate.", "AMM交換は今回の候補範囲に含まれていません。")}</p></div>
         </details>
 
+        </> : null}
+
         <section ref={badgeSectionRef} className={styles.card} aria-labelledby="labs-badge-title" data-return-section="travel-keepsake">
-          <div className={styles.sectionHeading}><span><FlaskConical size={18} /></span><div><h3 id="labs-badge-title">{provider === "b" ? text("여행 기념 배지", "Travel keepsake badge", "旅の記念バッジ") : text("기념 배지 시뮬레이션", "Souvenir badge simulation", "記念バッジのシミュレーション")}</h3><p>{stamps}/10</p></div></div>
+          <div className={styles.sectionHeading}><span>{isKeepsake ? <Stamp size={18} /> : <FlaskConical size={18} />}</span><div><h3 id="labs-badge-title">{provider === "b" ? text("여행 기념 배지", "Travel keepsake badge", "旅の記念バッジ") : text("기념 배지 시뮬레이션", "Souvenir badge simulation", "記念バッジのシミュレーション")}</h3><p>{stamps}/10</p></div></div>
           <p className={styles.bodyCopy}>{badgeBody}</p>
           {provider === "b" && qaControls && stamps < 9 && onLoadSampleVisits ? <details className={styles.sampleScenarios} data-testid="labs-sample-visit-setup">
             <summary><FlaskConical size={16} aria-hidden="true" /><span>{text("샘플 여행으로 체험", "Try a sample trip", "サンプル旅行で体験")}</span><ChevronRight size={16} aria-hidden="true" /></summary>
@@ -1078,16 +1181,24 @@ export function LabsEntryCore({ locale, credential, originTab: originTabValue, s
           {sampleVisit}
           {provider === "b" && qaControls && stamps === 10 ? <p className={styles.visitMilestone} role="status" data-testid="labs-visit-milestone"><Check size={16} aria-hidden="true" />{text("서로 다른 방문 10개가 준비됐어요", "10 distinct visit records are ready", "異なる訪問記録が10件になりました")}</p> : null}
           {stamps < 10 ? <InlineNotice tone="neutral"><span>{badgeRequirement}</span></InlineNotice> : null}
-          {stamps === 10 && mint !== "NFT-MINTED" ? <label className={styles.consent}><input type="checkbox" checked={consent} onChange={(event) => { setConsent(event.target.checked); setMint(event.target.checked ? "NFT-OPTED-IN" : "NFT-ELIGIBLE") }} /> <span>{provider === "b" ? text("공개 배지에 들어갈 장소 활동만 사용해요.", "Use only place activity in the public badge.", "公開バッジには場所のアクティビティだけを使います。") : text("공개 기념 배지 시뮬레이션에 동의해요.", "I consent to the public badge simulation.", "公開用の記念バッジ・シミュレーションに同意します。")}</span></label> : null}
+          {stamps === 10 && mint !== "NFT-MINTED" ? <label className={styles.consent}><input type="checkbox" checked={consent} onChange={(event) => { setConsent(event.target.checked); setMint(event.target.checked ? "NFT-OPTED-IN" : "NFT-ELIGIBLE") }} /> <span>{isKeepsake ? text("이 기념 배지 미리보기에 장소 활동 기록만 사용하는 데 동의해요.", "I agree to use only my place activity for this keepsake preview.", "この記念バッジのプレビューに、場所の活動記録だけを使うことに同意します。") : provider === "b" ? text("공개 배지에 들어갈 장소 활동만 사용해요.", "Use only place activity in the public badge.", "公開バッジには場所のアクティビティだけを使います。") : text("공개 기념 배지 시뮬레이션에 동의해요.", "I consent to the public badge simulation.", "公開用の記念バッジ・シミュレーションに同意します。")}</span></label> : null}
           {stamps === 10 && mint !== "NFT-MINTED" ? <button ref={badgeButtonRef} type="button" className={styles.primary} onClick={mintBadge} disabled={!consent || wallet !== "WAL-READY" || mint === "NFT-MINTING"} data-testid="labs-badge-mint" data-execution-mode={provider === "b" ? qaControls ? "review" : "normal" : undefined}>{wallet !== "WAL-READY"
-            ? text("서명 기능 연결 필요", "Signer connection required", "署名機能の接続が必要です")
+            ? isKeepsake ? text("먼저 미리보기를 준비해 주세요", "Set up the preview first", "先にプレビューを準備してください") : text("서명 기능 연결 필요", "Signer connection required", "署名機能の接続が必要です")
             : mint === "NFT-MINTING"
               ? provider === "b" ? text("배지 준비 중", "Preparing badge", "バッジを準備中") : text("시뮬레이션 중", "Simulating", "シミュレーション中")
               : provider === "b" ? text("배지 준비", "Prepare badge", "バッジを準備") : text("시뮬레이션 시작", "Start simulation", "シミュレーションを開始")}</button> : null}
           {mint === "NFT-MINTED" ? <div ref={badgeResultRef} tabIndex={-1} data-testid="labs-badge-result" data-review-provenance={provider === "b" && badgeReview ? "simulated" : undefined}><InlineNotice tone="success"><Check size={18} /><span>{provider === "b" ? text("여행 기념 배지가 준비됐어요. 공개된 내용은 없습니다.", "Your travel keepsake is ready. Nothing was published.", "旅の記念バッジを準備しました。公開された内容はありません。") : text("기념 배지 시뮬레이션 완료 · 실제 NFT나 거래는 생성되지 않았습니다.", "Badge simulation complete. No real NFT or transaction was created.", "記念バッジのシミュレーションが完了しました。実際のNFTや取引は作成されていません。")}</span></InlineNotice></div> : null}
           {mint === "NFT-FAILED" ? <div ref={badgeResultRef} tabIndex={-1} data-testid="labs-badge-result"><InlineNotice tone="danger"><AlertTriangle size={17} /><span>{provider === "b" ? text("배지 정보를 준비하지 못했어요. 게시된 내용은 없습니다.", "Badge preparation did not complete. Nothing was published.", "バッジ情報を準備できませんでした。公開された内容はありません。") : text("기념 배지 시뮬레이션을 완료하지 못했어요. 공개 기록은 생성되지 않았습니다.", "Badge simulation did not complete. No public record was created.", "記念バッジのシミュレーションを完了できませんでした。公開記録は作成されていません。")}</span></InlineNotice></div> : null}
         </section>
-        {provider === "b" ? boundaryDisclosure : null}
+        {isKeepsake ? <details className={`${styles.card} ${styles.disclosure}`} data-testid="journey-keepsake-details">
+          <summary className={styles.disclosureSummary}><strong>{text("개인정보 및 미리보기 안내", "Privacy & preview details", "プライバシー・プレビューの詳細")}</strong><ChevronRight size={18} aria-hidden="true" /></summary>
+          <div className={styles.disclosureBody}>
+            <p className={styles.finePrint} data-testid="journey-keepsake-privacy">{text("개인정보, 국적, 나이 확인 결과는 기념 배지에 포함되지 않습니다. 만들기 전에 별도의 동의와 본인 확인이 필요해요.", "Personal details, nationality, and age-check results are not included. Creating a keepsake requires separate consent and a Person check.", "個人情報、国籍、年齢確認の結果は含まれません。作成には別途の同意と本人確認が必要です。")}</p>
+            <p className={styles.finePrint}>{text("미리보기 준비에는 샘플 서명을 사용합니다. 실제 지갑 연결, 배지·NFT 발행, 거래 또는 공개 게시를 하지 않습니다.", "Preview preparation uses a sample signer. No real wallet is connected and no badge, NFT, transaction, or public post is created.", "プレビューの準備にはサンプル署名を使います。実際のウォレット接続、バッジ・NFTの発行、取引、公開投稿は行いません。")}</p>
+            {sampleScenarioControls}
+          </div>
+        </details> : provider === "b" ? boundaryDisclosure : null}
+        </>}
       </div>
     </LabsSheet>
   )

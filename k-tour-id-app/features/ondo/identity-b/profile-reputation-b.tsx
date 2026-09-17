@@ -22,12 +22,10 @@ import {
   RotateCcw,
   Save,
   ShieldCheck,
-  Stamp,
   UsersRound,
   X,
 } from "lucide-react"
 import type { OndoBLocale } from "../shared/state/ondo-b-preferences"
-import { useOndoB } from "../shared/state/ondo-b-provider"
 import { qaReviewFixtureOptions, readQaRuntime } from "../shared/ui/use-qa-controls"
 import { B_ACTION_AXIS_SESSION_EVENT, B_ACTION_GATE_SESSION_KEY, DEFAULT_B_ACTION_GATE_SESSION, restoreBActionGateSession, type BActionAxis } from "./action-gate-contract-b"
 import { resolveTravelerAxisPresentationB } from "./traveler-id-status-b"
@@ -73,10 +71,7 @@ const COPY = {
     visitSource: "Place history", contributionSource: "Shared tips", meetupSource: "Joined Tables", noHistory: "Not yet",
     ready: "Ready", reviewCurrent: "Review result · no provider check", reviewExpired: "Review result expired · no provider check", reviewSource: "Review only", one: "One", several: "Several",
     evidenceKind: "Evidence", updated: "Updated", currentSession: "Current session", noUpdate: "No activity yet", openEvidence: "View evidence",
-    historyBoundary: "Each signal stands alone. None rates safety, character or expertise.", stampTitle: "Journey stamps",
-    stampBody: "A visit adds one stamp. Payments do not.", milestone: "10th place reached",
-    milestoneBody: "Your optional souvenir is ready in Labs.", openMilestone: "View souvenir",
-    progress: (stamps: number) => `${stamps} of 10 visit stamps`,
+    historyBoundary: "Each signal stands alone. None rates safety, character or expertise.",
   },
   ko: {
     profileTitle: "공개 프로필", private: "공개 정보 없음", partial: "선택한 정보만 공개", scope: "보여줄 항목만 선택하세요.",
@@ -92,10 +87,7 @@ const COPY = {
     visitSource: "장소 기록", contributionSource: "공유한 팁", meetupSource: "참여한 Table", noHistory: "아직 없음",
     ready: "준비됨", reviewCurrent: "검토용 결과 · 외부 확인 없음", reviewExpired: "검토용 결과 만료 · 외부 확인 없음", reviewSource: "검토용", one: "1회", several: "여러 번",
     evidenceKind: "근거", updated: "최근 갱신", currentSession: "현재 세션", noUpdate: "아직 활동 없음", openEvidence: "근거 보기",
-    historyBoundary: "각 기록은 서로 독립적이며 안전·성품·전문성 점수가 아니에요.", stampTitle: "여행 스탬프",
-    stampBody: "방문하면 하나씩 쌓여요. 결제는 포함하지 않아요.", milestone: "열 번째 장소 도착",
-    milestoneBody: "선택형 기념품이 Labs에 준비됐어요.", openMilestone: "기념품 보기",
-    progress: (stamps: number) => `방문 스탬프 10개 중 ${stamps}개`,
+    historyBoundary: "각 기록은 서로 독립적이며 안전·성품·전문성 점수가 아니에요.",
   },
   ja: {
     profileTitle: "公開プロフィール", private: "公開情報なし", partial: "選んだ情報だけ公開",
@@ -111,10 +103,7 @@ const COPY = {
     visitSource: "場所の履歴", contributionSource: "共有したヒント", meetupSource: "参加したTable", noHistory: "まだなし",
     ready: "準備済み", reviewCurrent: "レビュー用結果 · 外部確認なし", reviewExpired: "レビュー用結果は期限切れ · 外部確認なし", reviewSource: "レビュー用", one: "1件", several: "複数",
     evidenceKind: "根拠", updated: "最終更新", currentSession: "現在のセッション", noUpdate: "アクティビティなし", openEvidence: "根拠を見る",
-    historyBoundary: "各記録は独立しています。安全性、人柄、専門性の評価ではありません。", stampTitle: "旅のスタンプ",
-    stampBody: "訪問で1つ増えます。支払いは含まれません。", milestone: "10か所目に到達",
-    milestoneBody: "任意の記念アイテムをLabsで確認できます。", openMilestone: "記念アイテムを見る",
-    progress: (stamps: number) => `訪問スタンプ10個中${stamps}個`,
+    historyBoundary: "各記録は独立しています。安全性、人柄、専門性の評価ではありません。",
   },
 } as const
 
@@ -159,7 +148,6 @@ function sameProfile(left: BActivityProfile, right: BActivityProfile) {
 
 export function ProfileReputationB({ locale, accountActive, personAxis, statusClock = Date.now(), startEditing = false, entryOrigin, onExit, registerHostExitGuard }: Props) {
   const { state, actions } = useBActivityProfile()
-  const { actions: ondoActions } = useOndoB()
   const copy = COPY[locale]
   const [editing, setEditing] = useState(false)
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
@@ -185,8 +173,22 @@ export function ProfileReputationB({ locale, accountActive, personAxis, statusCl
   }, [])
 
   useEffect(() => { if (!editing) setDraft(draftFrom(state.profile)) }, [editing, state.profile])
-  useEffect(() => { if (editing && !confirmingDiscard) nameRef.current?.focus({ preventScroll: true }) }, [editing, confirmingDiscard])
-  useEffect(() => { if (confirmingDiscard) keepEditingRef.current?.focus({ preventScroll: true }) }, [confirmingDiscard])
+  useEffect(() => {
+    if (!editing || confirmingDiscard) return
+    const frame = window.requestAnimationFrame(() => {
+      nameRef.current?.scrollIntoView({ block: "center", behavior: "instant" })
+      nameRef.current?.focus({ preventScroll: true })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [editing, confirmingDiscard])
+  useEffect(() => {
+    if (!confirmingDiscard) return
+    const frame = window.requestAnimationFrame(() => {
+      discardPromptRef.current?.scrollIntoView({ block: "nearest", behavior: "instant" })
+      keepEditingRef.current?.focus({ preventScroll: true })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [confirmingDiscard])
   useEffect(() => {
     if (!state.hydrated || !accountActive || !startEditing || startedEditingRef.current) return
     startedEditingRef.current = true
@@ -366,6 +368,7 @@ export function ProfileReputationB({ locale, accountActive, personAxis, statusCl
         ) : editing ? (
           <div className={styles.editorLayout}>
             <div className={styles.form}>
+              <p className={styles.editorNote}>{copy.boundary}</p>
               <label className={styles.nameField} htmlFor="profile-display-name"><span>{copy.name}</span><input id="profile-display-name" ref={nameRef} name="displayName" aria-label={copy.name} value={draft.displayName} maxLength={40} onChange={(event) => updateDraft((current) => ({ ...current, displayName: event.target.value }))} /></label>
               <ConsentField id="profile-from-b" locale={locale} label={copy.from} icon={<Globe2 size={17} aria-hidden="true" />} value={draft.from} consent={draft.shareFrom} onValue={(from) => updateDraft((current) => ({ ...current, from, shareFrom: from.trim() ? current.shareFrom : false }))} onConsent={(shareFrom) => { updateDraft((current) => ({ ...current, shareFrom })); setSaveAnnouncement(`${copy.from}: ${shareFrom ? copy.include : copy.exclude}`) }} />
               <ConsentField id="profile-lives-in-b" locale={locale} label={copy.lives} icon={<MapPin size={17} aria-hidden="true" />} value={draft.livesIn} consent={draft.shareLivesIn} onValue={(livesIn) => updateDraft((current) => ({ ...current, livesIn, shareLivesIn: livesIn.trim() ? current.shareLivesIn : false }))} onConsent={(shareLivesIn) => { updateDraft((current) => ({ ...current, shareLivesIn })); setSaveAnnouncement(`${copy.lives}: ${shareLivesIn ? copy.include : copy.exclude}`) }} />
@@ -432,13 +435,6 @@ export function ProfileReputationB({ locale, accountActive, personAxis, statusCl
           <summary aria-label={copy.privacy}><Info size={16} aria-hidden="true" /><span>{copy.privacy}</span></summary>
           <span>{copy.historyBoundary}</span>
         </details>
-      </article>
-
-      <article className={styles.stampCard} data-testid="ondo-b-stamp-milestone" data-stamps={state.stamps}>
-        <div className={styles.stampLead}><span className={styles.stampIcon}><Stamp size={21} aria-hidden="true" /></span><div><h2>{state.stamps === 10 ? copy.milestone : copy.stampTitle}</h2><p>{state.stamps === 10 ? copy.milestoneBody : copy.stampBody}</p></div></div>
-        <div className={styles.stampProgress} role="img" aria-label={copy.progress(state.stamps)}>{Array.from({ length: 10 }, (_, index) => <i key={index} data-filled={index < state.stamps}>{index < state.stamps ? <Check size={11} aria-hidden="true" /> : null}</i>)}</div>
-        <strong className={styles.stampCount}>{state.stamps}<span>/10</span></strong>
-        {state.stamps === 10 ? <button type="button" data-testid="open-labs-milestone" onClick={() => ondoActions.setSurface({ kind: "labs" })}>{copy.openMilestone}<ChevronRight size={17} aria-hidden="true" /></button> : null}
       </article>
     </section>
   )
@@ -577,7 +573,8 @@ function ConsentField({ id, locale, label, icon, value, consent, onValue, onCons
       : `${label}: ${consent ? "public. Make private" : hasValue ? "private. Make public" : copy.addValue}`
   return (
     <div className={styles.consentField} data-visibility={consent ? "public" : "private"}>
-      <label className={styles.fieldLabel} htmlFor={id}>{icon}<span>{label}</span><small id={`${id}-source`}>{copy.self}</small></label>
+      <label className={styles.fieldLabel} htmlFor={id}>{icon}<span>{label}</span></label>
+      <span className={styles.srOnly} id={`${id}-source`}>{copy.self}</span>
       <input id={id} name={id} aria-label={label} aria-describedby={`${id}-source`} value={value} maxLength={60} onChange={(event) => onValue(event.target.value)} />
       <button type="button" aria-pressed={consent} aria-label={toggleLabel} disabled={!hasValue} title={!hasValue ? copy.addValue : undefined} onClick={() => onConsent(!consent)}>{consent ? <Eye size={18} aria-hidden="true" /> : <EyeOff size={18} aria-hidden="true" />}<span>{consent ? copy.include : copy.exclude}</span></button>
     </div>

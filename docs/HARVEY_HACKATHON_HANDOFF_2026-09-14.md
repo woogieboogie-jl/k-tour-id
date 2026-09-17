@@ -2,6 +2,8 @@
 
 9/16 **골목 가이드 무료 읽기 + 선택적 내 패스 저장** 목업을 운영 배포하고 main/Harvey에 반영했습니다. 공개 열람에는 인증을 요구하지 않고 저장 선택에만 아래 네 기술을 연결합니다. [검수·배포 기록](./KTOUR_PUBLIC_GUIDE_RELEASE_2026-09-16.md)과 [화면 연결 계약](./EXPERIENCE_MOCK_HANDOFF_2026-09-15.md)을 참고하세요. 실제 네 기술 연동은 개발 대상입니다.
 
+**별도 로컬 후속본:** 모바일 가독성·정확한 복귀·Table 일정·Pass 방문 기록·자격 공유 안내를 정리했습니다. 해커톤 필수 연동 범위는 그대로입니다. 이 변경은 아직 미커밋/미푸시/미배포이며 기존 Harvey 브랜치에 없으므로, [로컬 변경 계약과 검수 상태](./KTOUR_MOBILE_REFINEMENT_LOCAL_2026-09-16.md)를 확인하세요.
+
 ## 1. 목표와 범위
 
 기존 지도 기반 웹앱에 **OmniOne CX + OpenDID + OmniOne Chain + Sui**를 연결합니다. 장소 1곳의 공개 가이드를 읽고, 원하는 사용자가 신원 확인·패스 발급/제시·AI 제안·명시 승인을 거쳐 **내 패스 컬렉션에 저장**하는 여정이 목표입니다. 현재 공개 앱은 목업이며 실제 연결은 개발 대상입니다.
@@ -49,7 +51,7 @@
 
 ## 5. 참고 리소스
 
-- **앱·소스:** [K-Tour ID](https://ktour-id.vercel.app) · [Harvey 인계 브랜치](https://github.com/woogieboogie-jl/k-tour-id/tree/handoff/harvey-20260914) · [main](https://github.com/woogieboogie-jl/k-tour-id/tree/main). `handoff/harvey-20260914`의 `k-tour-id-app/`에서 시작합니다. 검수된 앱 코드 기준은 `9980472`이며 이후 문서 전용 커밋과 구분합니다. [현재 배포·인계 기록](./KTOUR_PRODUCTION_HANDOFF_2026-09-15.md)과 [README 실행 안내](../README.md#run-the-handoff)를 참고합니다.
+- **앱·소스:** [K-Tour ID](https://ktour-id.vercel.app) · [Harvey 인계 브랜치](https://github.com/woogieboogie-jl/k-tour-id/tree/handoff/harvey-20260914) · [main](https://github.com/woogieboogie-jl/k-tour-id/tree/main). `handoff/harvey-20260914`의 `k-tour-id-app/`에서 시작합니다. 기록상 최신 배포 앱은 `5ba76a2`, 가이드 v2 기준은 `9980472`입니다. 이번 로컬 후속본이나 이후 문서 커밋과 구분하며 원격 최신 상태를 재확인한 것은 아닙니다. [현재 배포·인계 기록](./KTOUR_PRODUCTION_HANDOFF_2026-09-15.md)과 [README 실행 안내](../README.md#run-the-handoff)를 참고합니다.
 - **별도 실험:** Sumsub Sandbox는 별도 feature 브랜치·Preview이며 이 릴리스에 포함하지 않습니다. 네 기술의 필수 개발을 대체하지 않습니다. 경로와 검증 한계는 [현재 배포·인계 기록](./KTOUR_PRODUCTION_HANDOFF_2026-09-15.md)에 정리합니다.
 - **구현 상세:** [Sui 필수 통합 추가 명세](./HACKATHON_SUI_REQUIRED_ADDENDUM_2026-09-14.md) → [기존 1주 개발 명세](./HACKATHON_ONE_WEEK_SPEC_2026-09-14.md). 기술·보안·제출 요건과 Sui→최종 DB→OmniOne 순서는 추가 명세, 무료 읽기/선택 저장과 v2 scope는 아래 가이드 인계를 우선합니다. 기존 혜택 사용/redeem은 컬렉션 저장이며 읽기 권한이 아닙니다. API는 신규 구현 제안이며 공급자 공식 규격이 아닙니다.
 - **가이드 UI 연결:** [비금전 체험 목업 인계](./EXPERIENCE_MOCK_HANDOFF_2026-09-15.md) — 공개 읽기/선택적 저장 v2와 실제 adapter의 대응, 이전 v1 이력의 경계입니다. 금융 목업과 독립이며 실제 인증·AI·두 체인 호출은 없습니다. 버전별 구현·검수 상태는 해당 기록을 따릅니다.

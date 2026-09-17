@@ -50,6 +50,9 @@ export const B_NATIVE_INTERACTIVE_FILES = Object.freeze([
   "features/ondo/identity-b/local-check-walkthrough-b.module.css",
   "features/ondo/identity-b/traveler-id-entry-b.tsx",
   "features/ondo/identity-b/traveler-id-entry-b.module.css",
+  "features/ondo/identity-b/journey-stamps-b.tsx",
+  "features/ondo/identity-b/journey-stamps-b.module.css",
+  "features/ondo/identity-b/journey-stamps-navigation-b.ts",
   "features/ondo/identity-b/traveler-id-status-b.ts",
   "features/ondo/identity-b/ktour-id-setup-b.tsx",
   "features/ondo/identity-b/ktour-id-setup-b.module.css",
@@ -122,6 +125,8 @@ export const REQUIRED_B_NATIVE_COMMERCE_FILES = Object.freeze([
   "features/ondo/commerce-b/commerce-operations-b.module.css",
   "features/ondo/commerce-b/visit-stamp-receipt-b.tsx",
   "features/ondo/commerce-b/visit-stamp-receipt-b.module.css",
+  "features/ondo/commerce-b/journey-visit-b.tsx",
+  "features/ondo/commerce-b/journey-visit-b.module.css",
 ])
 
 // Labs is a product-owned, deterministic technical preview. The standalone

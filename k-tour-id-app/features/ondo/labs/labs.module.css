@@ -1,4 +1,15 @@
 .boundary, .body { display: grid; gap: 22px; padding: 30px 18px calc(32px + env(safe-area-inset-bottom)); background: var(--ondo-canvas, #fff); color: var(--ondo-ink, #171717); }
+.keepsakeBody { gap: 20px; }
+.keepsakeBody, .keepsakeBody > .header { background: var(--ondo-surface-raised, #fff); }
+.keepsakeIntro { display: grid; gap: 10px; }
+.keepsakeIntro > p { margin: 0; color: var(--ondo-ink, #171717); font-size: 19px; font-weight: 680; line-height: 1.35; letter-spacing: -.025em; text-wrap: balance; }
+.keepsakeIntro > span, .keepsakeIntro > small { color: var(--ondo-muted, #626262); font-size: 13px; line-height: 1.58; }
+.keepsakeIntro > small { padding: 12px 14px; border: 1px solid var(--ondo-line, rgb(23 23 23 / 12%)); border-radius: 12px; font-size: 12px; }
+.keepsakeSuccess { display: grid; gap: 28px; padding: 26px 16px 18px; border: 1px solid var(--ondo-line, rgb(23 23 23 / 12%)); border-radius: 22px; text-align: center; }
+.keepsakeSuccessResult { display: grid; justify-items: center; gap: 14px; min-width: 0; }
+.keepsakeSuccessMark { display: grid; width: 76px; height: 76px; margin-bottom: 6px; place-items: center; border: 1px solid color-mix(in srgb, var(--ondo-accent, #8c244f) 22%, transparent); border-radius: 24px; background: color-mix(in srgb, var(--ondo-accent, #8c244f) 7%, var(--ondo-canvas, #fff)); color: var(--ondo-accent, #8c244f); }
+.keepsakeSuccessContext { margin: 0; color: var(--ondo-muted, #626262); font-size: 12px; line-height: 1.5; }
+.keepsakeSuccessResult > h3 { max-width: 24rem; margin: 0; color: var(--ondo-ink, #171717); font-size: 24px; line-height: 1.35; letter-spacing: -.035em; text-wrap: balance; overflow-wrap: anywhere; }
 .boundary :focus-visible, .body :focus-visible { outline: 2px solid var(--ondo-focus); outline-offset: 2px; }
 .boundary { min-height: min(84dvh, 720px); align-content: center; text-align: center; }
 .labMark { display: grid; width: 56px; height: 56px; margin: 0 auto; place-items: center; border: 1px solid var(--ondo-line, rgb(23 23 23 / 12%)); border-radius: 50%; color: var(--ondo-muted, #626262); }

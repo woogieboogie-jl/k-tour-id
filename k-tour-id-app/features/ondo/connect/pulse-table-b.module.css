@@ -180,10 +180,10 @@
 .inlineConfirm button:disabled { opacity: .42; }
 .reportReasons { display: grid; grid-column: 1 / -1; gap: 7px; margin: 0; padding: 0; border: 0; }
 .reportReasons legend { margin-bottom: 1px; color: #655d57; font-size: 12px; font-weight: 760; }
-.reportReasons > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.reportReasons label { position: relative; display: grid; min-height: 44px; place-items: center; border: 1px solid rgb(67 52 43 / 14%); border-radius: 12px; padding: 6px; background: #fff; color: #5f5751; cursor: pointer; font-size: 12px; font-weight: 750; line-height: 1.25; text-align: center; }
+.reportReasons > div { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.reportReasons label { position: relative; display: grid; box-sizing: border-box; min-width: 0; min-height: 48px; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 10px; border: 1px solid rgb(67 52 43 / 14%); border-radius: 12px; padding: 10px 12px; background: #fff; color: #5f5751; cursor: pointer; font-size: 15px; font-weight: 750; line-height: 1.45; text-align: start; overflow-wrap: normal; word-break: normal; }
 .reportReasons label[data-selected="true"] { border-color: #24211f; background: #24211f; color: #fff; }
-.reportReasons input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.reportReasons input { width: 20px; height: 20px; margin: 0; color: inherit; accent-color: currentColor; }
 .reportReasons label:focus-within { outline: 3px solid var(--ondo-focus, #1d66d1); outline-offset: 2px; }
 .reportBlockOption { display: flex; min-height: 44px; grid-column: 1 / -1; align-items: center; gap: 9px; border-radius: 12px; padding: 0 4px; color: #514a45; cursor: pointer; font-size: 12px; font-weight: 720; }
 .reportBlockOption input { width: 20px; height: 20px; flex: 0 0 auto; accent-color: #24211f; }
@@ -376,11 +376,7 @@
 
 .entryHeader { position: relative; }
 .entryHeader::after {
-  width: 64px;
-  height: 3px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #8d2940, #c95339 55%, #efb65e);
-  content: "";
+  content: none;
 }
 
 .cardActive {
@@ -1556,3 +1552,54 @@
 .sampleCases summary { min-height: 44px; align-content: center; cursor: pointer; }
 .sampleCases label { display: grid; gap: 8px; margin-block: 10px; }
 .sampleCases select { min-width: 0; width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--ondo-line, #e5e5e5); color: var(--ondo-ink, #171717); background: var(--ondo-surface-raised, #fff); font: inherit; font-size: 14px; }
+
+/* Table facts are labels and values, not sequential steps. Keep the compact
+   list teasers separate from the complete detail, after every legacy layout. */
+.plan[data-plan-context]::before,
+.plan[data-plan-context] dl > div::before { content: none; }
+.cardActive > .plan[data-plan-context="card"] { padding-inline: 12px; }
+.detail .detailBody > .plan[data-plan-context="detail"] { padding-inline: 14px; }
+.detail .detailBody > .plan[data-plan-context="detail"] dl { grid-template-columns: minmax(0, 1fr); }
+.detail .detailBody > .plan[data-plan-context="detail"] dl > div {
+  grid-template-columns: minmax(88px, .72fr) minmax(0, 1.28fr);
+  align-items: start;
+  gap: 6px 12px;
+  padding-block: 8px;
+}
+.detail .detailBody > .plan[data-plan-context="detail"] dd {
+  font-size: 15px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+.detail .bookingTruth { font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; word-break: keep-all; }
+
+/* These optional destinations follow the active task, including in wide
+   two-column layouts. They keep their original guarded navigation handlers. */
+.detailBody > .detailCompanions,
+.detailBody > .detailProfile { grid-column: 1 / -1; grid-row: auto; min-width: 0; }
+.detailCompanions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  border-top: 1px solid var(--ondo-line, #e5e5e5);
+  padding-top: 8px;
+}
+.detailCompanions > .secondary {
+  min-width: 0;
+  min-height: 48px;
+  justify-content: flex-start;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 0;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.45;
+  text-align: start;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+.detailCompanions > .secondary:only-child { grid-column: 1 / -1; }
+.detailCompanions > .secondary > svg { flex: 0 0 auto; }

@@ -327,7 +327,13 @@ test.describe("ONDO B standalone Sites packaging contract", () => {
     await (await import("../../scripts/ondo-b-standalone/prepare.mjs")).prepareStandaloneSource({ projectId: "appgprj_local_ondo_b_artifact" })
     const css = readFileSync(resolve(STAGE_ROOT, "features/ondo/onboarding/official-directory-onboarding.module.css"), "utf8")
     expect(css).toContain('.root :global([data-sheet-layer="true"])')
-    expect(css).toContain('.root[data-onboarding-step="intent"]')
+    // R1 intentionally removed the first-step-only compressed layout. The
+    // packaged guest setup must retain the same shared scale as its source.
+    expect(css).toBe(readFileSync(resolve(process.cwd(), "features/ondo/onboarding/official-directory-onboarding.module.css"), "utf8"))
+    expect(css).not.toContain('data-onboarding-step="intent"')
+    expect(css).toMatch(/\.stageHeading h1\s*\{[^}]*font-size:clamp\(28px, 8vw, 32px\);[^}]*line-height:1\.08;/)
+    expect(css).toMatch(/\.primary,\.secondary\s*\{[^}]*min-height:48px;/)
+    expect(css).toMatch(/\.primary\s*\{[^}]*min-height:52px;/)
     expect(css).toContain('.choice[aria-checked="true"]')
     expect(css).toContain(".group")
     expect(css).not.toMatch(/(?:KYC|payment|chat|reward|Labs|After19|demo|simulation)/i)

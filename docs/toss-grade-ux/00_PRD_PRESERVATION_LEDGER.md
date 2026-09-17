@@ -45,7 +45,7 @@ dark/neon presentation과 night subset 강조만 열며 `Account`, `Person`, `19
 | `REQ-013` | 가기 전 필요한 사실 | 카드·번호·예약·언어·연령의 yes/conditional/no/unknown | `FL-001`, `FL-016` | 별도 제품/장문을 만들지 않고 장소 fact grid로 시각화 |
 | `REQ-014` | 제한적 merchant trait | policy/venue/offer 범위, stale/error/unknown, contract-only truth | `FL-016` | 일반 장소에는 결정에 필요한 fact만; 상세는 disclosure/Labs |
 | `REQ-015` | 행동 기반 신뢰 | Identity/Visit/Contribution/Meetup 네 축, 종합 점수 없음 | `FL-003`, `FL-012`, `FL-015` | 긴 설명 대신 타임라인·네 축 visual; 의미는 합치지 않음 |
-| `REQ-016` | 10회 여행 기억 | unique visit만 stamp, 9→10, opt-in badge, 결제와 분리 | `FL-004`, `FL-018` | NFT는 Labs secondary; milestone 자체는 My Korea에 유지 |
+| `REQ-016` | 10회 여행 기억 | unique visit만 stamp, 9→10, opt-in badge, 결제와 분리 | `FL-004`, `FL-018` | 2026-09-16 로컬 UX 개정: 진행·컬렉션의 홈은 Travel Pass, 적립 진입은 장소 상세. 배지는 선택형 집중 화면에서 기존 Labs 실행 계약 재사용. 결제·신원 자격과 분리 유지 |
 | `REQ-017` | 서울·부산 중심 전국 shell | 서울 200, 부산 200, 제주 editorial, 다른 지역 허위 숫자 금지 | `FL-001` | 전국 intro 카피·숫자 축약 가능; 실제 지역과 source 차이는 유지 |
 | `REQ-018` | responsive web | 320/360/390/430 중심, tablet/desktop/landscape, KO/EN/JA | 전 Flow | desktop을 기준으로 줄이는 방식 금지; mobile first composition |
 | `REQ-019` | 온도를 강하게 시각화 | field/aura/core/selection grammar, 숫자·신뢰·freshness 접근성 | `FL-001` | 기본 지도에서는 aura-first 가능; 선택/목록/상세에 정확한 의미 제공 |

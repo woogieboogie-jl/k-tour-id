@@ -48,6 +48,27 @@ const COPY = {
   },
 } as const
 
+const HOLDER_REQUEST_CONTEXT_COPY = {
+  en: {
+    requester: "Requested by", purpose: "Purpose", answer: "What is shared", retention: "How long it stays", expires: "Request expires",
+    purposes: { person: "Identity check", age: "19+ eligibility", visitor_benefit: "Visitor benefit eligibility" },
+    minimalAnswer: "Only the requested eligibility answer (yes/no or cannot confirm) is shared. Your original ID or document is not shared.",
+    retentionNote: "This check stays in this page session; nothing is sent externally. Reloading or resetting the sample clears it. Closing this panel does not clear it.",
+  },
+  ko: {
+    requester: "요청한 곳", purpose: "확인 목적", answer: "공유하는 정보", retention: "보관 기간", expires: "요청 만료 시각",
+    purposes: { person: "신원 확인", age: "19+ 이용 자격", visitor_benefit: "방문자 혜택 이용 자격" },
+    minimalAnswer: "요청한 자격의 충족 여부(예/아니요) 또는 확인 불가만 알려요. 원본 신분증이나 문서는 공유하지 않아요.",
+    retentionNote: "이 확인 기록은 현재 페이지에서만 보관하며 외부 전송은 없어요. 새로고침하거나 샘플을 초기화하면 삭제돼요. 창을 닫아도 기록은 남아요.",
+  },
+  ja: {
+    requester: "リクエスト元", purpose: "確認の目的", answer: "共有する情報", retention: "保持期間", expires: "リクエストの有効期限",
+    purposes: { person: "本人確認", age: "19+の利用資格", visitor_benefit: "旅行者特典の利用資格" },
+    minimalAnswer: "求められた資格の回答（はい／いいえ）、または確認できない旨だけを伝えます。元の身分証や書類は共有しません。",
+    retentionNote: "この確認記録はこのページ内のみで保持し、外部には送信しません。再読み込みやサンプルのリセットで消去されます。画面を閉じても記録は残ります。",
+  },
+} as const
+
 const SUPPORT_COPY = {
   en: { title: "Settlement support", reason: "What needs checking?", mismatch: "Amounts do not match", payment: "Payment question", refund: "Refund question", start: "Review request", review: "Review these amounts", pending: "Sending sample request", unknown: "Check this request first", failed: "Request not sent", stale: "Amounts changed. Review again.", submitted: "Sample ticket created", consent: "Send sample request", cancel: "Cancel request", check: "Check request", retry: "Retry same request", frozen: "These amounts are fixed for this request. Only this summary is included; no visitor details.", boundary: "Sample support only. Nothing is sent to a partner or changes your balance.", sample: "Sample response", success: "Success", failure: "Failure", unknownCase: "Result unknown", download: "Export sample summary", exportFailed: "Could not create the file. Try again.", ticket: "Sample ticket" },
   ko: { title: "정산 문의", reason: "무엇을 확인할까요?", mismatch: "금액 불일치", payment: "결제 문의", refund: "환불 문의", start: "문의 내용 확인", review: "이 금액으로 문의해요", pending: "샘플 문의 처리 중", unknown: "이 문의부터 확인해 주세요", failed: "문의를 보내지 못했어요", stale: "금액이 바뀌었어요. 다시 확인해 주세요.", submitted: "샘플 문의 번호를 만들었어요", consent: "샘플 문의 보내기", cancel: "문의 취소", check: "같은 문의 조회", retry: "같은 문의 재시도", frozen: "이번 문의에 포함되는 금액이에요. 방문자 정보 없이 이 요약만 포함해요.", boundary: "샘플 문의예요. 파트너에게 전송되거나 잔액이 바뀌지 않아요.", sample: "샘플 응답", success: "성공", failure: "실패", unknownCase: "결과 불명", download: "샘플 요약 내보내기", exportFailed: "파일을 만들지 못했어요. 다시 시도해 주세요.", ticket: "샘플 문의 번호" },
@@ -70,6 +91,7 @@ export function IntegrationDemoB(props: Props) {
 function EnabledIntegrationDemoB({ onClose, open = true, initialSection = "verify" }: Props) {
   const { state } = useOndoB()
   const copy = COPY[state.locale]
+  const holderContextCopy = HOLDER_REQUEST_CONTEXT_COPY[state.locale]
   const supportCopy = SUPPORT_COPY[state.locale]
   const supportHistoryCopy = SUPPORT_HISTORY_COPY[state.locale]
   const [section, setSection] = useState<IntegrationDemoSection>(initialSection)
@@ -82,6 +104,7 @@ function EnabledIntegrationDemoB({ onClose, open = true, initialSection = "verif
   const [supportOutcome, setSupportOutcome] = useState<SettlementSupportOutcomeB>("success")
   const [exportError, setExportError] = useState(false)
   const [counterReady, setCounterReady] = useState(false)
+  const holderConsentHeading = useRef<HTMLHeadingElement>(null)
   const supportReasonInput = useRef<HTMLSelectElement>(null)
   const focusNewSupport = useRef(false)
   const engineRef = useRef<ReturnType<typeof createIntegrationDemoEngineB> | null>(null)
@@ -183,6 +206,13 @@ function EnabledIntegrationDemoB({ onClose, open = true, initialSection = "verif
   const support = view.support
   const receiptStale = engine.partnerReceiptState(state.identityCredential)?.status === "stale"
   const checkedTime = (value: number) => new Intl.DateTimeFormat(state.locale, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" }).format(value)
+  const requestExpiryTime = (value: number) => new Intl.DateTimeFormat(state.locale, { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short" }).format(value)
+
+  useEffect(() => {
+    if (!open || partner?.phase !== "consent") return
+    const frame = window.requestAnimationFrame(() => holderConsentHeading.current?.focus())
+    return () => window.cancelAnimationFrame(frame)
+  }, [open, partner?.phase, partner?.requestRef])
 
   if (!open) return null
 
@@ -206,10 +236,19 @@ function EnabledIntegrationDemoB({ onClose, open = true, initialSection = "verif
             <h2>{receiptStale ? copy.stale : receiptTitle(partner.receipt)}</h2><p>{receiptStale ? copy.staleNote : receiptNote(partner.receipt)}</p>
             <time className={styles.checkedTime} data-testid="integration-receipt-checked-at" dateTime={new Date(partner.receipt.checkedAt).toISOString()}>{copy.checked} · {checkedTime(partner.receipt.checkedAt)}</time>
             <details className={styles.details}><summary>{copy.receipt}<ChevronDown size={16} /></summary><p>{copy.historical}</p><code>{partner.receipt.receiptRef}</code><small>{copy[partner.receipt.purpose]} · {receiptTitle(partner.receipt)}</small></details>
+          </div> : partner?.phase === "consent" ? <div className={styles.holderRequest} data-testid="integration-holder-request" data-phase={partner.phase}>
+            <h2 ref={holderConsentHeading} tabIndex={-1}>{copy.holder}</h2>
+            <dl lang={state.locale} className={styles.holderRequestContext} data-testid="partner-holder-request-context">
+              <div><dt>{holderContextCopy.requester}</dt><dd>{copy.partner}</dd></div>
+              <div><dt>{holderContextCopy.purpose}</dt><dd>{holderContextCopy.purposes[partner.purpose]}</dd></div>
+              <div><dt>{holderContextCopy.answer}</dt><dd>{holderContextCopy.minimalAnswer}</dd></div>
+              <div><dt>{holderContextCopy.retention}</dt><dd>{holderContextCopy.retentionNote}</dd></div>
+              <div><dt>{holderContextCopy.expires}</dt><dd><time dateTime={new Date(partner.expiresAt).toISOString()}>{requestExpiryTime(partner.expiresAt)}</time></dd></div>
+            </dl>
           </div> : partner ? <div className={styles.card} data-testid="integration-holder-request" data-phase={partner.phase}>
-            <small>{partner.phase === "consent" ? copy.holder : copy.partner}</small>
-            <h2>{copy[partner.purpose]}</h2><p>{partner.phase === "consent" ? copy.shares : copy.ask}</p>
-            <div className={styles.predicate}><ShieldCheck size={21} aria-hidden="true" /><strong>{copy[partner.purpose]}</strong><span>{partner.phase === "consent" ? "✓ / −" : "?"}</span></div>
+            <small>{copy.partner}</small>
+            <h2>{copy[partner.purpose]}</h2><p>{copy.ask}</p>
+            <div className={styles.predicate}><ShieldCheck size={21} aria-hidden="true" /><strong>{copy[partner.purpose]}</strong><span>?</span></div>
           </div> : <div className={styles.intro}><ShieldCheck size={30} aria-hidden="true" /><h2>{copy.partner}</h2><p>{copy.ask}</p></div>}
           {partner?.phase === "request" ? <PartnerRequestHandoffB key={partner.requestRef} request={partner} locale={state.locale} onOpen={() => { engine.openConsent(); update() }} onCancel={() => { engine.openConsent(); engine.resolveHolder(snapshotRef.current.credential, "deny"); update() }} />
             : partner?.phase === "consent" ? <div className={styles.stack}><button className={styles.primary} data-testid="integration-holder-approve" onClick={() => { engine.resolveHolder(snapshotRef.current.credential, "approve"); update() }}>{copy.allow}</button><button className={styles.secondary} data-testid="integration-holder-deny" onClick={() => { engine.resolveHolder(snapshotRef.current.credential, "deny"); update() }}>{copy.deny}</button></div>

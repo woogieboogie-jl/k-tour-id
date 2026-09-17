@@ -1186,7 +1186,7 @@
 .beforeContent small { color: #6f6962; font-size: 12px; line-height: 1.4; text-align: left; overflow-wrap: anywhere; }
 
 @media (max-width: 430px) {
-  .decisionActions { grid-template-columns: minmax(0, 1fr) 50px; }
+  .decisionActions { grid-template-columns: 50px 50px; }
   .decisionActions button { width: 50px; min-width: 50px; padding: 0; }
   .saveActionLabel {
     position: absolute !important;
@@ -1907,6 +1907,14 @@
 }
 
 /* Place services lead. Navigation and saving stay available as utilities. */
+.decisionActions { grid-template-columns: max-content 50px; justify-content: start; }
+.decisionActions a { width: 50px; padding: 0; }
+.decisionActions svg { flex-shrink: 0; }
+.decisionActions button { padding-inline: 14px; }
+@media (max-width:430px) {
+  .decisionActions { grid-template-columns: 50px 50px; }
+  .decisionActions button { padding: 0; }
+}
 .peekActions a,
 .decisionActions a,
 .decisionActions button { border:1px solid var(--ondo-line); background:var(--ondo-surface-raised); color:var(--ondo-ink); box-shadow:none; }
@@ -1922,4 +1930,46 @@
   .body { grid-template-areas:"identity pulse" "offer pulse" "table table" "decisions utility" "after19 after19" "save save" "before before"; }
   .body > :global([data-testid="place-service-actions"]) { grid-area:offer; margin:12px 0 0; }
   .utilityActions[data-utility-layout="standalone"] { grid-area:utility; }
+}
+
+/* Full-detail companions are quiet rows, not competing primary cards. Keep
+   the commerce/reservation hierarchy and every peek/other entry untouched. */
+.body > :global([data-testid="experience-open"]),
+.body > :global([data-testid="canonical-journey-open"]) {
+  min-height:64px;
+  margin:0;
+  padding:12px 0;
+  border:0;
+  border-block-end:1px solid var(--ondo-line, #dedede);
+  border-radius:0;
+  background:transparent;
+  color:var(--ondo-ink, #171717);
+  box-shadow:none;
+}
+.body > :global([data-testid="canonical-journey-open"]) > span:first-child {
+  flex-basis:24px;
+  width:24px;
+  height:24px;
+  border-radius:0;
+  background:transparent;
+}
+.body > .tableActions {
+  border:0;
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
+  padding:12px 0;
+}
+.body > .tableActions .tablePrimary {
+  border-color:var(--ondo-line, #dedede);
+  background:var(--ondo-surface, #fff);
+  color:var(--ondo-ink, #171717);
+  box-shadow:none;
+}
+.body > .tableActions .tablePrimary small { color:var(--ondo-muted, #626262); }
+@media (forced-colors:active) {
+  .body > :global([data-testid="experience-open"]),
+  .body > :global([data-testid="canonical-journey-open"]) { border-block-end-color:CanvasText; color:CanvasText; }
+  .body > .tableActions .tablePrimary { border-color:CanvasText; background:Canvas; color:CanvasText; }
+  .body > .tableActions .tablePrimary small { color:CanvasText; }
 }

@@ -1,7 +1,7 @@
 .root { display: grid; gap: 20px; min-width: 0; padding: 8px 0; color: var(--ondo-ink, #171717); }
 .root *, .root *::before, .root *::after { box-sizing: border-box; }
 .root p, .root h3 { margin: 0; }
-.truth { display: flex; align-items: center; gap: 7px; color: var(--ondo-muted, #64646b); font-size: 12px; line-height: 1.5; }
+.truth { display: flex; align-items: center; gap: 7px; color: var(--ondo-muted, #64646b); font-size: 15px; line-height: 1.5; }
 .truth svg, .notice svg { flex: 0 0 auto; }
 .steps { display: flex; gap: 8px; padding: 0; margin: 0; list-style: none; }
 .steps li { display: flex; flex: 1; align-items: center; gap: 6px; color: var(--ondo-muted, #64646b); font-size: 11px; }
@@ -27,14 +27,14 @@
 .ready { margin-left: auto; color: var(--ondo-muted, #64646b); font-size: 11px; }
 .signerChoices button { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; }
 .signerChoices button svg { flex: 0 0 auto; }
-.signer p, .notice { color: var(--ondo-muted, #64646b); font-size: 12px; line-height: 1.6; }
+.signer p, .notice { color: var(--ondo-muted, #64646b); font-size: 15px; line-height: 1.6; }
 .notice { display: flex; align-items: flex-start; gap: 8px; }
 .facts { display: grid; gap: 0; padding: 4px 16px; margin: 0; border-radius: 18px; background: var(--ondo-surface-soft, #f3f3f6); }
 .facts > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding-block: 9px; }
 .facts > div + div { border-top: 1px solid var(--ondo-line, #dedee3); }
 .facts dt { color: var(--ondo-muted, #64646b); font-size: 12px; line-height: 1.4; }
 .facts dd { margin: 0; max-width: 60%; font-size: 13px; font-weight: 740; text-align: right; font-variant-numeric: tabular-nums; }
-.consent { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.6; }
+.consent { display: flex; align-items: flex-start; gap: 10px; font-size: 15px; line-height: 1.6; }
 .consent input { width: 20px; height: 20px; margin: 2px 0 0; flex: 0 0 auto; accent-color: var(--ondo-ink, #171717); }
 .actions { display: grid; gap: 8px; }
 .primary, .secondary, .textButton { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; width: 100%; border: 1px solid transparent; border-radius: 16px; padding: 12px; font: inherit; font-size: 14px; font-weight: 750; line-height: 1.4; }
@@ -46,7 +46,7 @@
 .resultHero { display: grid; justify-items: center; gap: 15px; padding: 12px 0; text-align: center; }
 .resultIcon { display: grid; place-items: center; width: 62px; height: 62px; border-radius: 22px; background: var(--ondo-surface-soft, #f3f3f6); }
 .resultHero > strong { font-size: clamp(30px, 9vw, 44px); letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
-.resultHero p { color: var(--ondo-muted, #64646b); font-size: 13px; line-height: 1.5; }
+.resultHero p { color: var(--ondo-muted, #64646b); font-size: 15px; line-height: 1.5; }
 .journey { display: grid; padding: 16px 18px; margin: 0; border: 1px solid var(--ondo-line, #dedee3); border-radius: 22px; list-style: none; }
 .journey li { position: relative; display: flex; align-items: flex-start; gap: 13px; min-height: 66px; }
 .journey li:last-child { min-height: 42px; }
@@ -55,7 +55,7 @@
 .journey li[data-complete="true"] > span { background: var(--ondo-ink, #171717); color: var(--ondo-surface, #fff); border-color: transparent; }
 .journey li > div { display: grid; gap: 4px; padding-top: 3px; }
 .journey strong { font-size: 13px; }
-.journey small { color: var(--ondo-muted, #64646b); font-size: 12px; line-height: 1.45; }
+.journey small { color: var(--ondo-muted, #64646b); font-size: 15px; line-height: 1.5; }
 .details { border-top: 1px solid var(--ondo-line, #dedee3); }
 .details summary { display: flex; align-items: center; justify-content: space-between; min-height: 44px; color: var(--ondo-muted, #64646b); font-size: 12px; font-weight: 720; cursor: pointer; list-style: none; }
 .details summary::after { content: "+"; font-size: 18px; font-weight: 400; }
@@ -67,7 +67,7 @@
 .scenarios { display: flex; flex-wrap: wrap; gap: 8px; }
 .scenarios button { min-height: 44px; border: 1px solid var(--ondo-line, #dedee3); border-radius: 12px; padding: 9px 12px; color: var(--ondo-ink, #171717); background: var(--ondo-surface, #fff); font-size: 12px; }
 .scenarios [aria-pressed="true"] { border-color: var(--ondo-ink, #171717); }
-.root .error { padding: 12px; border: 1px solid var(--ondo-line, #dedee3); border-radius: 12px; color: var(--ondo-ink, #171717); font-size: 12px; line-height: 1.6; }
+.root .error { padding: 12px; border: 1px solid var(--ondo-line, #dedee3); border-radius: 12px; color: var(--ondo-ink, #171717); font-size: 15px; line-height: 1.6; }
 .root :is(button, input, summary):focus-visible { outline: 3px solid var(--ondo-focus, #538dea); outline-offset: 3px; }
 @media (max-width: 360px) { .root { gap: 16px; } .exchange { padding: 17px 14px; } .signer { padding: 14px 12px; } .steps { gap: 4px; } .steps li { gap: 4px; font-size: 10px; } }
 .connectionPreview { display: grid; gap: 16px; color: var(--ondo-ink); padding-block: 20px; }

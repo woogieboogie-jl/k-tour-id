@@ -92,6 +92,19 @@ function isExplicitStablecoinDisclosure(file: string, literal: string, pattern: 
   return STABLECOIN_DISCLOSURES[file]?.has(literal) === true && STABLECOIN_DISCLOSURE_PATTERNS.has(String(pattern))
 }
 
+// These labels describe the optional, review-only collection. Exempt only
+// this vocabulary, never provider-success claims or an entire Journey file.
+const JOURNEY_VISIT_LABELS: Readonly<Record<string, ReadonlySet<string>>> = {
+  "features/ondo/commerce-b/journey-visit-b.tsx": new Set(["About visit stamps"]),
+  "features/ondo/identity-b/journey-stamps-b.tsx": new Set([
+    "Explore Korea. Review visit stamps will appear here.",
+    "Visit stamp ${number}",
+  ]),
+}
+function isJourneyVisitLabel(file: string, literal: string, pattern: RegExp) {
+  return String(pattern) === String(/\bvisit\s+stamps?\b/i) && JOURNEY_VISIT_LABELS[file]?.has(literal) === true
+}
+
 test("PROD-B-001 canonical / keeps the official guest discovery foundation reachable", () => {
   const paths = productionImportGraph().map((file) => relative(APP_ROOT, file))
   expect(paths).toContain("features/ondo/map/map-entry-b.tsx")
@@ -202,6 +215,7 @@ test("PROD-B-004 sample disclosures are explicit without false provider-success 
       .filter((pattern) => pattern.test(literal))
       .filter((pattern) => {
         if (isExplicitStablecoinDisclosure(file, literal, pattern)) return false
+        if (isJourneyVisitLabel(file, literal, pattern)) return false
         // This selector is not consumer copy. The option's visible label uses
         // the existing shared sample disclosure and remains sample-session gated.
         if (file === "features/ondo/map/map-options-b.tsx" && literal === "ondo-b-map-options-demo") return false
@@ -283,6 +297,14 @@ test("PROD-B-004S stablecoin disclosure exceptions cannot allow false settlement
   expect(isExplicitStablecoinDisclosure(path, "Bridge confirmed", /\b(?:wallet|bridge)\s+(?:success|complete|confirmed)\b/i)).toBe(false)
   expect(isExplicitStablecoinDisclosure(path, "OOKRW is redeemable won", /\bOOKRW\b/i)).toBe(false)
   expect(isExplicitStablecoinDisclosure(path, "Simulated wallet success", /\bsimulat(?:e|ed|es|ing|ion|ions)\b/i)).toBe(false)
+})
+
+test("PROD-B-004J Journey labels cannot exempt provider claims or other surfaces", () => {
+  const path = "features/ondo/commerce-b/journey-visit-b.tsx"
+  expect(isJourneyVisitLabel(path, "About visit stamps", /\bvisit\s+stamps?\b/i)).toBe(true)
+  expect(isJourneyVisitLabel("features/ondo/map/map-entry-b.tsx", "About visit stamps", /\bvisit\s+stamps?\b/i)).toBe(false)
+  expect(isJourneyVisitLabel(path, "Verified visit stamp", /\bvisit\s+stamps?\b/i)).toBe(false)
+  expect(isJourneyVisitLabel(path, "Wallet success", /\b(?:wallet|bridge)\s+(?:success|complete|confirmed)\b/i)).toBe(false)
 })
 
 test("PROD-B-005 six production flows remain the guest foundation, not the whole PRD gate", () => {

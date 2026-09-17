@@ -19,8 +19,13 @@ test.describe("Wave 2 onboarding UI contract", () => {
     expect(source).toContain("useLayoutEffect(() =>")
     expect(source).toContain("?.focus({ preventScroll: true })")
     expect(source).toContain('data-onboarding-heading={step}')
-    expect(css).toContain('data-onboarding-step="intent"')
-    expect(css).toContain("max-height:min(56dvh, 520px)")
+    // Optional steps share their sheet and type scale. A short viewport gets
+    // more scrollable room, not an intent-only miniature first step.
+    expect(css).toContain("max-height:min(72dvh, 620px)")
+    expect(css).toContain("max-height:86dvh")
+    expect(css).not.toContain('data-onboarding-step="intent"')
+    expect(css).not.toContain("56dvh")
+    expect(css).toMatch(/\.stageHeading h1\s*\{[^}]*font-size:clamp\(28px, 8vw, 32px\);[^}]*line-height:1\.08;/s)
   })
 
   test("collects canonical intent, conditional area and preferences as a local draft", () => {
@@ -75,13 +80,19 @@ test.describe("Wave 2 onboarding UI contract", () => {
   test("supports compact phones, landscape, reduced motion and forced colors", () => {
     expect(css).toContain("max-width:360px")
     expect(css).toContain("max-height:650px")
-    expect(css).toContain("min-width:700px")
-    expect(css).toContain("max-height:520px")
+    expect(css).toMatch(/@media \(max-height:650px\)\s*\{\s*\.root :global\(section\[data-sheet-variant="decision"\]\)\s*\{\s*max-height:86dvh;/s)
+    expect(css).toMatch(/\.content\s*\{[^}]*padding:20px 20px 8px;/s)
+    expect(css).toMatch(/@media \(max-width:360px\)\s*\{\s*\.content\s*\{\s*padding-inline:16px;/s)
     expect(css).toContain("prefers-reduced-motion:reduce")
     expect(css).toContain("forced-colors:active")
     expect(css).not.toMatch(/text-overflow\s*:\s*ellipsis|white-space\s*:\s*nowrap/)
     expect(css).toContain("min-width:44px; min-height:44px")
     expect(css).toContain(".primary { min-height:52px")
+    expect(css).toMatch(/\.primary,\.secondary\s*\{[^}]*min-height:48px;/s)
+    expect(css).toMatch(/\.choice\s*\{[^}]*min-height:68px;/s)
+    expect(css).toMatch(/\.areaChoice\s*\{[^}]*min-height:52px;/s)
+    expect(css).toMatch(/\.footer\s*\{[^}]*display:grid;/s)
+    expect(css).not.toMatch(/\.footer\s*\{[^}]*grid-template-columns:/s)
   })
 
   test("lets the shared modal owner release the dock cleanly after the retained exit", () => {

@@ -96,6 +96,29 @@
   color: var(--ondo-ink, #504b47);
 }
 
+.receiptActions { display: grid; gap: 8px; margin-top: 4px; }
+.receiptCard .receiptPrimary,
+.receiptCard .receiptSecondary {
+  width: 100%;
+  margin-top: 0;
+  padding: 12px 16px;
+  font-size: 15px;
+  line-height: 1.45;
+  text-align: center;
+  justify-content: center;
+}
+.receiptCard .receiptPrimary {
+  min-height: 52px;
+  background: var(--ondo-control, #171717);
+  color: var(--ondo-control-ink, #fff);
+}
+.receiptCard .receiptSecondary {
+  min-height: 48px;
+  border: 1px solid var(--ondo-line, rgb(23 23 23 / 12%));
+  background: transparent;
+  color: var(--ondo-ink, #171717);
+}
+
 .receiptBoundary {
   position: relative;
   z-index: 1;

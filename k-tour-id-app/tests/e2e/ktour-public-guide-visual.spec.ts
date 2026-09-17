@@ -13,9 +13,10 @@ test.beforeEach(async ({ page, context }) => {
   errors.set(page, seen)
   page.on("pageerror", error => seen.push(error.message))
   // Preferences only: no account, credential, approval, balance or saved record.
-  await context.addInitScript(() => localStorage.setItem("ondo-b.device.v1", JSON.stringify({
-    locale: "ja", appearancePreference: "dark", onboarding: "ONB-COMPLETE",
-  })))
+  await context.addInitScript(() => {
+    if (!["127.0.0.1", "localhost", "[::1]"].includes(location.hostname)) return
+    localStorage.setItem("ondo-b.device.v1", JSON.stringify({ locale: "ja", appearancePreference: "dark", onboarding: "ONB-COMPLETE" }))
+  })
   await context.route("**/*", async route => {
     const request = route.request()
     const url = new URL(request.url())
@@ -33,7 +34,7 @@ test.afterEach(({ page }) => { expect(errors.get(page) ?? []).toEqual([]) })
 
 async function openGuide(page: Page) {
   // The ordinary public place deep link, followed by visible detail controls.
-  await page.goto(`/?venueId=${PLACE}`, { waitUntil: "domcontentloaded" })
+  await page.goto(`/?venueId=${PLACE}&review=1`, { waitUntil: "domcontentloaded" })
   await expect(page.getByTestId("ondo-b-root")).toHaveAttribute("data-hydrated", "true")
   expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true)
   await page.getByTestId("canonical-place-details").click()
@@ -44,6 +45,19 @@ async function openGuide(page: Page) {
   await expect(page.getByTestId("experience-guide-content").getByRole("heading", { level: 3 })).toHaveCount(3)
   await expect(page.getByTestId("experience-flow")).toHaveCount(0)
   await expect(page.getByTestId("ondo-b-action-gate")).toHaveCount(0)
+}
+
+async function readableDecision(locator: Locator) {
+  const metrics = await locator.evaluateAll(nodes => nodes.map(node => {
+    const style = getComputedStyle(node)
+    return { font: parseFloat(style.fontSize), line: parseFloat(style.lineHeight), width: node.clientWidth, content: node.scrollWidth }
+  }))
+  expect(metrics.length).toBeGreaterThan(0)
+  for (const metric of metrics) {
+    expect(metric.font).toBeGreaterThanOrEqual(15)
+    expect(metric.line / metric.font).toBeGreaterThanOrEqual(1.45)
+    expect(metric.content).toBeLessThanOrEqual(metric.width + 1)
+  }
 }
 
 async function tabTo(page: Page, control: Locator, maximum = 12) {
@@ -117,6 +131,10 @@ async function readSavedRecord(page: Page) {
 
 test("GUIDE-VIS01 JA320 public reading keeps its footer usable and keyboard cancellation returns to the guide", async ({ page }, testInfo) => {
   await openGuide(page)
+  await readableDecision(page.getByTestId("experience-guide-content").locator("article p"))
+  const titleSize = await page.getByTestId("experience-public-heading").evaluate(node => parseFloat(getComputedStyle(node).fontSize))
+  expect(titleSize).toBeGreaterThanOrEqual(28)
+  expect(titleSize).toBeLessThanOrEqual(32)
   const add = page.getByTestId("experience-add-to-pass")
   await expect(add).toHaveText("マイパスに保存")
   await usableFooter(page, add)
@@ -140,6 +158,7 @@ test("GUIDE-VIS02 JA320 keyboard save consent and pass → reader → saved stat
   await openGuide(page)
   await reachSavingConsent(page)
   const checkbox = page.getByTestId("experience-consent")
+  await readableDecision(checkbox.locator(".."))
   await tabTo(page, checkbox)
   await page.keyboard.press("Space")
   await expect(checkbox).toBeChecked()

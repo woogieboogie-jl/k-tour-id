@@ -137,7 +137,7 @@
 .reason {
   margin: 0;
   color: var(--ondo-muted, #5e5e5e);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.62;
 }
 
@@ -161,7 +161,7 @@
   text-underline-offset: 4px;
 }
 
-.boundary p { margin: 5px 0 0; }
+.boundary p { margin: 5px 0 0; font-size: 15px; line-height: 1.55; }
 
 .returnContext {
   position: relative;
@@ -336,7 +336,7 @@
   .body { gap: 11px; padding: 10px 17px calc(18px + env(safe-area-inset-bottom)); }
   .body > .heroIcon { display: none; }
   .body h2 { font-size: clamp(26px, 8.4vw, 32px); }
-  .reason { font-size: 13px; line-height: 1.48; }
+  .reason { font-size: 15px; line-height: 1.5; }
   .boundary summary { min-height: 44px; }
   .actions button { min-height: 52px; }
   .actions .secondary { min-height: 44px; border-color: transparent; background: transparent; }

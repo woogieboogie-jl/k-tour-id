@@ -139,8 +139,8 @@
 .consentCard h3,
 .consentCard p { margin: 0; }
 .consentCard h3 { font-size: 14px; }
-.consentCard p { margin-top: 5px; color: #786f6a; font-size: 12px; line-height: 1.5; }
-.consentCard label { display: flex; min-height: 48px; cursor: pointer; align-items: center; gap: 10px; margin-top: 13px; border-top: 1px solid rgb(67 48 53 / 9%); padding-top: 10px; color: #423a3c; font-size: 12px; font-weight: 750; line-height: 1.4; }
+.consentCard p { margin-top: 5px; color: #786f6a; font-size: 15px; line-height: 1.5; }
+.consentCard label { display: flex; min-height: 48px; cursor: pointer; align-items: center; gap: 10px; margin-top: 13px; border-top: 1px solid rgb(67 48 53 / 9%); padding-top: 10px; color: #423a3c; font-size: 15px; font-weight: 750; line-height: 1.5; }
 .consentCard input { width: 20px; height: 20px; flex: 0 0 auto; accent-color: #6c3a58; }
 .testDetails { margin-top: 11px; border-radius: 15px; padding: 0 14px; background: #eae4df; color: #69615d; }
 .testDetails summary { min-height: 44px; cursor: pointer; align-content: center; font-size: 12px; font-weight: 800; }
@@ -161,6 +161,7 @@
 .receiptWrap h2 { margin: 22px 0 0; font-size: clamp(30px, 9vw, 43px); font-weight: 790; line-height: 1.05; letter-spacing: -.055em; }
 .paymentStatus > p,
 .receiptLead { max-width: 400px; margin: 13px 0 0; color: #746b66; font-size: 13px; line-height: 1.58; }
+.receiptLead { font-size: 15px; }
 .paymentStatus .primary { margin-top: 25px; }
 .issueMark,
 .receiptMark { display: grid; width: 66px; height: 66px; place-items: center; border-radius: 22px; }
@@ -744,7 +745,7 @@
   padding: 10px 12px;
   background: color-mix(in srgb, var(--destructive, #8f3f33) 12%, var(--ondo-surface, #fff));
   color: var(--destructive, #8f3f33);
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 690;
   line-height: 1.45;
 }
@@ -944,7 +945,8 @@
   background: linear-gradient(145deg, #f6e3da, #eacbc0);
   color: #9a493a;
 }
-.receiptWrap h2 { font-size: clamp(36px, 10vw, 54px); line-height: .97; letter-spacing: -.055em; text-wrap: balance; }
+.offerOverlay .receiptWrap > h2,
+.offerOverlay .receiptWrap[data-storage-error="refund"] > h2 { font-size: clamp(28px, 7.7vw, 32px); line-height: 1.15; letter-spacing: -.035em; text-wrap: balance; }
 .receiptBoundary {
   display: flex;
   max-width: 100%;
@@ -979,22 +981,23 @@
 .receiptConsequence {
   display: flex;
   width: 100%;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   gap: 7px;
   margin: 12px 0 0;
   color: var(--ondo-muted, #626262);
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 720;
-  line-height: 1.4;
+  line-height: 1.5;
+  text-align: left;
 }
-.receiptConsequence svg { flex: 0 0 auto; }
+.receiptConsequence svg { flex: 0 0 auto; margin-top: 3px; }
 .receiptCard div { grid-template-columns: minmax(88px, .8fr) minmax(0, 1.2fr); gap: 14px; }
 .receiptCard code { min-width: 0; }
 .refundDetails { border-radius: 18px; }
 .refundDetails summary { min-height: 44px; }
 .refundDetails button { min-height: 46px; }
-.receiptWrap > .primary { min-height: 50px; border-radius: 17px; }
+.offerOverlay .receiptWrap > .primary { min-height: 52px; border-radius: 17px; border-color: var(--ondo-control, #171717); background: var(--ondo-control, #171717); color: var(--ondo-control-ink, #fff); }
 
 @media (max-width: 699px) {
   .root { margin-top: 10px; }
@@ -1050,7 +1053,7 @@
   .receiptWrap[data-storage-error="refund"] .receiptMark { width: 46px; height: 46px; border-radius: 16px; }
   .receiptWrap[data-storage-error="refund"] .receiptEyebrow { margin-top: 8px; }
   .receiptWrap[data-storage-error="refund"] h2 { margin-top: 7px; font-size: clamp(29px, 8vw, 36px); }
-  .receiptWrap[data-storage-error="refund"] .receiptLead { margin-top: 7px; line-height: 1.42; }
+  .receiptWrap[data-storage-error="refund"] .receiptLead { margin-top: 7px; line-height: 1.5; }
   .receiptWrap[data-storage-error="refund"] .receiptCard { margin-top: 13px; padding-block: 7px; }
   .receiptWrap[data-storage-error="refund"] .receiptCard div { min-height: 39px; padding-block: 7px; }
   .receiptWrap[data-storage-error="refund"] > .storageError { margin-top: 8px; }
@@ -1110,7 +1113,7 @@
   .fixedQuote { margin-top: 7px; padding-top: 7px; }
   .offerBenefit { grid-column: 2; grid-row: 1; margin: 0; padding: 13px; }
   .consentCard { grid-column: 2; grid-row: 2; margin: 0; padding: 11px; }
-  .consentCard > div p { display: none; }
+  .consentCard > div p { display: block; }
   .testDetails {
     display: block;
     max-height: 44px;
@@ -1578,9 +1581,9 @@
   display: block;
   margin: 7px 0 0;
   color: #9b4036;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 760;
-  line-height: 1.35;
+  line-height: 1.5;
 }
 .consentCard[data-prompted="true"] {
   border-color: rgb(166 68 54 / 44%);
@@ -1691,14 +1694,15 @@
     border-radius: 18px;
     padding: 8px 10px;
   }
-  .consentCard > div { display: none; }
+  .consentCard > div { display: grid; }
   .consentCard label {
     min-height: 44px;
-    margin: 0;
+    margin: 12px 0 0;
     border: 0;
-    padding: 0;
-    font-size: 12px;
-    line-height: 1.3;
+    border-top: 1px solid var(--ondo-line, #dedede);
+    padding: 10px 0 0;
+    font-size: 15px;
+    line-height: 1.5;
   }
   .consentCard input { width: 22px; height: 22px; }
   .testDetails { border-radius: 14px; }
@@ -1742,7 +1746,7 @@
 
   .fundingSheet { max-height: min(94dvh, 720px); }
   .fundingSheet > header { min-height: 50px; }
-  .fundingSheetBody { padding: 0 12px calc(12px + env(safe-area-inset-bottom)); }
+  .fundingSheetBody { padding: 0 20px calc(12px + env(safe-area-inset-bottom)); }
   .fundingSheetBody > h2 {
     font-size: clamp(25px, 7.6vw, 31px);
     line-height: 1.02;
@@ -1796,6 +1800,10 @@
   .benefitCard > button,
   .methodCard > button { margin-top: 8px; padding-top: 7px; }
   .emptyActivity { margin-top: 10px; }
+}
+
+@media (max-width: 360px) {
+  .fundingSheetBody { padding-inline: 16px; }
 }
 
 @media (max-width: 350px) {

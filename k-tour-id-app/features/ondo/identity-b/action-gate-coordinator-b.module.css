@@ -17,9 +17,9 @@
 .transitionContent .personRoute { width: 100%; max-width: 360px; }
 .spinner { animation: action-gate-spin 800ms linear infinite; }
 @keyframes action-gate-spin { to { transform: rotate(360deg); } }
-.content h2 { margin: 0; max-width: 440px; font-size: clamp(25px, 7vw, 34px); line-height: 1.08; letter-spacing: -.035em; }
-.lead { margin: 13px 0 0; color: var(--ondo-muted, #6b6661); font-size: 15px; line-height: 1.55; }
-.truth { display: flex; align-items: flex-start; gap: 8px; margin: 14px 0 0; padding: 11px 12px; border-radius: 14px; background: var(--ondo-surface-soft, #f6f5f3); color: var(--ondo-muted, #5f5954); font-size: 12px; line-height: 1.45; }
+.content h2 { margin: 0; max-width: 440px; font-size: clamp(25px, 7vw, 34px); line-height: 1.08; letter-spacing: -.035em; overflow-wrap: anywhere; word-break: keep-all; }
+.lead { margin: 13px 0 0; color: var(--ondo-muted, #6b6661); font-size: 15px; line-height: 1.55; overflow-wrap: anywhere; word-break: keep-all; }
+.truth { display: flex; align-items: flex-start; gap: 8px; margin: 14px 0 0; padding: 11px 12px; border-radius: 14px; background: var(--ondo-surface-soft, #f6f5f3); color: var(--ondo-muted, #5f5954); font-size: 15px; line-height: 1.5; }
 .truth svg { flex: 0 0 auto; margin-top: 1px; }
 .routeChoices { margin: 16px 0 0; padding: 0; border: 0; }
 .routeChoices legend { margin-bottom: 8px; color: #504b47; font-size: 12px; font-weight: 760; }
@@ -46,11 +46,11 @@
 .disclosure summary svg { flex: 0 0 auto; transition: transform 160ms ease; }
 .disclosure[open] summary svg { transform: rotate(90deg); }
 .disclosure > div { padding: 0 11px 11px; border-top: 1px solid #eeeae7; }
-.routeNote { margin: 10px 1px 0; color: #69635e; font-size: 12px; line-height: 1.42; }
+.routeNote { margin: 10px 1px 0; color: #69635e; font-size: 15px; line-height: 1.5; }
 .consent { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-top: 10px; overflow: hidden; border: 1px solid #e4e0dc; border-radius: 14px; background: #e4e0dc; }
 .consent p { display: grid; align-content: start; gap: 4px; min-height: 80px; margin: 0; padding: 11px 12px; background: var(--ondo-surface, #fff); }
 .consent small { color: #6f6963; font-size: 12px; font-weight: 680; letter-spacing: .02em; }
-.consent strong { color: #3e3935; font-size: 12px; line-height: 1.42; }
+.consent strong { color: #3e3935; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; word-break: keep-all; }
 .returnContext { margin-top: 14px; padding: 15px 16px; border: 1px solid var(--ondo-line, #e4e0dc); border-radius: 18px; background: var(--ondo-surface, #fff); }
 .returnContext small { display: block; color: #6f6963; font-size: 12px; }
 .returnContext strong { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: 16px; }
@@ -78,7 +78,7 @@
   .heroStatus { width: 48px; height: 48px; margin-bottom: 12px; border-radius: 15px; }
   .transitionContent { min-height: 240px; }
   .content h2 { font-size: 22px; line-height: 1.08; }
-  .lead { margin-top: 7px; font-size: 12px; line-height: 1.4; }
+  .lead { margin-top: 7px; font-size: 15px; line-height: 1.5; }
   .routeChoices { margin-top: 11px; }
   .routeChoices button { min-height: 60px; padding-inline: 4px; }
   .personRoute { grid-template-columns: 40px minmax(0, 1fr); gap: 9px; margin-top: 9px; padding: 8px 9px; border-radius: 14px; box-shadow: none; }
@@ -108,7 +108,7 @@
   .heroStatus { width: 44px; height: 44px; margin-bottom: 9px; border-radius: 14px; }
   .transitionContent { min-height: 0; }
   .content h2 { font-size: 22px; line-height: 1.08; }
-  .lead { margin-top: 7px; font-size: 12px; line-height: 1.4; }
+  .lead { margin-top: 7px; font-size: 15px; line-height: 1.5; }
   .routeChoices { margin-top: 9px; }
   .routeChoices button { min-height: 58px; padding: 6px 5px; }
   .personRoute { grid-template-columns: 40px minmax(0, 1fr); gap: 9px; margin-top: 8px; padding: 7px 9px; border-radius: 14px; box-shadow: none; }
@@ -130,7 +130,7 @@
   .dialog[data-check-kind="person"] .content:has(> .personRoute) > .routeChoices { grid-row: 2; }
   .dialog[data-check-kind="person"] .content:has(> .personRoute) > .personRoute { grid-row: 3; }
   .dialog[data-check-kind="person"] .content:has(> .personRoute) > .disclosure { grid-row: 4; }
-  .dialog[data-check-kind="person"] .content:has(> .personRoute) > .lead { grid-column: 2; grid-row: 3; margin-top: 6px; font-size: 12px; line-height: 1.32; }
+  .dialog[data-check-kind="person"] .content:has(> .personRoute) > .lead { grid-column: 2; grid-row: 3; margin-top: 6px; font-size: 15px; line-height: 1.5; }
   .dialog[data-check-kind="person"] .content:has(> .personRoute) > .plan { grid-row: 4; }
 }
 @media (prefers-reduced-motion: reduce) { .dialog,.backdrop { scroll-behavior: auto; backdrop-filter: none; } .disclosure summary svg { transition: none; } .spinner { animation: none; } }
@@ -158,7 +158,7 @@
 .dialog[data-check-kind="account"] .content h2,
 .dialog[data-check-origin="checkout"] .content h2 { font-size: clamp(25px, 6vw, 31px); line-height: 1.08; text-wrap: balance; }
 .dialog[data-check-kind="account"] .lead,
-.dialog[data-check-origin="checkout"] .lead { margin-top: 8px; font-size: 13px; line-height: 1.45; }
+.dialog[data-check-origin="checkout"] .lead { margin-top: 8px; font-size: 15px; line-height: 1.5; }
 .dialog[data-check-kind="account"] .returnContext,
 .dialog[data-check-origin="checkout"] .returnContext { margin-top: 12px; padding: 12px 14px; background: #f7f6f4; }
 .dialog[data-check-kind="account"] .returnContext strong,
@@ -189,7 +189,7 @@
   .dialog[data-check-kind="account"] .content h2,
   .dialog[data-check-origin="checkout"] .content h2 { font-size: clamp(22px, 7.1vw, 27px); }
   .dialog[data-check-kind="account"] .lead,
-  .dialog[data-check-origin="checkout"] .lead { font-size: 12px; line-height: 1.4; }
+  .dialog[data-check-origin="checkout"] .lead { font-size: 15px; line-height: 1.5; }
   .dialog[data-check-kind="account"] .returnContext,
   .dialog[data-check-origin="checkout"] .returnContext { margin-top: 9px; padding: 10px 11px; }
   .dialog[data-check-kind="account"] .actions,
@@ -311,7 +311,7 @@
 .decisionTruth p > :first-child { justify-self: center; color: #5b2b49; }
 .decisionTruth p > span:last-child { display: grid; min-width: 0; }
 .decisionTruth small { color: #6f6963; font-size: 12px; font-weight: 680; }
-.decisionTruth strong { margin-top: 1px; font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
+.decisionTruth strong { margin-top: 1px; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; word-break: keep-all; }
 
 @media (max-width: 430px) {
   .content > .returnContext {

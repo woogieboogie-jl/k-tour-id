@@ -12,6 +12,24 @@ const groups = ["G01", "G02", "G03", "G04", "G05", "G06", "G07", "G08", "G08-R",
 
 // These guards check documentation traceability, not provider implementation
 // or browser coverage. Runtime evidence is deliberately recorded separately.
+test("HANDOFF-SYNC-010 local mobile changes stay separate from release claims and preserve the minimum integration scope", () => {
+  const name = "KTOUR_MOBILE_REFINEMENT_LOCAL_2026-09-16.md"
+  const local = doc(name)
+  for (const file of ["HARVEY_HACKATHON_HANDOFF_2026-09-14.md", "KTOUR_PRODUCTION_HANDOFF_2026-09-15.md", "EXPERIENCE_MOCK_HANDOFF_2026-09-15.md", "KTOUR_JOURNEY_PASS_LOCAL_2026-09-16.md", "toss-grade-ux/FL-018_LABS_WALLET_BRIDGE.md"]) {
+    expect(doc(file), file).toContain(name)
+  }
+  for (const boundary of ["local/journey-pass-20260916", "미커밋 / 미푸시 / 미배포", "새 필수 백엔드/API 범위를 추가하지 않는다", "무료 가이드 읽기", "CX", "OpenDID", "Sui", "OmniOne", "결제≠방문", "2분 요청 만료는 데이터 삭제 기한이 아니다", "실제 iPhone Safari/Android"]) {
+    expect(local, boundary).toContain(boundary)
+  }
+  for (const link of [...local.matchAll(/\]\(([^)]+)\)/g)].map(match => match[1]).filter(link => !/^(?:https?:|#)/.test(link))) {
+    expect(existsSync(resolve(root, "docs", link.split("#")[0])), link).toBe(true)
+  }
+  const labs = doc("toss-grade-ux/FL-018_LABS_WALLET_BRIDGE.md")
+  expect(labs).toContain("일반 bridge")
+  expect(labs).toContain("집중형 기념품")
+  expect(labs).toContain("서로 다른10곳")
+})
+
 test("HANDOFF-SYNC-008 concise handoff keeps the flow, all four integrations, resources and delivery scope", () => {
   const brief = doc("HARVEY_HACKATHON_HANDOFF_2026-09-14.md")
   const detailed = doc("HACKATHON_ONE_WEEK_SPEC_2026-09-14.md")

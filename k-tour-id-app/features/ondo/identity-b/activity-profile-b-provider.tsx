@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react"
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
-import { readQaRuntime } from "../shared/ui/use-qa-controls"
+import { hasQaSessionOptIn, readQaRuntime } from "../shared/ui/use-qa-controls"
 
 export const B_ACTIVITY_PROFILE_SESSION_KEY = "ondo-b.activity-profile.v1"
 export const B_ACTIVITY_PROFILE_CLEAR_EVENT = "ondo:b:activity-profile-clear"
@@ -419,7 +419,11 @@ export function BActivityProfileProvider({ children }: { children: ReactNode }) 
   const actions = useMemo<BActivityProfileContextValue["actions"]>(() => ({
     updateProfile: (profile) => commit((current) => ({ ...current, profile: cleanProfile(profile) })),
     recordActivityAxes: (evidenceId, axes, commitRelated) => record({ evidenceId, axes, addVisitStamp: false }, commitRelated),
-    recordUniqueVisit: (evidenceId) => record({ evidenceId, axes: ["visit"], addVisitStamp: true }),
+    // Recheck live authority at mutation time, not only on a rendered button.
+    // A local place ID is a sample fixture, never proof of a real-world visit.
+    recordUniqueVisit: (evidenceId) => hasQaSessionOptIn()
+      ? record({ evidenceId, axes: ["visit"], addVisitStamp: true })
+      : "invalid",
     recordContribution: (evidenceId) => record({ evidenceId, axes: ["contribution"], addVisitStamp: false }),
     recordMeetup: (evidenceId) => record({ evidenceId, axes: ["meetup"], addVisitStamp: false }),
     clearSession: () => {

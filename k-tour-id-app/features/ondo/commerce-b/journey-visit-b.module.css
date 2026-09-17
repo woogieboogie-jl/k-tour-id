@@ -1,0 +1,16 @@
+.entry { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 76px; padding: 14px 16px; border: 1px solid var(--ondo-line, #e5e5e5); border-radius: 20px; background: var(--ondo-surface, #fff); color: var(--ondo-ink, #171717); font: inherit; text-align: start; cursor: pointer; }
+.entry > svg { flex-shrink: 0; color: var(--ondo-muted, #666); }
+.glyph { display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 40px; border-radius: 14px; background: var(--ondo-surface-soft, #f5f5f5); }
+.entryText { display: grid; flex: 1; min-width: 0; gap: 4px; }
+.entryText strong { font-size: 15px; letter-spacing: -.025em; font-weight: 750; }
+.entryText small { font-size: 12px; line-height: 1.45; color: var(--ondo-muted, #666); overflow-wrap: anywhere; }
+.content { display: grid; gap: 22px; padding: 18px 20px 24px; }
+.content > section { padding: 0; border: 0; background: transparent; }
+.place small { color: var(--ondo-muted, #666); font-size: 13px; }
+.place h2 { margin: 8px 0 0; font-size: clamp(24px, 6vw, 32px); letter-spacing: -.045em; line-height: 1.2; overflow-wrap: anywhere; }
+.place p { margin: 6px 0 0; font-size: 14px; color: var(--ondo-muted, #666); }
+.actions { display: grid; gap: 8px; }
+.primary, .secondary { display: flex; justify-content: center; align-items: center; gap: 8px; width: 100%; min-height: 48px; padding: 12px 16px; border-radius: 16px; font: inherit; font-size: 14px; line-height: 1.45; font-weight: 750; cursor: pointer; }
+.primary { border: 1px solid var(--ondo-control, #171717); background: var(--ondo-control, #171717); color: var(--ondo-control-ink, #fff); }
+.secondary { border: 0; background: transparent; color: var(--ondo-muted, #666); }
+.entry:focus-visible, .primary:focus-visible, .secondary:focus-visible { outline: 3px solid var(--ondo-focus, #246bd7); outline-offset: 3px; }

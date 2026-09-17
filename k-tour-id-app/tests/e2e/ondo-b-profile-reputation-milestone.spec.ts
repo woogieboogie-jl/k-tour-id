@@ -199,7 +199,7 @@ test("profile consent, failure retry, and reload persistence keep previous data 
   expect(stored.profile).not.toHaveProperty("nationality")
 })
 
-test("payment alone never adds a stamp; a unique visit reaches 10 once and opens Labs", async ({ page }) => {
+test("payment alone never adds a stamp; an optional unique visit reaches 10 and opens its keepsake", async ({ page }) => {
   await seed(page, "en", 9)
   await page.goto("/", { waitUntil: "domcontentloaded" })
   const offer = await openOffer(page)
@@ -210,12 +210,14 @@ test("payment alone never adds a stamp; a unique visit reaches 10 once and opens
   await offer.getByTestId("payment-confirm").click()
   await completeCheckoutCredentialPresentation(page)
   await expect(offer.getByTestId("payment-receipt")).toBeVisible()
-  const visit = offer.getByTestId("visit-stamp-receipt")
+  await expect(offer.getByTestId("visit-stamp-receipt")).toHaveCount(0)
+  await offer.getByTestId("receipt-journey-open").click()
+  const visit = page.getByTestId("journey-visit-sheet").getByTestId("visit-stamp-receipt")
   await expect(visit).toHaveAttribute("data-stamp-count", "9")
   expect(await page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) ?? "null"), ACTIVITY_KEY)).not.toHaveProperty("stamps")
 
   const visitDetails = visit.getByTestId("visit-stamp-details")
-  const visitTruth = "This front-end check uses local place evidence. No live venue or location provider is connected."
+  const visitTruth = "This is a sample visit, not a location or venue check. It stays in this open session and resets on reload. No purchase or identity check is needed to try it."
   await expect(visitDetails).not.toHaveAttribute("open", "")
   await expect(visitDetails.getByText(visitTruth, { exact: true })).toBeHidden()
   await visitDetails.locator("summary").click()
@@ -228,8 +230,8 @@ test("payment alone never adds a stamp; a unique visit reaches 10 once and opens
   expect(persistedActivity).not.toHaveProperty("evidenceReceipts")
   await expect(visit.getByTestId("visit-proof-check")).toHaveCount(0)
   await visit.getByTestId("checkout-stamp-milestone").click()
-  await expect(page.getByTestId("labs-acknowledge")).toBeVisible()
-  await page.getByTestId("labs-acknowledge").click()
+  await expect(page.getByTestId("labs-acknowledge")).toHaveCount(0)
+  await expect(page.getByTestId("journey-keepsake-overlay")).toBeVisible()
   await expect(page.getByTestId("labs-overlay")).toBeVisible()
   await expect(page.getByTestId("labs-badge-mint")).toBeVisible()
 })

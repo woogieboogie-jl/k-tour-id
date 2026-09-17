@@ -132,8 +132,8 @@
 .empty strong { color: #20201e; font-size: 16px; white-space: normal; }
 .empty span { max-width: 330px; line-height: 1.55; }
 .venueList .empty button { display: inline-flex; width: auto; min-height: 44px; grid-template-columns: none; justify-content: center; margin-top: 5px; padding: 0 13px; border: 1px solid #dedbd5; border-radius: 11px; background: transparent; color: #20201e; font-size: 12px; font-weight: 750; }
-.mapError { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; margin: 0; padding: 14px 2px; border-bottom: 1px solid #dededb; color: #625e58; font-size: 12px; line-height: 1.55; }
-.mapError button { min-height: 44px; padding: 0 12px; border: 1px solid #d8d8d4; border-radius: 11px; background: #fff; color: #262522; font-size: 12px; font-weight: 720; }
+.mapError { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; margin: 0; padding: 14px 2px; border-bottom: 1px solid var(--ondo-line); color: var(--ondo-muted); font-size: 12px; line-height: 1.55; }
+.mapError button { min-height: 44px; padding: 0 12px; border: 1px solid var(--ondo-line); border-radius: 11px; background: var(--ondo-surface-raised); color: var(--ondo-ink); font-size: 12px; font-weight: 720; }
 /* Recovery owns the first actionable row when the basemap fails. Hiding the
    secondary taste shortcut here prevents two floating targets from occupying
    the same mobile hit area; it returns as soon as the map retries. */
@@ -5515,6 +5515,16 @@
 /* Appearance × discovery lens, the final surface contract. These selectors
    deliberately cover the old night-only selectors above: no map control can
    opt itself into Dark when the user chose Light. Heat colors are map data. */
+.root :is(.mapKeyDetailsBody, .creditDetailsBody) {
+  border-color: var(--ondo-line);
+  background: var(--ondo-surface-raised);
+  color: var(--ondo-ink);
+  box-shadow: var(--ondo-shadow);
+}
+.root .methodologyDisclosure { border-color: var(--ondo-line); }
+.root :is(.mapKeyDetailsBody small, .pulseLegend span, .pulseCompositionRows dd) { color: var(--ondo-muted); }
+.root :is(.methodologyDisclosure > summary, .pulseCompositionRows dt, .pulseCompositionRows strong, .pulsePlaces button b) { color: var(--ondo-ink); }
+.root .pulsePlaces button { background: var(--ondo-surface-soft); color: var(--ondo-ink); }
 .root[data-after19-active="true"][data-explore-lens="after19"] .mapUtilityCluster:not([data-editorial-open="true"]),
 .root[data-after19-active="true"][data-explore-lens="after19"] .mapUtilityCluster .locationMessage,
 .root[data-after19-active="true"][data-explore-lens="after19"] .mapUtilityCluster .locate,

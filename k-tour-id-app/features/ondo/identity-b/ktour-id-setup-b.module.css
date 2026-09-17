@@ -28,10 +28,10 @@
 .progress [data-complete="true"] { color: #444; }
 .progress [data-complete="true"] span { border-color: #bdbdbd; background: #f2f2f2; }
 .body { flex: 0 0 auto; padding: 24px 20px 18px; }
-.body h1 { max-width: 540px; margin: 8px 0 0; overflow-wrap: anywhere; font-size: clamp(30px, 8.5vw, 48px); font-weight: 820; line-height: 1.02; letter-spacing: -.055em; }
+.body h1 { max-width: 540px; margin: 8px 0 0; overflow-wrap: anywhere; word-break: keep-all; font-size: clamp(30px, 8.5vw, 48px); font-weight: 820; line-height: 1.02; letter-spacing: -.055em; }
 .nowrap { white-space: nowrap; }
 .eyebrow { margin: 0; color: var(--ondo-muted, #626262); font-size: 12px; font-weight: 750; letter-spacing: .08em; line-height: 1.4; text-transform: uppercase; }
-.lead { max-width: 570px; margin: 13px 0 0; color: #5c5c5c; font-size: 14px; line-height: 1.6; }
+.lead { max-width: 570px; margin: 13px 0 0; color: #5c5c5c; font-size: 15px; line-height: 1.6; }
 .routes { display: grid; gap: 8px; margin-top: 22px; }
 .route,
 .routeSelected { display: grid; min-height: 68px; cursor: pointer; grid-template-columns: 46px minmax(0, 1fr) 24px; align-items: center; gap: 11px; border: 1px solid #dfdfdf; border-radius: 18px; padding: 10px 12px; background: #fff; color: #191919; font: inherit; text-align: left; }
@@ -68,7 +68,8 @@
 .disclosure div { display: grid; grid-template-columns: minmax(86px, .33fr) minmax(0, 1fr); gap: 12px; border-top: 1px solid #e6e6e6; padding: 12px 14px; }
 .disclosure div:first-child { border-top: 0; }
 .disclosure dt { color: #737373; font-size: 12px; font-weight: 780; }
-.disclosure dd { margin: 0; color: #252525; font-size: 12px; font-weight: 650; line-height: 1.45; }
+.disclosure dd { margin: 0; color: #252525; font-size: 15px; font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; word-break: keep-all; }
+.disclosureDetails p { font-size: 15px; line-height: 1.5; }
 .dialog[data-phase="consent"] .body > .disclosure,
 .dialog[data-phase="presentation_request"] .body > .disclosure { margin-top: 18px; }
 .dialog[data-phase="consent"] .body > .disclosure > div,
@@ -90,12 +91,14 @@
 .meta strong,
 .credential strong,
 .predicate strong { font-size: 13px; font-weight: 800; }
+.predicate strong { font-size: 15px; line-height: 1.5; }
 .meta span,
 .credential span,
 .predicate span { display: grid; gap: 3px; }
 .meta span,
 .credential small,
 .predicate small { color: #6a6a6a; font-size: 12px; line-height: 1.4; }
+.dialog[data-phase="presentation_consent"] .predicate small { font-size: 15px; line-height: 1.5; }
 .credential > svg { flex: 0 0 auto; }
 .credentialStack { display: grid; width: min(100%, 430px); gap: 8px; margin-top: 22px; }
 .credentialStack .credential,
@@ -103,7 +106,7 @@
 .dialog[data-phase="credential_ready"] .body h1 { margin-top: 0; }
 .dialog:is([data-phase="holder_delivery_preview"], [data-phase="credential_ready"]) .body h1 { word-break: keep-all; text-wrap: balance; }
 .statusWarning,
-.assurance { max-width: 500px; margin: 16px 0 0; border: 1px solid #e0cbc7; border-radius: 14px; padding: 11px 13px; background: #fff5f3; color: #763a32; font-size: 12px; font-weight: 700; line-height: 1.5; }
+.assurance { max-width: 500px; margin: 16px 0 0; border: 1px solid #e0cbc7; border-radius: 14px; padding: 11px 13px; background: #fff5f3; color: #763a32; font-size: 15px; font-weight: 700; line-height: 1.5; }
 .protocolDetails { flex: 0 0 auto; margin: 8px 18px 0; border-top: 1px solid #e6e6e6; color: #656565; }
 .protocolDetails summary { display: flex; min-height: 44px; cursor: pointer; align-items: center; justify-content: space-between; gap: 10px; padding: 2px; font-size: 12px; font-weight: 760; list-style: none; }
 .protocolDetails summary::-webkit-details-marker { display: none; }
@@ -154,7 +157,7 @@
 .sampleControls :is(summary, select):focus-visible, .lifecycleControls :is(summary, button):focus-visible { outline: 3px solid var(--ondo-focus, #3979cb); outline-offset: 2px; }
 .sampleTask { min-width: 0; }
 .sampleTask h1, .dialog[data-public-sample="true"]:is([data-phase="failed"], [data-phase="cancelled"], [data-phase="expired"]) h1 { font-size: clamp(26px, 6.5vw, 36px); line-height: 1.12; letter-spacing: -.04em; }
-.sampleBoundary { margin: 18px 0 0; border-radius: 14px; padding: 12px 14px; background: var(--ondo-surface-soft, #f5f5f5); color: var(--ondo-muted, #666); font-size: 12px; line-height: 1.5; }
+.sampleBoundary { margin: 18px 0 0; border-radius: 14px; padding: 12px 14px; background: var(--ondo-surface-soft, #f5f5f5); color: var(--ondo-muted, #666); font-size: 15px; line-height: 1.5; }
 .checkedAt { display: flex; gap: 8px; margin: 14px 0 0; color: var(--ondo-muted, #666); font-size: 12px; }
 .lifecycleControls { width: min(100%, 480px); grid-column: 1 / -1; }
 .lifecycleControls button { display: flex; width: 100%; min-height: 44px; align-items: center; gap: 9px; border: 0; background: transparent; color: var(--ondo-ink, #171717); font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
@@ -198,7 +201,7 @@
   .handoff { gap: 16px; }
   .handoff h1 { font-size: 28px; }
   .handoffMark { width: 48px; height: 48px; margin-bottom: 14px; }
-  .lead { font-size: 13px; line-height: 1.5; }
+  .lead { font-size: 15px; line-height: 1.5; }
   .routes { gap: 6px; margin-top: 12px; }
   .route,
   .routeSelected { min-height: 60px; grid-template-columns: 42px minmax(0, 1fr) 22px; padding: 7px 9px; }

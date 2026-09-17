@@ -21,8 +21,7 @@
 }
 
 .profileCard,
-.historyCard,
-.stampCard {
+.historyCard {
   min-width: 0;
   border: 1px solid var(--pr-line);
   border-radius: 24px;
@@ -32,8 +31,7 @@
 }
 
 .profileCard { container-type: inline-size; grid-column: 1 / -1; padding: 20px; }
-.historyCard { padding: 19px; }
-.stampCard { padding: 18px; }
+.historyCard { grid-column: 1 / -1; padding: 19px; }
 
 .cardHeader {
   display: grid;
@@ -57,14 +55,10 @@
 }
 
 .cardHeader h2,
-.cardHeader p,
-.stampLead h2,
-.stampLead p { margin: 0; }
+.cardHeader p { margin: 0; }
 
-.cardHeader h2,
-.stampLead h2 { font-size: 18px; font-weight: 820; letter-spacing: -.035em; }
-.cardHeader p,
-.stampLead p { margin-top: 3px; color: var(--pr-muted); font-size: 12px; font-weight: 640; line-height: 1.4; }
+.cardHeader h2 { font-size: 18px; font-weight: 820; letter-spacing: -.035em; }
+.cardHeader p { margin-top: 3px; color: var(--pr-muted); font-size: 12px; font-weight: 640; line-height: 1.4; }
 
 .editButton {
   display: inline-flex;
@@ -104,6 +98,7 @@
   margin-top: 16px;
 }
 .form { display: grid; align-content: start; gap: 10px; }
+.editorNote { margin: 0 0 6px; color: var(--pr-muted); font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; word-break: keep-all; }
 .editorLayout > .formActions,
 .editorLayout > .discardPrompt,
 .editorLayout > .saveResult { grid-column: 1 / -1; }
@@ -126,7 +121,6 @@
 
 .fieldLabel { display: flex; min-width: 0; align-items: center; gap: 6px; }
 .fieldLabel > span { min-width: 0; }
-.fieldLabel small { margin-left: auto; color: #888480; font-size: 12px; font-weight: 650; }
 
 .nameField > input,
 .consentField > input {
@@ -144,14 +138,12 @@
 }
 
 .consentField {
-  border: 1px solid transparent;
-  border-radius: 17px;
-  padding: 9px;
-  background: #f8f7f5;
-  transition: border-color 160ms ease, background 160ms ease;
+  border: 0;
+  border-top: 1px solid var(--pr-line);
+  border-radius: 0;
+  padding: 14px 0 0;
+  background: transparent;
 }
-
-.consentField[data-visibility="public"] { border-color: #171717; background: #fff; }
 
 .consentField > button {
   display: inline-flex;
@@ -270,17 +262,6 @@
 .axisEvidence small { color: var(--pr-muted); font-size: 12px; }
 .axisEvidence strong { overflow-wrap: anywhere; font-size: 12px; line-height: 1.35; }
 
-.stampCard { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; overflow: hidden; }
-.stampCard[data-stamps="10"] { border-color: rgb(112 43 76 / 20%); background: linear-gradient(115deg, #fff 0%, #fff8fb 58%, #f8ecf2 100%); }
-.stampLead { display: flex; min-width: 0; align-items: center; gap: 11px; }
-.stampLead > div { min-width: 0; }
-.stampIcon { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border-radius: 13px; background: #f2f1ef; }
-.stampProgress { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; }
-.stampProgress i { display: grid; width: 100%; max-width: 24px; aspect-ratio: 1; place-items: center; border: 1px solid rgb(23 23 23 / 13%); border-radius: 50%; color: transparent; }
-.stampProgress i[data-filled="true"] { border-color: #171717; background: #171717; color: #fff; }
-.stampCount { font-size: 25px; font-variant-numeric: tabular-nums; letter-spacing: -.05em; }
-.stampCount span { color: #6f6963; font-size: 12px; letter-spacing: 0; }
-.stampCard > button { display: inline-flex; min-height: 44px; grid-column: 1 / -1; align-items: center; justify-content: center; gap: 7px; border: 0; border-radius: 999px; padding: 0 13px; background: #171717; color: #fff; font: inherit; font-size: 12px; font-weight: 820; }
 
 .profileLoading {
   display: grid;
@@ -328,8 +309,7 @@
 @media (max-width: 699px) {
   .root { grid-template-columns: 1fr; margin-top: 22px; padding-top: 20px; }
   .profileCard,
-  .historyCard,
-  .stampCard { grid-column: 1; padding: 16px; }
+  .historyCard { grid-column: 1; padding: 16px; }
 }
 
 @media (max-width: 430px) {
@@ -340,15 +320,12 @@
 
 @media (max-width: 350px) {
   .profileCard,
-  .historyCard,
-  .stampCard { border-radius: 20px; padding: 13px; }
-  .cardHeader h2,
-  .stampLead h2 { font-size: 16px; }
+  .historyCard { border-radius: 20px; padding: 13px; }
+  .cardHeader h2 { font-size: 16px; }
   .consentField { grid-template-columns: minmax(0, 1fr); }
   .consentField > input,
   .consentField > button { grid-column: 1; width: 100%; }
   .fieldLabel { align-items: flex-start; flex-wrap: wrap; }
-  .fieldLabel small { width: 100%; margin-left: 23px; }
   .formActions,
   .discardPrompt > div { grid-template-columns: minmax(0, 1fr); }
   .axis > summary { grid-template-columns: 32px minmax(0, 1fr) 16px; }
@@ -366,15 +343,13 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .profileCard,
-  .historyCard,
-  .stampCard { animation: profileCardIn 240ms cubic-bezier(.2, .8, .2, 1) both; }
+  .historyCard { animation: profileCardIn 240ms cubic-bezier(.2, .8, .2, 1) both; }
   .consentField { animation: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .profileCard,
   .historyCard,
-  .stampCard,
   .consentField,
   .saveSpinner { animation: none !important; transition: none !important; }
   .axisChevron { transition: none !important; }
@@ -390,7 +365,6 @@
 }
 .profileCard,
 .historyCard,
-.stampCard,
 .exitButton,
 .profileEntryButton {
   background: var(--ondo-surface, #fff);
@@ -398,10 +372,8 @@
 }
 .editButton,
 .locked,
-.consentField,
 .axis,
 .axisIcon,
-.stampIcon,
 .profileEntryIcon,
 .cancelButton,
 .profileLoading i {
@@ -409,21 +381,16 @@
   color: var(--ondo-ink, #171717);
 }
 .locked,
+.nameField > span,
 .fieldLabel,
-.fieldLabel small,
 .publicView > header > span,
 .cancelButton,
 .boundary,
-.axisChevron,
-.stampCount span { color: var(--pr-muted); }
+.axisChevron { color: var(--pr-muted); }
 .nameField > input,
 .consentField > input {
   border-color: var(--ondo-line, rgb(23 23 23 / 12%));
   background: var(--ondo-surface-raised, #fff);
-}
-.consentField[data-visibility="public"] {
-  border-color: var(--ondo-line-strong, rgb(23 23 23 / 24%));
-  background: var(--ondo-surface, #fff);
 }
 .consentField > button {
   border-color: var(--ondo-line, rgb(23 23 23 / 12%));
@@ -432,9 +399,7 @@
 }
 .consentField > button[aria-pressed="true"],
 .saveButton,
-.discardPrompt button:first-child,
-.stampProgress i[data-filled="true"],
-.stampCard > button {
+.discardPrompt button:first-child {
   border-color: var(--ondo-control, #171717);
   background: var(--ondo-control, #171717);
   color: var(--ondo-control-ink, #fff);
@@ -451,11 +416,6 @@
   color: var(--ondo-ink, #171717);
 }
 .axis { border-color: var(--ondo-line, rgb(23 23 23 / 12%)); }
-.stampCard[data-stamps="10"] {
-  border-color: color-mix(in srgb, var(--ondo-accent, #702b4c) 24%, var(--ondo-line, transparent));
-  background: color-mix(in srgb, var(--ondo-accent, #702b4c) 7%, var(--ondo-surface, #fff));
-}
-.stampProgress i { border-color: var(--ondo-line, rgb(23 23 23 / 13%)); }
 .root button:focus-visible,
 .boundary > summary:focus-visible,
 .publicView:focus-visible,
@@ -464,12 +424,10 @@
 @media (forced-colors: active) {
   .profileCard,
   .historyCard,
-  .stampCard,
   .locked,
   .publicView,
   .axis,
   .axisIcon,
-  .stampIcon,
   .editButton,
   .nameField > input,
   .consentField,
@@ -487,9 +445,7 @@
   }
   .profileEntryButton,
   .exitButton { border: 1px solid CanvasText; background: Canvas; color: CanvasText; box-shadow: none; }
-  .consentField > button[aria-pressed="true"],
-  .stampProgress i[data-filled="true"] { border-color: Highlight; background: Highlight; color: HighlightText; }
-  .stampProgress i { border-color: CanvasText; }
+  .consentField > button[aria-pressed="true"] { border-color: Highlight; background: Highlight; color: HighlightText; }
   .error { border: 1px solid CanvasText; background: Canvas; color: CanvasText; }
 }
 

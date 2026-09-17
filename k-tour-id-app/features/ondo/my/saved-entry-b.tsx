@@ -13,6 +13,7 @@ import { editorialPlaceById, type EditorialPlaceB } from "../pulse-b/japan-first
 import type { OndoBLocale } from "../shared/state/ondo-b-preferences"
 import { useOndoB } from "../shared/state/ondo-b-provider"
 import { ondoBProductTimeline } from "../shared/time/product-timeline-b"
+import { ondoBTableById, ondoBTableTimeline } from "../connect/table-model"
 import styles from "../shared/ui/production-local.module.css"
 import { ONDO_MODAL_PRIORITY } from "../shared/ui/modal-layer-priority"
 import { useModalIsolation } from "../shared/ui/use-modal-isolation"
@@ -279,11 +280,12 @@ export function SavedEntryB() {
   const recentMemoryModels = visibleMemoryModels.slice(unresolvedSavedMemoryModels.length)
   const planned = state.plannedTableRefs.flatMap((reference) => {
     const table = MY_KOREA_TABLE_CATALOG[reference.tableId]
-    if (!table) return []
+    const sourceTable = ondoBTableById(reference.tableId)
+    if (!table || !sourceTable) return []
     const venue = table.placeKind === "official" ? canonicalMapVenueById(reference.venueId) : undefined
     const editorialPlace = table.placeKind === "editorial" ? editorialPlaceById(reference.venueId) : undefined
     if (!venue && !editorialPlace) return []
-    return [{ reference, table, venue, editorialPlace }]
+    return [{ reference, table, sourceTable, venue, editorialPlace }]
   })
   const contributions = state.localSignalPostedVenueIds.flatMap((venueId) => {
     const venue = canonicalMapVenueById(venueId)
@@ -467,10 +469,10 @@ export function SavedEntryB() {
       <div className={styles.activityHeading}><CalendarDays size={19} aria-hidden="true" /><span><h2 id="my-korea-planned-heading">{copy.plannedTitle}</h2><p>{copy.plannedBody}</p></span></div>
       {planned.length === 0 ? <ActivityEmpty testId="my-korea-planned-empty" title={copy.plannedEmpty} body={copy.plannedEmptyBody} /> : (
         <div className={styles.referenceList}>
-          {planned.map(({ reference, table, venue, editorialPlace }) => {
+          {planned.map(({ reference, table, sourceTable, venue, editorialPlace }) => {
             const localizedTable = {
               title: locale === "ja" ? JA_TABLE_TITLE[reference.tableId] : table.title[locale],
-              schedule: productTimeline.tableSchedule[locale],
+              schedule: ondoBTableTimeline(sourceTable, productTimeline, locale).schedule,
             }
             const placeName = venue
               ? personalVenueName(venue.name.ko, locale).officialName
@@ -574,7 +576,7 @@ export function SavedEntryB() {
           <section className={styles.activitySection} data-testid="my-korea-receipts" aria-labelledby="my-korea-receipts-heading">
             <div className={styles.activityHeading}><ReceiptText size={19} aria-hidden="true" /><span><h2 id="my-korea-receipts-heading">{copy.receiptsTitle}</h2><p>{copy.receiptsBody}</p></span></div>
             <div className={styles.referenceList}>
-              <article className={styles.planReference} data-testid="my-korea-selected-purchase" data-order-id={receiptOrder.orderId} data-venue-id={receiptOrder.venueId}>
+              <article className={`${styles.planReference} ${savedStyles.receiptCard}`} data-testid="my-korea-selected-purchase" data-order-id={receiptOrder.orderId} data-venue-id={receiptOrder.venueId}>
                 <span className={styles.localBadge}>{state.commerceSession.status === "refunded" ? `${copy.refunded} ${formatReceiptKrw(state.commerceSession.chargedDebit, locale)}` : `${copy.paid} ${formatReceiptKrw(state.commerceSession.chargedDebit, locale)}`}</span>
                 <h3>{receiptVenue ? personalVenueName(receiptVenue.name.ko, locale).officialName : receiptPlace?.name[locale] ?? copy.receiptsTitle}</h3>
                 <span className={savedStyles.receiptBoundary} data-testid="my-korea-receipt-boundary"><LockKeyhole size={14} aria-hidden="true" />{copy.receiptBoundary}</span>
@@ -583,8 +585,10 @@ export function SavedEntryB() {
                   <p data-testid="my-korea-payment-reference">{copy.originalPayment}: {paymentReceiptId}</p>
                   {settledRefunds.map(operation => <p key={operation.operationId} data-testid="my-korea-refund-reference">{copy.refundReference}: {operation.receiptId}</p>)}
                 </details>
-                {receiptPlace ? <button type="button" data-testid="my-korea-receipt-place" onClick={() => requestPlaceServiceReturnB(receiptPlace.id)}>{copy.openReceiptPlace}<ChevronRight size={16} aria-hidden="true" /></button> : receiptVenue ? <button type="button" data-testid="my-korea-receipt-place" onClick={() => openVenue(receiptVenue.id, receiptVenue.cityId)}>{copy.openReceiptPlace}<ChevronRight size={16} aria-hidden="true" /></button> : null}
-                <button type="button" onClick={() => actions.setTab("id")}>{copy.openWallet}<ChevronRight size={16} aria-hidden="true" /></button>
+                <div className={savedStyles.receiptActions}>
+                  {receiptPlace ? <button type="button" className={savedStyles.receiptPrimary} data-testid="my-korea-receipt-place" onClick={() => requestPlaceServiceReturnB(receiptPlace.id)}>{copy.openReceiptPlace}<ChevronRight size={16} aria-hidden="true" /></button> : receiptVenue ? <button type="button" className={savedStyles.receiptPrimary} data-testid="my-korea-receipt-place" onClick={() => openVenue(receiptVenue.id, receiptVenue.cityId)}>{copy.openReceiptPlace}<ChevronRight size={16} aria-hidden="true" /></button> : null}
+                  <button type="button" className={receiptPlace || receiptVenue ? savedStyles.receiptSecondary : savedStyles.receiptPrimary} data-testid="my-korea-receipt-wallet" onClick={() => actions.setTab("id")}>{copy.openWallet}<ChevronRight size={16} aria-hidden="true" /></button>
+                </div>
               </article>
             </div>
           </section>

@@ -75,3 +75,17 @@ test("SHARED-SHEET-004 nested ownership is reference counted and restores docume
   expect(isolation).toContain('window.visualViewport?.removeEventListener("scroll", schedule)')
   expect(isolation).not.toMatch(/localStorage|sessionStorage|indexedDB|credential|access.?token/i)
 })
+
+test("SHARED-SHEET-006 non-scrolling chrome owns its rounded paint boundary without redundant blur", () => {
+  const css = source("features/ondo/shared/ui/ui.module.css")
+  const header = css.match(/\.sheetHeader\s*\{([^}]+)\}/s)?.[1] ?? ""
+  const footer = css.match(/\.sheetFooter\s*\{([^}]+)\}/s)?.[1] ?? ""
+  expect(header).toContain("border-top-left-radius: inherit")
+  expect(header).toContain("border-top-right-radius: inherit")
+  expect(footer).toContain("border-bottom-left-radius: inherit")
+  expect(footer).toContain("border-bottom-right-radius: inherit")
+  for (const chrome of [header, footer]) {
+    expect(chrome).toContain("background: var(--ondo-surface-raised)")
+    expect(chrome).not.toMatch(/backdrop-filter\s*:/)
+  }
+})

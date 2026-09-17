@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { expect, test } from "@playwright/test"
+import { ONDO_MODAL_PRIORITY } from "../../features/ondo/shared/ui/modal-layer-priority"
 
 const source = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8")
 const commerce = source("features/ondo/commerce-b/id-wallet-commerce-b.tsx")
@@ -44,9 +45,19 @@ test("COMMERCE-EXIT-002 the outer surface freezes its complete local and domain 
 })
 
 test("COMMERCE-EXIT-003 retained offer owns modal, scroll and input until the 260ms unmount", () => {
+  const journey = source("features/ondo/commerce-b/journey-visit-b.tsx")
+  const sheet = source("features/ondo/shared/ui/sheet-b.tsx")
   expect(offer).toContain("useModalIsolation(true, rootRef)")
   expect(offer).toContain("useDocumentScrollLock(true)")
-  expect(offer).toContain("data-modal-layer-priority={ONDO_MODAL_PRIORITY.critical}")
+  expect(offer).toContain('data-modal-layer-priority={renderedView === "receipt" ? 139 : ONDO_MODAL_PRIORITY.critical}')
+  expect(offer).toContain('style={renderedView === "receipt" ? { zIndex: 139 } : undefined}')
+  expect(journey).toContain("modalPriority={140}")
+  expect(journey).toContain('active={open && presence.phase === "open"}')
+  expect(sheet).toContain("data-modal-layer-priority={modalPriority}")
+  expect(sheet).toContain("style={priorityOverride === undefined ? undefined : { zIndex: modalPriority }}")
+  expect(139).toBeGreaterThan(ONDO_MODAL_PRIORITY.detail)
+  expect(140).toBeGreaterThan(139)
+  expect(140).toBeLessThan(ONDO_MODAL_PRIORITY.critical)
   expect(offer).toContain("data-commerce-presence={presenceState}")
   expect(offer).toContain("onClickCapture={consumeClosingInput}")
   expect(offer).toContain("event.nativeEvent.stopImmediatePropagation()")

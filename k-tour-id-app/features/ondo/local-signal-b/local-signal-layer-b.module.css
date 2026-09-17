@@ -247,6 +247,18 @@
   scroll-margin-bottom: 104px;
 }
 
+.photo[data-photo-stage="empty"][data-has-preview="false"] {
+  aspect-ratio: auto;
+  height: 72px;
+}
+
+.photo[data-photo-stage="empty"][data-has-preview="false"] > .photoAdd {
+  justify-content: flex-start;
+  padding-inline: 16px;
+  border: 0;
+  font-size: 15px;
+}
+
 .photoInput {
   position: absolute;
   width: 1px;

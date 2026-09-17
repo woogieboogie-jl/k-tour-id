@@ -2,6 +2,8 @@
 
 상태: `THREE-DESIGNER CONSENSUS · IMPLEMENTATION READY`
 
+> 2026-09-16 로컬 UX 개정: 아래 기존 결제·검증 계약은 유지하되 스탬프의 화면 배치와 복귀 목적지는 [Journey Pass 로컬 검토안](../KTOUR_JOURNEY_PASS_LOCAL_2026-09-16.md)이 우선한다. 장소 상세에서 결제 없이 방문 기록으로 진입하고, 영수증에서는 같은 행동의 선택형 링크만 제공한다. 진행·컬렉션의 홈은 Travel Pass이며, 기념 배지는 기존 Labs 실행 계약을 재사용하는 집중 화면으로 열린다. 아직 배포하거나 개발자 인계 브랜치에 반영하지 않은 로컬 변경이다.
+
 ## 1. Flow contract
 
 | 항목 | 값 |

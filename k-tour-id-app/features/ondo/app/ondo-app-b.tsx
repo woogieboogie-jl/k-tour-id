@@ -7,6 +7,8 @@ import { SheetB } from "../shared/ui/sheet-b"
 import { SAMPLE_INFO_EVENT } from "../shared/ui/sample-info-button-b"
 import { IntegrationDemoB } from "../integration-demo-b/integration-demo-b"
 import { ReservationSampleB } from "../reservation-b/reservation-b"
+import { JourneyStampsOverlayB } from "../identity-b/journey-stamps-b"
+import { JourneyKeepsakeB } from "../labs/labs-entry"
 import { requestReservationSampleB } from "../reservation-b/reservation-model-b"
 import { OndoBProvider, useOndoB, type OndoBTab } from "../shared/state/ondo-b-provider"
 import { ONDO_MODAL_ENTRY_EVENT } from "../shared/ui/use-modal-isolation"
@@ -400,6 +402,8 @@ function OndoBShell({ slots }: { slots: OndoBAppSlots }) {
         </SheetB> : null}
         {reviewSample ? <IntegrationDemoB open={integrationOpen} onClose={() => setIntegrationOpen(false)} /> : null}
         <ReservationSampleB />
+        <JourneyStampsOverlayB />
+        <JourneyKeepsakeB />
         {state.toast && !onboardingActive ? <div className={styles.toast} data-testid="ondo-toast" role="status">{state.toast}</div> : null}
       </section>
     </main>

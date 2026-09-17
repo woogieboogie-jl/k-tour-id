@@ -200,7 +200,47 @@ test("FLOW7-CONTEXT-007 canonical place, picks and local photo stay visually anc
   expect(contract).toContain('input.photoPreviewUrl?.startsWith("blob:")')
   expect(coordinator).toContain('data-testid="action-gate-signal-anchor"')
   expect(coordinator).toContain("(!reviewTransition || signalContext)")
-  expect(styles).toMatch(/\.photo\s*\{[\s\S]*?aspect-ratio:\s*4\s*\/\s*3/)
+  // Stop each match at its own closing brace: a later rule must not satisfy
+  // the base preview contract, or collapse preparing/error states by accident.
+  const rules = (selector: string) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    return [...styles.matchAll(new RegExp(`(?:^|\\n)\\s*${escaped}\\s*\\{([^{}]*)\\}`, "g"))].map(match => match[1])
+  }
+  const rule = (selector: string) => {
+    const bodies = rules(selector)
+    expect(bodies, `One explicit rule for ${selector}`).toHaveLength(1)
+    return bodies[0]
+  }
+  const basePhotoRules = rules(".photo")
+  expect(basePhotoRules.length).toBeGreaterThan(0)
+  const basePhoto = basePhotoRules[0]
+  expect(basePhoto).toMatch(/aspect-ratio:\s*4\s*\/\s*3\s*;/)
+  expect(basePhoto).not.toMatch(/(?:^|;)\s*(?:height|min-height|max-height)\s*:/)
+  // A later landscape max-width is fine; it must not replace the aspect ratio
+  // or impose a fixed height on selected, preparing or failed media.
+  for (const later of basePhotoRules.slice(1)) expect(later).not.toMatch(/(?:aspect-ratio|(?:^|;)\s*(?:height|min-height|max-height))\s*:/)
+  const emptySelector = '.photo[data-photo-stage="empty"][data-has-preview="false"]'
+  const emptyPhoto = rule(emptySelector)
+  expect(emptyPhoto).toMatch(/aspect-ratio:\s*auto\s*;/)
+  expect(emptyPhoto).toMatch(/(?:^|;)\s*height:\s*72px\s*;/)
+  const directPhotoRules = [...styles.matchAll(/(?:^|\n)\s*(\.photo(?:\[[^\]]+\])*)\s*\{([^{}]*)\}/g)]
+  const geometryOverrides = directPhotoRules.filter(([, selector, body]) => selector !== ".photo" && /(?:aspect-ratio|(?:^|;)\s*(?:height|min-height|max-height))\s*:/.test(body))
+  expect(geometryOverrides.map(([, selector]) => selector)).toEqual([emptySelector])
+  const emptyAction = rule(`${emptySelector} > .photoAdd`)
+  expect(emptyAction).toMatch(/justify-content:\s*flex-start\s*;/)
+  expect(emptyAction).toMatch(/padding-inline:\s*16px\s*;/)
+  expect(emptyAction).toMatch(/font-size:\s*15px\s*;/)
+  expect(emptyAction).toMatch(/border:\s*0\s*;/)
+  expect(signal).toContain('data-photo-stage={photoStage} data-has-preview={photoUrl ? "true" : "false"}')
+  expect(signal).toContain('const photoStage = photoPreparing ? "loading" : photoError ?? (flow.upload === "UPL-PREVIEW" || photoUrl ? "ready" : "empty")')
+  // The selected-image error overlay stays spacious; loading and recovery
+  // controls are unaffected by the compact, empty-only state.
+  const recovery = rule(".photo figcaption button, .photo > p button")
+  expect(recovery).toMatch(/min-height:\s*44px\s*;/)
+  const previewError = rule('.photo[data-has-preview="true"] > p')
+  expect(previewError).toMatch(/height:\s*auto\s*;/)
+  expect(previewError).toMatch(/min-height:\s*64px\s*;/)
+  expect(rule(".photo > .photoLoading")).toMatch(/display:\s*flex\s*;/)
   expect(styles).toContain("@media (max-width: 360px)")
   expect(styles).toContain("orientation: landscape")
 })

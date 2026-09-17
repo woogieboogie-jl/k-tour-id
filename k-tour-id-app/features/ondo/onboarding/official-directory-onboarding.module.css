@@ -5,15 +5,14 @@
    the panel may be height-capped or painted; the layer must stay transparent
    and cover the complete visible map so its scrim and bottom anchor agree. */
 .root :global(section[data-sheet-variant="decision"]) { max-height:min(72dvh, 620px); background:var(--ondo-surface-raised, var(--ondo-surface, #fff)); color:var(--ondo-ink, #181716); }
-.root[data-onboarding-step="intent"] :global(section[data-sheet-variant="decision"]) { max-height:min(56dvh, 520px); }
 .header { display:flex; justify-content:flex-end; color:var(--ondo-ink, #181716); font-size:13px; font-weight:780; }
 .locales { display:flex; gap:2px; padding:2px; border-radius:999px; background:var(--ondo-surface-soft, #f2f1f0); }
 .locales button { min-width:44px; min-height:44px; padding:0 7px; border:0; border-radius:999px; background:transparent; color:var(--ondo-muted, #706d69); font:inherit; font-size:12px; }
 .locales button[aria-pressed="true"] { background:var(--ondo-control, #181716); color:var(--ondo-control-ink, #fff); }
-.content { padding:18px 20px 8px; color:var(--ondo-ink, #181716); }
+.content { padding:20px 20px 8px; color:var(--ondo-ink, #181716); }
 .content { animation:onboarding-step-in 180ms cubic-bezier(.2,.8,.2,1); }
 .stageHeading { margin:0 0 20px; }
-.stageHeading h1 { margin:0; max-width:14ch; font-size:clamp(28px, 8vw, 40px); line-height:1.02; letter-spacing:-.05em; }
+.stageHeading h1 { margin:0; max-width:14ch; font-size:clamp(28px, 8vw, 32px); line-height:1.08; letter-spacing:-.05em; }
 .stageHeading h1:focus { outline:none; }
 .stageHeading p { margin:9px 0 0; color:var(--ondo-muted, #6f6b67); font-size:15px; line-height:1.45; }
 .choiceGrid { display:grid; gap:10px; }
@@ -35,7 +34,7 @@
 .group { min-width:0; margin:0 0 16px; padding:0; border:0; }
 .group legend { margin-bottom:8px; color:var(--ondo-ink, #625e5a); font-size:13px; font-weight:780; }
 .chips { display:flex; flex-wrap:wrap; gap:8px; }
-.chips button { display:flex; min-height:44px; align-items:center; gap:6px; padding:9px 13px; border:1px solid var(--ondo-line, #d9d6d3); border-radius:999px; background:var(--ondo-surface, #fff); color:var(--ondo-ink, #181716); font:inherit; font-size:14px; font-weight:700; }
+.chips button { display:flex; min-height:52px; align-items:center; gap:6px; padding:9px 13px; border:1px solid var(--ondo-line, #d9d6d3); border-radius:999px; background:var(--ondo-surface, #fff); color:var(--ondo-ink, #181716); font:inherit; font-size:14px; font-weight:700; }
 .chips button[aria-pressed="true"] { border-color:var(--ondo-control, #181716); background:var(--ondo-control, #181716); color:var(--ondo-control-ink, #fff); }
 .chips svg { width:15px; height:15px; }
 .group small { display:block; margin-top:8px; color:var(--ondo-muted, #77736f); font-size:12px; line-height:1.4; }
@@ -50,8 +49,9 @@
 .secondary { border:0; background:transparent; color:var(--ondo-muted, #6f6b67); }
 .error { margin:12px 0 0; padding:11px 13px; border-radius:14px; background:color-mix(in srgb, var(--destructive, #962f24) 12%, var(--ondo-surface, #fff)); color:var(--destructive, #962f24); font-size:13px; line-height:1.4; }
 @keyframes onboarding-step-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
-@media (max-width:699px) { .root[data-onboarding-step="intent"] :global([data-sheet-header="true"]) { min-height:56px; padding-block:4px; } .root[data-onboarding-step="intent"] .content { padding:6px 14px 0; } .root[data-onboarding-step="intent"] .stageHeading { margin-bottom:6px; } .root[data-onboarding-step="intent"] .stageHeading h1 { max-width:none; font-size:22px; line-height:1.05; } .root[data-onboarding-step="intent"] .choiceGrid { gap:4px; } .root[data-onboarding-step="intent"] .choice { min-height:44px; grid-template-columns:30px minmax(0,1fr) 18px; gap:8px; padding:4px 9px; border-radius:14px; font-size:14px; } .root[data-onboarding-step="intent"] .choice > svg:first-child { width:30px; height:30px; padding:6px; border-radius:10px; } .root[data-onboarding-step="intent"] .footer { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:6px; } .root[data-onboarding-step="intent"] .error { grid-column:1/-1; } .root[data-onboarding-step="intent"] .primary,.root[data-onboarding-step="intent"] .secondary { min-width:0; min-height:44px; padding:4px 7px; font-size:13px; line-height:1.2; } }
-@media (max-width:360px), (max-height:650px) { .root :global(section[data-sheet-variant="decision"]) { max-height:86dvh; } .root[data-onboarding-step="intent"] :global(section[data-sheet-variant="decision"]) { max-height:56dvh; } .content { padding:8px 14px 2px; } .stageHeading { margin-bottom:8px; } .stageHeading h1 { font-size:24px; } .root[data-onboarding-step="intent"] .content { padding:2px 12px 0; } .root[data-onboarding-step="intent"] .stageHeading { margin-bottom:4px; } .root[data-onboarding-step="intent"] .stageHeading h1 { max-width:none; font-size:20px; line-height:1; } .root[data-onboarding-step="intent"] .choiceGrid { gap:2px; } .root[data-onboarding-step="intent"] .choice { min-height:44px; grid-template-columns:30px 1fr 18px; gap:8px; padding:4px 9px; border-radius:14px; font-size:14px; } .root[data-onboarding-step="intent"] .choice > svg:first-child { width:30px; height:30px; padding:6px; border-radius:10px; } .root[data-onboarding-step="intent"] .footer { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:4px; } .root[data-onboarding-step="intent"] .error { grid-column:1/-1; } .root[data-onboarding-step="intent"] .primary,.root[data-onboarding-step="intent"] .secondary { min-height:44px; padding:2px 6px; font-size:12px; line-height:1.15; } }
-@media (min-width:700px) and (max-height:520px) { .root :global(section[data-sheet-variant="decision"]), .root[data-onboarding-step="intent"] :global(section[data-sheet-variant="decision"]) { height:calc(100dvh - 16px); max-height:calc(100dvh - 16px); } .content { padding:10px 18px 2px; } .stageHeading { margin-bottom:10px; } .stageHeading h1 { font-size:26px; } .stageHeading p { margin-top:5px; font-size:13px; } .choiceGrid { grid-template-columns:minmax(0,1fr); gap:8px; } .choice { min-height:52px; grid-template-columns:32px minmax(0,1fr) 18px; gap:8px; padding:6px 9px; font-size:14px; } .choice > svg:first-child { width:32px; height:32px; padding:7px; } .preview { min-height:48px; margin-bottom:8px; padding:6px 10px; } .group { margin-bottom:9px; } }
+/* All optional steps share one type, inset and action scale. Short screens
+   scroll the sheet body instead of compressing only the first step. */
+@media (max-width:360px) { .content { padding-inline:16px; } }
+@media (max-height:650px) { .root :global(section[data-sheet-variant="decision"]) { max-height:86dvh; } }
 @media (prefers-reduced-motion:reduce) { .root *, .root *::before, .root *::after { scroll-behavior:auto!important; transition-duration:.01ms!important; animation-duration:.01ms!important; } }
 @media (forced-colors:active) { .choice[aria-checked="true"],.areaChoice[aria-checked="true"],.chips button[aria-pressed="true"] { outline:2px solid CanvasText; } }

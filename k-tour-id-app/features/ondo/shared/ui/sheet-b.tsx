@@ -35,6 +35,8 @@ type SheetBProps = {
   navigation?: SheetNavigation
   onBack?(): void
   suspended?: boolean
+  /** A nested task must match visual stacking to focus/isolation ownership. */
+  modalPriority?: number
   initialFocusSelector?: string
   /** A caller that explicitly hands focus to a non-modal destination can
    * suppress the usual opener restoration. Omitted preserves the default. */
@@ -62,6 +64,7 @@ function SheetBFrame({
   navigation,
   onBack,
   suspended = false,
+  modalPriority: priorityOverride,
   initialFocusSelector,
   shouldRestoreFocus,
   presenceState = "open",
@@ -75,13 +78,13 @@ function SheetBFrame({
   const onBackRef = useRef(onBack)
   const shouldRestoreFocusRef = useRef(shouldRestoreFocus)
   const semanticVariant = variant ?? (size === "peek" ? "peek" : size === "full" ? "full-task" : "decision")
-  const modalPriority = semanticVariant === "peek"
+  const modalPriority = priorityOverride ?? (semanticVariant === "peek"
     ? ONDO_MODAL_PRIORITY.peek
     : semanticVariant === "decision"
       ? ONDO_MODAL_PRIORITY.decision
       : semanticVariant === "detail"
         ? ONDO_MODAL_PRIORITY.detail
-        : ONDO_MODAL_PRIORITY.fullTask
+        : ONDO_MODAL_PRIORITY.fullTask)
   const navigationKind = navigation ?? (showClose ? "close" : "none")
   const variantClass = semanticVariant === "full-task" ? styles.fulltask : styles[semanticVariant]
   const closing = presenceState === "closing"
@@ -225,6 +228,7 @@ function SheetBFrame({
       data-sheet-variant={semanticVariant}
       data-ondo-layer={semanticVariant}
       data-modal-layer-priority={modalPriority}
+      style={priorityOverride === undefined ? undefined : { zIndex: modalPriority }}
       data-sheet-presence={presenceState}
       onClickCapture={(event) => {
         if (!closing) return

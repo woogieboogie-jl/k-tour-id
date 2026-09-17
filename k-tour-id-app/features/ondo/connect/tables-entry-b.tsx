@@ -1492,20 +1492,17 @@ export function PulseTablesEntryB() {
                 {activeTable.presentation.imageCaption ? <figcaption>{activeTable.presentation.imageCaption[locale]}</figcaption> : null}
               </figure>
               <PlaceContext venueName={placeContext.name} sourceName={placeContext.sourceName} district={district} kind={placeContext.kind} copy={t} />
-              <button type="button" className={styles.secondary} data-testid="table-return-place" onClick={returnToTablePlace}>{reservationCopy.returnPlace}<MapPin size={17} aria-hidden="true" /></button>
-              {publicSample && resolveCommercePlaceB(activeVenueId)?.reservation ? <button type="button" className={styles.secondary} data-testid="table-reservation-open" onClick={reserveTablePlace}>{reservationCopy.title}<CalendarClock size={17} aria-hidden="true" /></button> : null}
               <PlanFields copy={t} values={activePlanValues} schedule={activeTableTimeline.schedule} context="detail" />
-              <ProfileReputationEntryB locale={locale} accountActive={state.account === "ACC-ACTIVE"} origin="table_host" registerHostExitGuard={registerProfileHostExitGuard} />
               {activeTable.alcohol ? <aside className={styles.ageNotice}><ShieldCheck size={18} aria-hidden="true" /><span>{t.ageNotice}</span></aside> : null}
 
               {closePersistError ? <p className={styles.persistError} data-testid="table-close-save-error" role="alert"><AlertTriangle size={16} aria-hidden="true" />{t.closeSaveFailed}<button type="button" onClick={closeTable}>{t.retry}</button></p> : null}
               {chatLockedNotice ? <p className={styles.lockedStatus} data-testid="table-chat-locked" role="status"><ShieldCheck size={17} aria-hidden="true" />{t.chatLocked}</p> : null}
 
               {joinStage === "idle" ? <section className={styles.joinPanel}>
+                <p className={styles.bookingTruth}><ClipboardList size={17} aria-hidden="true" />{t.bookingTruth}</p>
                 <label htmlFor="table-join-draft">{t.draftLabel}</label>
                 <textarea id="table-join-draft" data-testid="table-join-draft" maxLength={280} value={draft} placeholder={t.draftHint} disabled={!canRequestSeat || runtime.membership === "TMB-REQUESTING"} onChange={(event) => setDraft(event.target.value)} />
                 <details className={styles.tablePrivacy} data-testid="tables-truth-notice"><summary>{t.privacy}</summary><p>{t.truth}</p></details>
-                <p className={styles.bookingTruth}><ClipboardList size={17} aria-hidden="true" />{t.bookingTruth}</p>
                 {(runtime.membership === "TMB-REQUESTING" || runtime.membership === "TMB-FAILED" || mustChooseAnotherTable) ? <p className={styles.runtimeStatus} data-testid="table-join-recovery" role={runtime.membership === "TMB-REQUESTING" ? "status" : "alert"} aria-live="polite"><span aria-hidden="true" />{currentTableStatus}</p> : null}
                 <button type="button" className={styles.primary} data-testid="table-join" disabled={!canRequestSeat || runtime.membership === "TMB-REQUESTING" || mustChooseAnotherTable} aria-busy={joinRequestPending} onClick={beginJoin}>{joinRequestPending ? t.joinRequesting : canRetryJoin ? t.retryJoin : t.join}</button>
                 {mustChooseAnotherTable ? <button type="button" className={styles.secondary} data-testid="table-other-tables" onClick={closeTable}>{t.otherTables}</button> : null}
@@ -1580,6 +1577,13 @@ export function PulseTablesEntryB() {
                 {blockOpen ? <ConfirmPanel title={t.blockTitle} target={t.blockTarget} confirm={t.blockConfirm} cancel={t.cancelSafety} confirmTestId="table-block-confirm" onConfirm={() => { setBlocked(true); setBlockOpen(false); window.requestAnimationFrame(() => blockUndoRef.current?.focus({ preventScroll: true })) }} onCancel={cancelBlock} /> : null}
                 {leaveOpen ? <ConfirmPanel title={t.leaveTitle} target={activeTable.presentation.title[locale]} confirm={t.leaveConfirm} cancel={t.stay} confirmTestId="table-leave-confirm" error={leavePersistError ? t.leaveSaveFailed : null} errorTestId="table-leave-save-error" onConfirm={confirmLeave} onCancel={cancelLeave} /> : null}
               </section> : null}
+              <div className={styles.detailCompanions} data-testid="table-companion-actions">
+                <button type="button" className={styles.secondary} data-testid="table-return-place" onClick={returnToTablePlace}>{reservationCopy.returnPlace}<MapPin size={17} aria-hidden="true" /></button>
+                {publicSample && resolveCommercePlaceB(activeVenueId)?.reservation ? <button type="button" className={styles.secondary} data-testid="table-reservation-open" onClick={reserveTablePlace}>{reservationCopy.title}<CalendarClock size={17} aria-hidden="true" /></button> : null}
+              </div>
+              <div className={styles.detailProfile}>
+                <ProfileReputationEntryB locale={locale} accountActive={state.account === "ACC-ACTIVE"} origin="table_host" registerHostExitGuard={registerProfileHostExitGuard} />
+              </div>
             </div>
             </article>
             if (selected) tableExitVisualSnapshotRef.current = liveTableSurface

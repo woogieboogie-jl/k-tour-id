@@ -18,6 +18,8 @@
   min-width: 0;
   gap: 24px;
   padding: 20px 20px 24px;
+  padding-left: max(var(--ondo-sheet-inset, 20px), env(safe-area-inset-left));
+  padding-right: max(var(--ondo-sheet-inset, 20px), env(safe-area-inset-right));
   color: var(--ondo-ink);
 }
 
@@ -140,7 +142,7 @@
   overflow-wrap: anywhere;
 }
 
-.footer { padding: 12px 20px; }
+.footer { padding: 0; }
 .done {
   box-sizing: border-box;
   display: flex;
@@ -170,9 +172,7 @@
   outline-offset: 3px;
 }
 
-@media (max-width: 350px) {
-  .body { padding-inline: 16px; }
-  .footer { padding-inline: 16px; }
+@media (max-width: 360px) {
   .row { gap: 10px; }
 }
 

@@ -79,7 +79,7 @@ import {
   STABLE_B_PAYMENT_OPERATION_ID,
   type StableCommerceBState,
 } from "./stable-commerce-model-b"
-import { VisitStampReceiptB } from "./visit-stamp-receipt-b"
+import { JourneyVisitEntryB } from "./journey-visit-b"
 import { createFundingRailB, fundingRailTransitionB, readFundingRailB, FUNDING_CREDIT_AMOUNTS_B, FUNDING_RAIL_SESSION_KEY_B, type FundingCardMethodB, type FundingRailActionB, type FundingRailOperationB, type FundingSampleOutcomeB } from "./funding-rail-model-b"
 import fundingStyles from "./funding-rail-b.module.css"
 import styles from "./id-wallet-commerce-b.module.css"
@@ -526,7 +526,7 @@ const OFFER_COPY = {
     merchantChange: "Merchant side",
     combinedChange: "Combined change",
     recordedOnly: "Balance record only · not sent to the venue",
-    reviewProvenance: "Review result · sample data · no real payment",
+    reviewProvenance: "Sample result",
   },
   ko: {
     eyebrow: "매장 결제",
@@ -606,7 +606,7 @@ const OFFER_COPY = {
     merchantChange: "매장 측",
     combinedChange: "합산 변화",
     recordedOnly: "잔액 기록만 저장 · 매장에 전송되지 않음",
-    reviewProvenance: "심사용 결과 · 예시 데이터 · 실제 결제 없음",
+    reviewProvenance: "샘플 결과",
   },
   ja: {
     eyebrow: "お店への支払い",
@@ -686,7 +686,7 @@ const OFFER_COPY = {
     merchantChange: "店舗側",
     combinedChange: "合計変化",
     recordedOnly: "残高記録のみ・店舗には未送信",
-    reviewProvenance: "レビュー結果・サンプルデータ・実際の決済なし",
+    reviewProvenance: "サンプル結果",
   },
 } as const
 
@@ -1121,7 +1121,6 @@ function FundingSourceSheet({ locale, source, subject, purpose, returnVenueName,
               : words("Return to this payment after adding funds", "충전 후 같은 결제로 돌아와요", "チャージ後は同じ支払いに戻ります")}</p>
             <small>{words("Adding funds is separate from paying the place.", "충전은 매장 결제와 별개예요.", "チャージとお店への支払いは別です。")}</small>
           </section> : null}
-          {phase === "settled" && creditComplete && subject.startsWith("wallet:") ? <button type="button" className={styles.primary} data-testid="funding-balance-places" onClick={useBalanceAtPlaces}><MapPin size={18} aria-hidden="true" />{words("Find places for this balance", "이 잔액으로 이용할 곳 보기", "この残高で使える場所を見る")}</button> : null}
           {operation && quote && operation.stablecoin ? <div data-testid="funding-rail-journey" data-phase={phase} data-provider-route={quote.rail} data-credit-committed={creditComplete}>
             <StablecoinFundingB key={quote.quoteId} operation={operation} locale={locale} closing={closing} creditComplete={creditComplete} balance={formatKrwFromSettlementUnits(stableCommerceBalanceB(state.commerceSession), locale)} returnLabel={fundingReturnLabel} onAction={transition} onAmount={amount => editQuote(amount)} onCreditRetry={() => creditSettled(operation)} onUseBalance={useSampleBalance} onMethods={showMethods} onClose={closeFunding} />
             {saveError ? <p className={styles.error} role="alert">{copy.saveError}</p> : null}
@@ -1154,6 +1153,7 @@ function FundingSourceSheet({ locale, source, subject, purpose, returnVenueName,
           <button type="button" className={styles.primary} data-testid="funding-method-save" disabled={closing || (draftSource !== "travel_balance" && !reviewMode)} onClick={draftSource === "travel_balance" ? commitFundingChoice : openConnectedSample}>{draftSource === "travel_balance" ? copy.done : reviewMode ? words("Continue", "계속", "続ける") : copy.provider}</button>
           {draftSource !== "travel_balance" && !reviewMode ? <button type="button" className={styles.sampleButton} data-testid="funding-sample-open" onClick={openConnectedSample}>{copy.sample}<ChevronRight size={17} aria-hidden="true" /></button> : null}
           </>}
+          {phase === "settled" && creditComplete && subject.startsWith("wallet:") ? <button type="button" className={fundingStyles.secondary} data-testid="funding-balance-places" onClick={useBalanceAtPlaces}><MapPin size={18} aria-hidden="true" />{words("Find places for this balance", "이 잔액으로 이용할 곳 보기", "この残高で使える場所を見る")}</button> : null}
         </div>
       </div>
     </div>,
@@ -1679,7 +1679,8 @@ function CanonicalCommerceOfferB({ commerce, locale, presenceState, venueId, ven
       aria-label={offerDialogLabel}
       aria-busy={closing ? "true" : undefined}
       data-testid="ondo-b-id-wallet-commerce"
-      data-modal-layer-priority={ONDO_MODAL_PRIORITY.critical}
+      data-modal-layer-priority={renderedView === "receipt" ? 139 : ONDO_MODAL_PRIORITY.critical}
+      style={renderedView === "receipt" ? { zIndex: 139 } : undefined}
       data-origin-venue-id={originVenueId}
       data-transaction-venue-id={venueId}
       data-cross-venue-receipt={crossVenueReceipt ? "true" : "false"}
@@ -1836,8 +1837,7 @@ function CanonicalCommerceOfferB({ commerce, locale, presenceState, venueId, ven
             <div><span>{copy.benefit}</span><strong>{formatKrwFromSettlementUnits(breakdown.benefit, locale)}</strong></div>
             <div><span>{copy.remaining}</span><strong>{formatKrwFromSettlementUnits(balance, locale)}</strong></div>
           </section>
-          <p className={styles.receiptConsequence} data-testid="payment-receipt-consequence"><ShieldCheck size={15} aria-hidden="true" />{copy.consequence}</p>
-          {reviewMode ? <p className={styles.receiptBoundary} data-testid="payment-review-provenance" data-review-provenance="review"><ShieldCheck size={15} aria-hidden="true" />{copy.reviewProvenance}</p> : null}
+          <p className={styles.receiptConsequence} data-testid="payment-receipt-consequence"><ShieldCheck size={15} aria-hidden="true" /><span>{reviewMode ? <><span data-testid="payment-review-provenance" data-review-provenance="review">{copy.reviewProvenance}</span>{" · "}</> : null}{copy.consequence}</span></p>
           {holderEntry && merchantEntry ? (
             <details className={styles.settlementDetails} data-testid="commerce-settlement-details">
               <summary><ReceiptText size={17} aria-hidden="true" /><span>{copy.settlement}</span><ChevronRight className={styles.disclosureChevron} size={16} aria-hidden="true" /></summary>
@@ -1852,7 +1852,7 @@ function CanonicalCommerceOfferB({ commerce, locale, presenceState, venueId, ven
               <p><ShieldCheck size={15} aria-hidden="true" />{copy.recordedOnly}</p>
             </details>
           ) : null}
-          {renderedView === "receipt" ? <VisitStampReceiptB locale={locale} venueId={venueId} /> : null}
+          {renderedView === "receipt" ? <JourneyVisitEntryB key={`journey-${venueId}`} locale={locale} venueId={venueId} context="receipt" /> : null}
           <CommerceRefundsB locale={locale} scope="checkout" reviewMode={reviewMode && !closing} />
           {renderedStorageError === "refund" ? <p className={styles.storageError} data-testid="commerce-storage-error" role="alert">{copy.refundStorageError}</p> : null}
           <button type="button" className={styles.primary} data-testid="payment-receipt-return" onClick={closeOffer}>{crossVenueReceipt ? copy.returnToPlace(originVenueName) : copy.return}<ChevronRight size={18} aria-hidden="true" /></button>

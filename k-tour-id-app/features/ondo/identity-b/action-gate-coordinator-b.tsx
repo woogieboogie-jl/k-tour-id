@@ -553,6 +553,9 @@ export function BActionGateCoordinator() {
       return true
     }
     if (returnTo.cta === "MINT_BADGE") {
+      // The focused keepsake task owns its caller and remains mounted under
+      // this gate. Do not replace its venue/collection with the generic Labs.
+      if (document.querySelector('[data-testid="journey-keepsake-overlay"]')) return true
       actions.setTab("id")
       actions.setSurface({ kind: "labs" })
       return true

@@ -2,6 +2,8 @@
 
 갱신일: 2026-09-16. 상태: **Ready — 지도 안내·타이포·모바일 하단 확장 운영 배포**. 앱 source는 `5ba76a2`이며 실제 환경별 검사 결과는 [지도 UI 보정 기록](./KTOUR_MAP_LAYOUT_FIX_2026-09-16.md)을 따른다. 아래 과거 배포의 증거는 별도로 보존한다.
 
+**로컬 후속 작업은 위 배포와 별개다.** `local/journey-pass-20260916`(`9902d7e` 기반의 미커밋 변경)에서 Journey–Pass 통합과 모바일 개선을 진행했다. 이 작업과 문서는 아직 commit/push/배포하지 않았으며, main/Harvey에 반영됐다는 뜻이 아니다. [로컬 변경·검수 기록](./KTOUR_MOBILE_REFINEMENT_LOCAL_2026-09-16.md)을 먼저 확인한다. 아래 Ready·원격 동기화 표시는 각 당시 배포 기록이며 이번 작업에서 원격 상태를 재확인하지 않았다.
+
 ## 최신 앱·개발 시작점 — 5ba76a2
 
 - 대표 앱: [ktour-id.vercel.app](https://ktour-id.vercel.app). `dpl_53qYCXhsb89oAYatA83QLc7Lb86t`, [고유 Production](https://ondo-hadlaqqrp-jaewook-9643s-projects.vercel.app), Ready·대표 주소 alias와 실제 page `86674988c0801dda` 확인.
@@ -87,15 +89,16 @@
 
 ### 유지하는 개발자 연동 범위
 
-현재 앱은 **순수 목업**이다. CX·OpenDID·OmniOne Chain·Sui는 모두 팀 필수이며 실제 연동은 개발 대상이다. 장소 1곳·비금전 체험 혜택 1개로 다음 여정을 연결한다.
+현재 앱은 **순수 목업**이다. CX·OpenDID·OmniOne Chain·Sui는 모두 팀 필수이며 실제 연동은 개발 대상이다. 현재 v2 기준은 장소 1곳의 **무료 골목 가이드 읽기 + 선택적 패스 컬렉션 저장**이다. 과거 문서의 ‘비금전 체험 혜택 사용’은 아래 저장 처리이며 금전 혜택이나 매장 제공 의무가 아니다.
 
 ```text
-지도 → 장소·체험 혜택 → CX 신원 확인 → OpenDID 패스 발급·제시
+지도 → 장소 → 골목 가이드 무료 읽기 → [선택] 내 패스에 담기
+ → CX 신원 확인 → OpenDID 패스 발급·제시
  → AI의 허용된 제안 → 사용자 승인 → zkLogin/PTB 제한 위임 → Sui Move 실행
- → 서버의 실제 결과·최종 자격 확인 → 혜택 1회 사용 → OmniOne 기록 → 같은 장소 복귀
+ → 서버의 실제 결과·최종 자격 확인 → 컬렉션에 1회 저장 → OmniOne 기록 → 같은 장소 복귀
 ```
 
-실제 충전·결제·환불·예약·bridge·여권/체류증 운영 연동은 이번 최소 범위가 아니다. 사용자의 승인, 실패·취소·만료·중복·복귀 처리는 실제 SDK/API에 연결해야 한다. Sui 권한 소비와 DB 혜택 사용·OmniOne 기록은 각각 확인한다. 상세 계약과 Sui 제출 조건은 [Sui 추가 명세](./HACKATHON_SUI_REQUIRED_ADDENDUM_2026-09-14.md)와 [1주 명세](./HACKATHON_ONE_WEEK_SPEC_2026-09-14.md)를 따른다.
+실제 충전·결제·환불·예약·bridge·여권/체류증 운영 연동은 이번 최소 범위가 아니다. 사용자의 승인, 실패·취소·만료·중복·복귀 처리는 실제 SDK/API에 연결해야 한다. Sui 권한 소비와 DB 저장·OmniOne 기록은 각각 확인한다. 무료 읽기는 인증·저장 성공에 의존하지 않는다. 상세 계약과 Sui 제출 조건은 [Sui 추가 명세](./HACKATHON_SUI_REQUIRED_ADDENDUM_2026-09-14.md)와 [1주 명세](./HACKATHON_ONE_WEEK_SPEC_2026-09-14.md), 현재 v2 UX는 [가이드 연결 계약](./EXPERIENCE_MOCK_HANDOFF_2026-09-15.md)을 따른다.
 
 ### 별도 Sandbox와 과거 기록
 

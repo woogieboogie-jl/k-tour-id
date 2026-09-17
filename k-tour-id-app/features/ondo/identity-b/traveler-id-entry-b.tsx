@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { KTourIdMark } from "../shared/ui/ktour-id-mark"
 import {
   CalendarClock,
@@ -42,6 +43,7 @@ import {
   type BActionGateSession,
 } from "./action-gate-contract-b"
 import { ProfileReputationB } from "./profile-reputation-b"
+import { JourneyStampsCardB } from "./journey-stamps-b"
 import { KPassServiceCardB } from "./kpass-service-card-b"
 import { SampleInfoButtonB } from "../shared/ui/sample-info-button-b"
 import { evaluateKPassService } from "../contracts/kpass-capabilities"
@@ -210,6 +212,9 @@ function restoredAgeOutcome(session: GlobalAfter19SessionB | null, now = new Dat
 
 export function TravelerIdEntryB() {
   const { state, actions } = useOndoB()
+  // The Pass content retains its scroll position while a check is open.
+  // Mount the task at the themed viewport, never inside that scrolled content.
+  const checkHost = typeof document === "undefined" ? null : document.querySelector("[data-testid='ondo-canvas']")
   const reviewMode = useQaControls()
   const [personOutcome, setPersonOutcome] = useState<LocalCheckOutcome | null>(null)
   const [ageOutcome, setAgeOutcome] = useState<LocalCheckOutcome | null>(null)
@@ -436,15 +441,18 @@ export function TravelerIdEntryB() {
           <SampleInfoButtonB />
         </header>
 
-        <section className={styles.pass} aria-label={accountActive ? copy.passStateActive : copy.passState} data-testid="travel-pass-card" data-flow8-object="pass">
-          <div className={styles.passGlow} aria-hidden="true" />
-          <div className={styles.passTop}><span>{copy.passLabel}</span><MapPinned size={27} strokeWidth={1.55} aria-hidden="true" /></div>
-          <div className={styles.passMain}>
-            <div><small>{accountActive ? copy.passStateActive : copy.passState}</small><strong>SEOUL — BUSAN — JEJU</strong></div>
-            <Compass size={23} aria-hidden="true" />
-          </div>
-          <small className={styles.passBoundary} data-testid="travel-pass-local-boundary">{copy.passBoundary}</small>
-        </section>
+        <div className={styles.passJourney}>
+          <section className={styles.pass} aria-label={accountActive ? copy.passStateActive : copy.passState} data-testid="travel-pass-card" data-flow8-object="pass">
+            <div className={styles.passGlow} aria-hidden="true" />
+            <div className={styles.passTop}><span>{copy.passLabel}</span><MapPinned size={27} strokeWidth={1.55} aria-hidden="true" /></div>
+            <div className={styles.passMain}>
+              <div><small>{accountActive ? copy.passStateActive : copy.passState}</small><strong>SEOUL — BUSAN — JEJU</strong></div>
+              <Compass size={23} aria-hidden="true" />
+            </div>
+            <small className={styles.passBoundary} data-testid="travel-pass-local-boundary">{copy.passBoundary}</small>
+          </section>
+          <JourneyStampsCardB locale={locale} />
+        </div>
 
         <div className={styles.walletPane}>
           <KPassServiceCardB paymentReady={paymentStatus === "success"} compact />
@@ -511,7 +519,7 @@ export function TravelerIdEntryB() {
         </footer>
       </div>
 
-      {directCheckPresence.value ? (
+      {directCheckPresence.value && checkHost ? createPortal(
         <LocalCheckWalkthroughB
           key={directCheckPresence.value.serial}
           locale={locale}
@@ -524,7 +532,7 @@ export function TravelerIdEntryB() {
           onAcknowledgeBoundary={actions.acknowledgeLocalInteractionBoundary}
           onReturn={(outcome) => returnFromCheck(directCheckPresence.value!, outcome)}
         />
-      ) : null}
+      , checkHost) : null}
     </div>
   )
 }
