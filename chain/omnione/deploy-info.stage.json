@@ -1,0 +1,7 @@
+{
+  "network": "OmniOne Chain (stage)", "chainId": 201210, "evm": "Cancun (Besu 24.12)", "gasPrice": 0,
+  "rpc": "https://stage-chainapi.omnione.net/?token=<API_KEY>",
+  "DemoEntitlementRegistry": { "address": "0x696bc4e29c8f8079b6d3cd49d310a09577550e4c", "deployTx": "0x1a82867d7608d3f473d2c2c5b4ef2995021a616de7b8d647f22544ea29e333db", "block": "0x1828553", "event": "DemoEntitlementRedeemed(bytes32 indexed eventKey, bytes32 payloadCommitment, uint64 recordedAt, address recorder)" },
+  "KTourAnchor": { "address": "0x9112d8a1a251c6a07eb7bde307fef3b3b4aa5a97", "deployTx": "0xac5e5b2f9a824245ccb47c22bbec091c84f0180090ce38fc7aebd9864ee1a9e0", "note": "earlier anchor contract; not used by the app flow" },
+  "recorder": "0x003403Cb95c2FFd66BC5748738d96C4A5B48b4ba"
+}

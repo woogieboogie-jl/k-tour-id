@@ -32,3 +32,6 @@ next-env.d.ts
 /playwright-report/
 /test-results/
 /.ondo-b-standalone/
+
+# hackathon local journey store
+/.data/

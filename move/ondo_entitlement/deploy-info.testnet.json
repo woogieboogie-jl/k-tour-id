@@ -1,0 +1,12 @@
+{
+  "network": "testnet",
+  "chainIdentifier": "69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD",
+  "packageId": "0xc5d26326ffd5267bb5b54625c1e2b9c03f7cca4753232d0b042c62ee74fd975d",
+  "publishDigest": "HTRxhvdzwvTbTUkntPfthQ3xwkyqgoExxfUeA4tRmJLa",
+  "upgradeCap": "0x120a0896caa721f3479db8da03f72d3de08e4e3f786a0ee4c04daa2a3a7a0743",
+  "adminCap": "0x2a93ff30e733e667803249131b06f5095b997518b6a738fdbf02419a4d608610",
+  "campaign": { "objectId": "0xe3fce96c9c9e1086ff20dd7453e16ff2c52d3d3324e6e4e34446c7d0dc2ecf16", "initialSharedVersion": 349181955, "campaignRef": "hk-identity-perk-v1", "policyVersion": 1, "createDigest": "BNUdHRKzUNA8WXjT5NnBx7SQPhaNvZUSGuWwAiZYj49g" },
+  "issuer": "0x8d88f750b8bb8f0e63e6617821e3d2a03fda22b9a7841215689da66c79664c45",
+  "agent": "0xad9340861c08c87c388108f13bde6fd6e27d2604c39d0f6d201e00d6ee161a05",
+  "clock": { "objectId": "0x6", "initialSharedVersion": 1 }
+}

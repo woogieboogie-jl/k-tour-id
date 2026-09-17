@@ -44,6 +44,7 @@ import { ONDO_B_TABLES, ondoBTableTimeline } from "../connect/table-model"
 import { capturePlaceServiceMapReturnB } from "../map/place-service-map-return-b"
 import { PlacePeekActionsB, PlaceServiceActionsB } from "./place-service-actions-b"
 import { JourneyVisitEntryB } from "../commerce-b/journey-visit-b"
+import { HackathonEntitlementCtaB } from "../hackathon-b/hackathon-cta-b"
 import {
   canonicalFactFreshness,
   canonicalFactState,
@@ -1141,6 +1142,7 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
             </div>
           </details>
 
+          <HackathonEntitlementCtaB venueId={currentVenueId} locale={locale} />
           <PlaceServiceActionsB placeId={currentVenueId} locale={locale} onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open" />
           <JourneyVisitEntryB key={`journey-${currentVenueId}`} locale={locale} venueId={currentVenueId} />
           {placeTable ? (

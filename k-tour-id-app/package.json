@@ -2,7 +2,6 @@
   "name": "ondo",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "packageManager": "pnpm@10.8.0",
   "engines": {
     "node": ">=22.13.0"
@@ -13,15 +12,18 @@
     "prepare:sites:ondo-b": "node scripts/ondo-b-standalone/prepare.mjs",
     "build:sites:ondo-b": "node scripts/ondo-b-standalone/build.mjs",
     "build:vercel:ondo-b": "pnpm prepare:sites:ondo-b && cd .ondo-b-standalone && ../node_modules/.bin/next build --webpack && cd .. && pnpm scan:vercel:ondo-b",
+    "build:vercel:hackathon": "next build",
     "scan:sites:ondo-b": "node scripts/ondo-b-standalone/scan-artifact.mjs",
     "scan:next:ondo-b": "node scripts/ondo-b-next-client-artifact.mjs",
     "scan:vercel:ondo-b": "ONDO_B_NEXT_SOURCE_ROOT=.ondo-b-standalone ONDO_B_NEXT_ROOT=.ondo-b-standalone/.next node scripts/ondo-b-next-client-artifact.mjs",
     "probe:sites:ondo-b": "node scripts/ondo-b-standalone/probe-http.mjs",
     "guard:deploy:ondo-b": "node scripts/ondo-b-standalone/assert-deploy-target.mjs",
     "dev": "next dev",
+    "setup": "npx --yes pnpm@10.8.0 install --frozen-lockfile",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm typecheck && pnpm build",
+    "check": "npm run typecheck && npm run build",
+    "prestart": "node scripts/ensure-build.mjs",
     "start": "next start",
     "test:contracts": "playwright test --config=playwright.contracts.config.ts",
     "test:contracts:fidelity": "playwright test tests/contracts/ondo-prd-fidelity.spec.ts --config=playwright.contracts.config.ts",
@@ -45,6 +47,7 @@
     "@fontsource-variable/noto-sans-kr": "5.3.0",
     "@fontsource-variable/noto-serif-kr": "5.3.0",
     "@hookform/resolvers": "^3.10.0",
+    "@mysten/sui": "2.31.0",
     "@radix-ui/react-accordion": "1.2.2",
     "@radix-ui/react-alert-dialog": "1.1.4",
     "@radix-ui/react-aspect-ratio": "1.1.1",
@@ -78,6 +81,7 @@
     "cmdk": "1.0.4",
     "date-fns": "4.1.0",
     "embla-carousel-react": "8.5.1",
+    "ethers": "6.17.0",
     "geist": "^1.3.1",
     "input-otp": "1.4.1",
     "leaflet": "1.9.4",
@@ -118,5 +122,18 @@
     "vinext": "0.0.50",
     "vite": "8.0.13",
     "wrangler": "4.92.0"
+  },
+  "pnpm": {
+    "supportedArchitectures": {
+      "os": [
+        "current",
+        "darwin",
+        "linux"
+      ],
+      "cpu": [
+        "current",
+        "arm64"
+      ]
+    }
   }
 }

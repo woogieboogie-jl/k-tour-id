@@ -1,0 +1,12 @@
+[package]
+name = "ondo_entitlement"
+edition = "2024"
+version = "0.1.0"
+license = "Apache-2.0"
+
+[dependencies]
+# 실제 배포/로컬 빌드: 아래 git 의존성을 사용한다 (sui CLI 기본값과 동일).
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+
+[addresses]
+ondo_entitlement = "0x0"
