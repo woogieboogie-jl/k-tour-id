@@ -270,6 +270,15 @@ test.describe("ONDO B standalone Sites packaging contract", () => {
       .join("\n")
 
     expect(sourceFiles).not.toContain("features/ondo/connect/table-fixtures.ts")
+    // Full-stack hackathon integration is opt-in, not part of the public map build.
+    expect(sourceFiles.some((file) => file.startsWith("lib/hackathon/"))).toBe(false)
+    expect(sourceFiles.some((file) => file.startsWith("app/api/hackathon/"))).toBe(false)
+    expect(readFileSync(resolve(STAGE_ROOT, "features/ondo/hackathon-b/hackathon-layer-b.tsx"), "utf8"))
+      .toBe("export function HackathonEntitlementLayerB() { return null }\n")
+    expect(readFileSync(resolve(STAGE_ROOT, "features/ondo/hackathon-b/hackathon-cta-b.tsx"), "utf8"))
+      .toContain("{ return null }")
+    expect(source).not.toContain("@mysten/sui")
+    expect(source).not.toContain("HK_SUI_ISSUER_SECRET_KEY")
     expect(source).not.toContain("table-fixtures")
     expect(source).not.toMatch(/AppProvider|LangProvider|LocationProvider|WalletProvider|useOndo\b|ondo-provider|demo-journey|mock-data|features\/ondo\/(?:commerce\/|identity\/|rewards\/|trust\/|fixtures\/)/i)
     expect(source).toMatch(/export function LabsEntryB\s*\(/)

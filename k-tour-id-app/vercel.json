@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "pnpm build:vercel:hackathon",
-  "installCommand": "pnpm install --frozen-lockfile"
+  "buildCommand": "pnpm build:vercel:ondo-b",
+  "outputDirectory": ".ondo-b-standalone/.next"
 }

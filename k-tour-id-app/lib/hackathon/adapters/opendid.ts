@@ -1,11 +1,8 @@
 // OpenDID adapter — K-Pass VC issuance, holder binding, VP verification (+5%).
 //
-// mode "opendid": OmniOne Open DID V2.0.0.0 servers (did-issuer-server /
-//   did-verifier-server). Issuance = Issuer P210 offer (QR) → holder CA app →
-//   poll `issue-vc/result`. Presentation = Verifier P310 `request-offer-qr` →
-//   holder app submits VP → `confirm-verify` polled by this server.
-//   Endpoint paths follow the published V2 API docs; request/response field
-//   names must be pinned to the team's release (see docs/HACKATHON_INTEGRATION_*).
+// mode "opendid": blocked until issuance completion, holder binding and server-side
+//   verifier result polling are implemented and pinned to the provider release.
+//   An offer or client submission marker is never an issued/verified credential.
 // mode "mock":  issuer = this server (Ed25519 key derived from HK_ISSUER_SIGNING_SEED),
 //   holder = the browser (WebCrypto keypair registered at holder-ack).
 //   Signatures, nonce/audience binding, expiry and status are REAL checks;
@@ -55,14 +52,7 @@ export async function issueCredential(input: IssueInput): Promise<{ summary: Cre
   const vcId = `urn:ondo:kpass:${randomId("vc", 10)}`
   const holderBinding = digestOf({ spki: input.holderPublicKeyPem, alg: input.holderKeyAlg })
   if (c.mode === "opendid") {
-    // Issuer-initiated offer: the real holder (CA app) completes P210 with the TAS.
-    const res = await fetch(`${c.issuerUrl}/issuer/api/v1/request-offer`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vcPlanId: c.vcPlanId, offerType: "QR", reference: input.operationId }), signal: AbortSignal.timeout(15_000) })
-    if (!res.ok) throw new HkError("opendid_issuer", `issuer request-offer ${res.status}`, 502, true)
-    const offer = await res.json()
-    return { offer, document: null, summary: {
-      credentialRef: randomId("cred"), vcId: String(offer.offerId ?? vcId), schema: HK_SCHEMA_VERSION, mode: "opendid", issuerDid: c.issuerDid,
-      holderBinding, serviceAccess: [HK_SERVICE_ACCESS], validFrom, validUntil, statusRef, status: "unknown", holderAckAt: null,
-    } }
+    throw new HkError("opendid_provider_unimplemented", "OpenDID provider issuance and verification are not implemented; no provider credential was issued", 503)
   }
   const { priv, pubPem } = issuerKeyPair()
   const subjectCommitment = digestOf({ subject: input.subjectRef, seed: createHash("sha256").update(c.signingSeed).digest("hex") })
@@ -100,19 +90,12 @@ export function verifyHolderSignature(opts: { alg: "Ed25519" | "ECDSA-P256"; pub
   } catch { return false }
 }
 
-/** Real-verifier variant (opendid mode): start a VP request and poll it. */
+/** Provider entrypoints intentionally fail closed until the complete lifecycle exists. */
 export async function verifierRequestOffer(opts: { operationId: string }): Promise<{ offer: unknown; verifierRef: string }> {
-  const c = hkConfig().opendid
-  const res = await fetch(`${c.verifierUrl}/verifier/api/v1/request-offer-qr`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ policyId: c.policyId, reference: opts.operationId }), signal: AbortSignal.timeout(15_000) })
-  if (!res.ok) throw new HkError("opendid_verifier", `verifier request-offer-qr ${res.status}`, 502, true)
-  const offer = await res.json()
-  return { offer, verifierRef: String(offer.offerId ?? offer.txId ?? "") }
+  void opts
+  throw new HkError("opendid_provider_unimplemented", "OpenDID server-side verifier lifecycle is not implemented", 503)
 }
 export async function verifierConfirm(verifierRef: string): Promise<"pending" | "verified" | "failed"> {
-  const c = hkConfig().opendid
-  const res = await fetch(`${c.verifierUrl}/verifier/api/v1/confirm-verify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ offerId: verifierRef }), signal: AbortSignal.timeout(15_000) })
-  if (res.status === 404 || res.status === 425) return "pending"
-  if (!res.ok) return "failed"
-  const json = await res.json().catch(() => ({}))
-  return json?.result === true || json?.status === "VERIFIED" ? "verified" : json?.status === "PENDING" ? "pending" : "failed"
+  void verifierRef
+  throw new HkError("opendid_provider_unimplemented", "OpenDID server-side verifier lifecycle is not implemented", 503)
 }

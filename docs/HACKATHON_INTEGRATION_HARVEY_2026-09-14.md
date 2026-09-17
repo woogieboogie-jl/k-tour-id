@@ -1,5 +1,7 @@
 # 해커톤 연동 구현 기록 — CX · OpenDID · Sui · OmniOne Chain
 
+> **9/17 통합본 주의:** 아래는 원본 구현 당시 기록입니다. 이번 통합은 [로컬 통합 검수](./HARVEY_SYNC_LOCAL_2026-09-17.md)를 기준으로 보세요. 실제 OpenDID 제공자 수명주기는 미구현으로 차단되며, Sui 실연동 완료를 이번 테스트가 증명하지 않습니다. 자동 실행/자동 발급은 제거했고 직접 승인 방식입니다. UI 빌드 플래그와 서버 런타임 플래그가 모두 필요하며 기본 공개 배포는 격리된 지도 빌드를 유지합니다. 아래 smoke 명령은 실제 체인 거래를 만들 수 있습니다.
+
 작성: Harvey (2026-09-14) · 브랜치 `feat/hackathon-integration-harvey` (base `handoff/harvey-20260914`) · 상태: **구현 완료, 실기기·실계정 검수 전**
 
 이 문서는 [연동 개발 요약](./HARVEY_HACKATHON_HANDOFF_2026-09-14.md)과 [Sui 추가 명세](./HACKATHON_SUI_REQUIRED_ADDENDUM_2026-09-14.md)를 코드로 옮긴 결과와 그 경계를 기록한다. 실연동/목업/미충족을 구분해서 적는다.

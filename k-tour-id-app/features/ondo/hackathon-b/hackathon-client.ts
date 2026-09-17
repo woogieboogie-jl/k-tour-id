@@ -20,11 +20,8 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 const post = <T,>(path: string, body?: unknown) => call<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) })
 
 // ── OmniOne CX, fetched by the browser ────────────────────────────────
-// The CX verifier answers unauthenticated and sends `Access-Control-Allow-Origin: *`,
-// but it refuses connections from cloud networks, so a deployed server cannot reach it.
-// The visitor's own network can, so the QR handoff is requested here. This proves the
-// CX integration end to end up to the handoff; the result still cannot be verified by
-// this server, so the journey continues on the clearly labelled sample path.
+// A QR handoff is not a verified identity result. Availability depends on the
+// configured service and network; isolated runs must never call this external URL.
 export const CX_BROWSER_QR = process.env.NEXT_PUBLIC_HK_CX_BROWSER_QR === "1"
 const CX_BASE = process.env.NEXT_PUBLIC_HK_CX_BASE_URL || "https://cx.raonsecure.co.kr:18543"
 const CX_PROVIDER = process.env.NEXT_PUBLIC_HK_CX_PROVIDER || "comdl"
@@ -33,6 +30,7 @@ const CX_ZKP = process.env.NEXT_PUBLIC_HK_CX_ZKP_TYPE || "AdultVerify"
 export type CxBrowserQr = { qrBase64: string; cxId: string; txId: string; provider: string }
 
 export async function fetchCxBrowserQr(): Promise<CxBrowserQr> {
+  if (!CX_BROWSER_QR || (await api.config()).isolatedMock !== false) throw new Error("External identity requests are disabled")
   const call = async (path: string, body: unknown) => {
     const res = await fetch(`${CX_BASE}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
     if (!res.ok) throw new Error(`CX ${path} ${res.status}`)
@@ -77,7 +75,7 @@ export const api = {
   zkProve: (b: { jwt: string; extendedEphemeralPublicKey: string; maxEpoch: number; jwtRandomness: string }) => post<{ address: string; inputs: ZkInputs; maxEpoch: number }>("/zklogin/prove", b),
 }
 
-export type PublicConfig = { campaign: { venueId: string; campaignId: string; title: Record<string, string>; description: Record<string, string>; endsAt: string }; modes: Record<string, string>; sui: { network: string; packageId: string; campaignId: string; explorer: string; googleClientId: string }; omnione: { chainId: number; registryAddress: string }; consentVersion: string }
+export type PublicConfig = { isolatedMock?: boolean; campaign: { venueId: string; campaignId: string; title: Record<string, string>; description: Record<string, string>; endsAt: string }; modes: Record<string, string>; sui: { network: string; packageId: string; campaignId: string; explorer: string; googleClientId: string }; omnione: { chainId: number; registryAddress: string }; consentVersion: string }
 export type EntitlementInfo = { supported: boolean; campaign: PublicConfig["campaign"] | null; modes?: Record<string, string>; consentVersion?: string; operation: OperationResult | null; redeemed: { redemptionRef: string; redeemedAt: string } | null }
 export type ZkInputs = { proofPoints: { a: string[]; b: string[][]; c: string[] }; issBase64Details: { value: string; indexMod4: number }; headerBase64: string; addressSeed: string }
 
@@ -136,6 +134,7 @@ export function createDemoSigner(operationId: string): StoredSigner {
 }
 /** Begin Google zkLogin: stores ephemeral key + nonce, returns the OAuth URL to navigate to. */
 export async function beginZkLogin(operationId: string, googleClientId: string, maxEpoch: number): Promise<string> {
+  if ((await api.config()).isolatedMock !== false) throw new Error("External sign-in is disabled")
   const eph = Ed25519Keypair.generate()
   const randomness = generateRandomness()
   const nonce = generateNonce(eph.getPublicKey(), maxEpoch, randomness)

@@ -7,7 +7,7 @@ import styles from "./hackathon-b.module.css"
 
 const COPY = {
   ko: { title: "체험 혜택 보기", hint: "신원 확인 후 1회 · 해커톤 체험용" },
-  en: { title: "See experience perk", hint: "One-time after identity check · hackathon demo" },
+  en: { title: "See experience perk", hint: "One-time after identity check · experience preview" },
   ja: { title: "体験特典を見る", hint: "本人確認後1回 · ハッカソン体験用" },
 } as const
 

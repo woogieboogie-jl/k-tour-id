@@ -11,13 +11,14 @@ import { SuiGrpcClient } from "@mysten/sui/grpc"
 import { Transaction } from "@mysten/sui/transactions"
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519"
 import { fromBase64, toBase64 } from "@mysten/sui/utils"
-import { hkConfig } from "../config"
+import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { hexToBytes, sha256Hex, HkError } from "../util"
 
 export type ObjRef = { objectId: string; version: string; digest: string }
 
 let clientSingleton: SuiGrpcClient | null = null
 export function suiClient() {
+  assertExternalServicesEnabled("Sui")
   const c = hkConfig().sui
   if (!clientSingleton) clientSingleton = new SuiGrpcClient({ network: c.network as "testnet" | "mainnet" | "devnet" | "localnet", baseUrl: c.grpcUrl })
   return clientSingleton
@@ -28,6 +29,7 @@ function keypair(secret: string, label: string) {
   return Ed25519Keypair.fromSecretKey(secret)
 }
 export function suiKeys() {
+  assertExternalServicesEnabled("Sui signing")
   const c = hkConfig().sui
   const issuer = keypair(c.issuerSecretKey, "HK_SUI_ISSUER_SECRET_KEY")
   const agent = keypair(c.agentSecretKey, "HK_SUI_AGENT_SECRET_KEY")
@@ -35,6 +37,7 @@ export function suiKeys() {
   return { issuer, agent, sponsor, issuerAddress: issuer.toSuiAddress(), agentAddress: agent.toSuiAddress(), sponsorAddress: sponsor.toSuiAddress() }
 }
 export function suiTargets() {
+  assertExternalServicesEnabled("Sui")
   const c = hkConfig().sui
   if (!c.packageId || !c.campaignId) throw new HkError("sui_unconfigured", "HK_SUI_PACKAGE_ID / HK_SUI_CAMPAIGN_ID missing", 503)
   const mod = `${c.packageId}::entitlement`
@@ -182,6 +185,7 @@ export async function agentConsume(opts: { grant: { objectId: string; initialSha
 }
 
 export async function readGrant(objectId: string) {
+  assertExternalServicesEnabled("Sui grant lookup")
   const object = await getObjectRetry(objectId, { json: true })
   const j = (object.json ?? {}) as Record<string, unknown>
   return { type: object.type, version: object.version, uses: Number(j.uses ?? -1), revoked: Boolean(j.revoked), agent: String(j.agent ?? ""), owner: String(j.owner ?? ""), recipient: String(j.recipient ?? ""), expiresAtMs: Number(j.expires_at_ms ?? 0), json: j }

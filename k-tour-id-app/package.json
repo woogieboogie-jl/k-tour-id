@@ -2,6 +2,7 @@
   "name": "ondo",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.8.0",
   "engines": {
     "node": ">=22.13.0"
@@ -13,6 +14,12 @@
     "build:sites:ondo-b": "node scripts/ondo-b-standalone/build.mjs",
     "build:vercel:ondo-b": "pnpm prepare:sites:ondo-b && cd .ondo-b-standalone && ../node_modules/.bin/next build --webpack && cd .. && pnpm scan:vercel:ondo-b",
     "build:vercel:hackathon": "next build",
+    "build:harvey:local": "node scripts/hackathon-local.mjs build",
+    "start:harvey:local": "node scripts/hackathon-local.mjs start",
+    "dev:harvey:local": "node scripts/hackathon-local.mjs dev",
+    "test:harvey:unit": "node --import tsx --test tests/hackathon/*.test.ts",
+    "test:harvey:e2e": "playwright test --config=playwright.harvey-integration.config.ts",
+    "test:harvey:bff": "PLAYWRIGHT_BASE_URL=http://127.0.0.1:3137 playwright test tests/e2e/ktour-harvey-bff-local.spec.ts --project=mobile-chromium --workers=1",
     "scan:sites:ondo-b": "node scripts/ondo-b-standalone/scan-artifact.mjs",
     "scan:next:ondo-b": "node scripts/ondo-b-next-client-artifact.mjs",
     "scan:vercel:ondo-b": "ONDO_B_NEXT_SOURCE_ROOT=.ondo-b-standalone ONDO_B_NEXT_ROOT=.ondo-b-standalone/.next node scripts/ondo-b-next-client-artifact.mjs",

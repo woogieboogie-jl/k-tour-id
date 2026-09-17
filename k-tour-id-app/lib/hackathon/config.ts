@@ -1,6 +1,7 @@
 // Hackathon integration configuration (server-only values read from process.env).
 // Nothing here is a vendor spec; adapters translate to each provider's real API.
 // Server-only: never import from client components.
+import { HkError } from "./util"
 
 export type CxMode = "mock" | "cx"
 export type OpenDidMode = "mock" | "opendid"
@@ -29,10 +30,12 @@ function env(name: string, fallback = ""): string {
 }
 
 export function hkConfig() {
-  const cxMode = (env("HK_MODE_CX", "mock") === "cx" ? "cx" : "mock") as CxMode
-  const openDidMode = (env("HK_MODE_OPENDID", "mock") === "opendid" ? "opendid" : "mock") as OpenDidMode
-  const aiMode = (env("HK_AI_MODE", env("GEMINI_API_KEY") ? "gemini" : "rule") === "gemini" && env("GEMINI_API_KEY") ? "gemini" : "rule") as AiMode
+  const isolatedMock = env("HK_ISOLATED_MOCK") === "1"
+  const cxMode = (!isolatedMock && env("HK_MODE_CX", "mock") === "cx" ? "cx" : "mock") as CxMode
+  const openDidMode = (!isolatedMock && env("HK_MODE_OPENDID", "mock") === "opendid" ? "opendid" : "mock") as OpenDidMode
+  const aiMode = (!isolatedMock && env("HK_AI_MODE", env("GEMINI_API_KEY") ? "gemini" : "rule") === "gemini" && env("GEMINI_API_KEY") ? "gemini" : "rule") as AiMode
   return {
+    isolatedMock,
     campaign: {
       venueId: env("HK_CAMPAIGN_VENUE_ID", env("NEXT_PUBLIC_HK_CAMPAIGN_VENUE_ID", "mois-0021cd596bc5b2a922ad")),
       campaignId: env("HK_CAMPAIGN_ID", "hk-identity-perk-v1"),
@@ -86,7 +89,7 @@ export function hkConfig() {
       sponsorSecretKey: env("HK_SUI_SPONSOR_SECRET_KEY", env("HK_SUI_ISSUER_SECRET_KEY")),
       zkSaltSeed: env("HK_ZKLOGIN_SALT_SEED"),
       zkProverUrl: env("HK_ZKLOGIN_PROVER_URL", "https://prover-dev.mystenlabs.com/v1"),
-      googleClientId: env("NEXT_PUBLIC_GOOGLE_CLIENT_ID"),
+      googleClientId: isolatedMock ? "" : env("NEXT_PUBLIC_GOOGLE_CLIENT_ID"),
       explorer: env("HK_SUI_EXPLORER", "https://suiscan.xyz/testnet"),
     },
     omnione: {
@@ -96,27 +99,34 @@ export function hkConfig() {
       registryAddress: env("HK_OMNIONE_REGISTRY_ADDRESS"),
       gasLimit: BigInt(env("HK_OMNIONE_GAS_LIMIT", "300000")),
     },
-    dataDir: env("HK_DATA_DIR", ".data/hackathon"),
+    dataDir: env("HK_DATA_DIR", isolatedMock ? ".data/hackathon-isolated" : ".data/hackathon"),
   }
 }
 
 export type HkConfig = ReturnType<typeof hkConfig>
 
+/** Isolation is an execution boundary, not a simulated chain confirmation. */
+export function assertExternalServicesEnabled(service: string) {
+  if (hkConfig().isolatedMock) throw new HkError("isolated_mock_external_disabled", `${service} is disabled in isolated mock mode; live verification remains pending`, 503)
+}
+
 /** Public, non-secret view for the UI and evidence screens. */
 export function hkPublicConfig() {
   const c = hkConfig()
   return {
+    isolatedMock: c.isolatedMock,
     campaign: c.campaign,
     modes: {
       cx: c.cx.mode,
       opendid: c.opendid.mode,
       ai: c.ai.mode,
-      sui: c.sui.packageId && c.sui.issuerSecretKey && c.sui.agentSecretKey ? "testnet" : "unconfigured",
-      omnione: c.omnione.rpcUrl && c.omnione.privateKey && c.omnione.registryAddress ? "stage" : "unconfigured",
-      zklogin: c.sui.googleClientId && c.sui.zkSaltSeed ? "google" : "demo-signer",
+      sui: c.isolatedMock ? "disabled-isolated" : c.sui.packageId && c.sui.issuerSecretKey && c.sui.agentSecretKey ? "testnet" : "unconfigured",
+      omnione: c.isolatedMock ? "disabled-isolated" : c.omnione.rpcUrl && c.omnione.privateKey && c.omnione.registryAddress ? "stage" : "unconfigured",
+      zklogin: c.isolatedMock ? "disabled-isolated" : c.sui.googleClientId && c.sui.zkSaltSeed ? "google" : "demo-signer",
     },
-    sui: { network: c.sui.network, packageId: c.sui.packageId, campaignId: c.sui.campaignId, explorer: c.sui.explorer, googleClientId: c.sui.googleClientId },
-    omnione: { chainId: c.omnione.chainId, registryAddress: c.omnione.registryAddress },
+    capabilities: { opendidProviderReady: false, chainExecutionEnabled: !c.isolatedMock },
+    sui: { network: c.sui.network, packageId: c.isolatedMock ? "" : c.sui.packageId, campaignId: c.isolatedMock ? "" : c.sui.campaignId, explorer: c.isolatedMock ? "" : c.sui.explorer, googleClientId: c.sui.googleClientId },
+    omnione: { chainId: c.omnione.chainId, registryAddress: c.isolatedMock ? "" : c.omnione.registryAddress },
     ttl: HK_TTL,
     consentVersion: HK_CONSENT_VERSION,
     schemaVersion: HK_SCHEMA_VERSION,

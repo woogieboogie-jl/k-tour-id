@@ -5,7 +5,7 @@
 // Confirmation = receipt status 1 AND getRedemption(eventKey) returns the same
 // commitment. A tx hash alone is never "confirmed".
 import { Contract, JsonRpcProvider, Wallet, getBytes, hexlify, zeroPadValue } from "ethers"
-import { hkConfig } from "../config"
+import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { HkError } from "../util"
 
 const ABI = [
@@ -18,17 +18,20 @@ const ABI = [
 
 let providerSingleton: JsonRpcProvider | null = null
 function provider() {
+  assertExternalServicesEnabled("OmniOne Chain")
   const c = hkConfig().omnione
   if (!c.rpcUrl) throw new HkError("omnione_unconfigured", "HK_OMNIONE_RPC_URL missing", 503)
   if (!providerSingleton) providerSingleton = new JsonRpcProvider(c.rpcUrl, { chainId: c.chainId, name: "omnione-stage" }, { staticNetwork: true })
   return providerSingleton
 }
 function signer() {
+  assertExternalServicesEnabled("OmniOne Chain signing")
   const c = hkConfig().omnione
   if (!c.privateKey) throw new HkError("omnione_unconfigured", "HK_OMNIONE_PRIVATE_KEY missing", 503)
   return new Wallet(c.privateKey, provider())
 }
 function registry(withSigner: boolean) {
+  assertExternalServicesEnabled("OmniOne Chain")
   const c = hkConfig().omnione
   if (!c.registryAddress) throw new HkError("omnione_unconfigured", "HK_OMNIONE_REGISTRY_ADDRESS missing", 503)
   return new Contract(c.registryAddress, ABI, withSigner ? signer() : provider())
@@ -36,6 +39,7 @@ function registry(withSigner: boolean) {
 const b32 = (hex: string) => zeroPadValue(getBytes(hex), 32)
 
 export function omnioneConfigured() {
+  if (hkConfig().isolatedMock) return false
   const c = hkConfig().omnione
   return Boolean(c.rpcUrl && c.privateKey && c.registryAddress)
 }

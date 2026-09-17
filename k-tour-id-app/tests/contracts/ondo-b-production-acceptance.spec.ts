@@ -164,6 +164,9 @@ test("PROD-B-003 QA and Labs session seams stay allow-listed, session-only, and 
       "features/ondo/commerce-b/id-wallet-commerce-b.tsx",
       "features/ondo/connect/tables-entry-b.tsx",
       "features/ondo/experience-b/experience-b.tsx",
+      "features/ondo/hackathon-b/hackathon-campaign.ts",
+      "features/ondo/hackathon-b/hackathon-client.ts",
+      "features/ondo/hackathon-b/hackathon-layer-b.tsx",
       "features/ondo/identity-b/action-gate-contract-b.ts",
       "features/ondo/identity-b/action-gate-coordinator-b.tsx",
       "features/ondo/identity-b/activity-profile-b-provider.tsx",
@@ -195,6 +198,9 @@ test("PROD-B-003 QA and Labs session seams stay allow-listed, session-only, and 
       "ondo-b.current-action.after19.v2",
       "ondo-b.discovery.return-ui.v1",
       "ondo-b.funding-rail.v1",
+      "ondo-b.hackathon.holder.v1",
+      "ondo-b.hackathon.pending.v1",
+      "ondo-b.hackathon.signer.v1",
       "ondo-b.labs.v1",
       "ondo-b.reservation-sample.v1",
       "ondo-b.table-activity.v1",
@@ -219,6 +225,13 @@ test("PROD-B-004 sample disclosures are explicit without false provider-success 
         // This selector is not consumer copy. The option's visible label uses
         // the existing shared sample disclosure and remains sample-session gated.
         if (file === "features/ondo/map/map-options-b.tsx" && literal === "ondo-b-map-options-demo") return false
+        // Opt-in integration test selectors and internal mode discriminants are
+        // not consumer copy. Never exempt arbitrary copy or a whole component.
+        if (file === "features/ondo/hackathon-b/hackathon-layer-b.tsx") {
+          if (String(pattern) === String(/\bdemo(?:nstration)?\b/i)
+            && ["hackathon-demo-entry", "hackathon-signer-demo", "demo", "demo-signer"].includes(literal)) return false
+          if (String(pattern) === String(/\bmock(?:ed|s)?\b/i) && literal === "mock") return false
+        }
         const commerceFile = file === "features/ondo/commerce-b/id-wallet-commerce-b.tsx"
           || file === "features/ondo/commerce-b/wallet-connection-preview-b.tsx"
         const placeFile = file === "features/ondo/place/canonical-place-overlay.tsx"

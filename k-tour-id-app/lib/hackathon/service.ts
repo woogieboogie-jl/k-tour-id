@@ -5,7 +5,7 @@
 //        client can never advance a phase by asserting success.
 import { verifyPersonalMessageSignature } from "@mysten/sui/verify"
 import { toBase64 } from "@mysten/sui/utils"
-import { hkConfig, HK_CONSENT_VERSION, HK_SCHEMA_VERSION, HK_SERVICE_ACCESS, HK_TTL } from "./config"
+import { assertExternalServicesEnabled, hkConfig, HK_CONSENT_VERSION, HK_SCHEMA_VERSION, HK_SERVICE_ACCESS, HK_TTL } from "./config"
 import { withStore, readStore, redemptionKey, type OperationRecord, type OutboxRecord } from "./store"
 import { canonicalJson, digestOf, isPast, nowIso, plusMs, randomHex32, randomId, sha256Hex, HkError, assert } from "./util"
 import type { AllowedAction, NextAction, OperationResult, ProposalOutput } from "./types"
@@ -220,9 +220,9 @@ export async function presentationSubmit(sessionId: string, operationId: string,
       const ok = verifyHolderSignature({ alg: o.secrets.holderKeyAlg!, publicKeyPem: o.secrets.holderPublicKeyPem!, payload, signatureB64: submission.signatureB64 })
       if (!ok) return deny("holder_signature")
     } else {
-      // opendid mode: decision comes from the verifier poll (verifierConfirm) — the
-      // presentation endpoint accepts a submission marker only after that poll succeeded.
-      if (!submission.disclosed.__verifierConfirmed) return deny("verifier_pending")
+      // No server-persisted provider verification lifecycle exists yet. In particular,
+      // client claims such as __verifierConfirmed cannot establish verifier trust.
+      return deny("opendid_provider_unimplemented")
     }
     p.submittedAt = nowIso(); p.verifiedAt = p.submittedAt; nonceRow.consumedAt = p.submittedAt
     p.decision = "allow"; p.decisionRef = randomId("dec"); p.decisionExpiresAt = plusMs(HK_TTL.decisionMs)
@@ -263,6 +263,7 @@ export async function proposalCreate(sessionId: string, operationId: string, ctx
 
 // ── delegation (Sui, user PTB) ────────────────────────────────────────
 export async function delegationPrepare(sessionId: string, operationId: string, input: { userAddress: string; signer: "zklogin" | "demo"; walletProof: { message: string; signature: string }; approvedProposalDigest: string }) {
+  assertExternalServicesEnabled("Sui delegation")
   const op = await loadOperation(sessionId, operationId)
   assert(op.status === "pending" && op.phase === "delegation" && op.proposal && op.presentation?.decision === "allow", "phase", "proposal approval required", 409)
   assert(op.proposal.proposalDigest === input.approvedProposalDigest, "proposal_digest", "approved proposal does not match", 409)
@@ -321,6 +322,7 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
 }
 
 export async function delegationSubmit(sessionId: string, operationId: string, input: { txBytesDigest: string; userSignature: string }) {
+  assertExternalServicesEnabled("Sui delegation")
   const op = await loadOperation(sessionId, operationId)
   assert(op.status === "pending" && op.phase === "delegation" && op.delegation?.status === "awaiting_signature" && op.secrets.lastTxBytesB64, "phase", "no delegation awaiting signature", 409)
   assert(op.delegation.txBytesDigest === input.txBytesDigest, "tx_mismatch", "transaction bytes changed", 409)
@@ -348,6 +350,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
 
 // ── agent (Sui, consume PTB) ──────────────────────────────────────────
 export async function agentRun(sessionId: string, operationId: string) {
+  assertExternalServicesEnabled("Sui agent execution")
   const op = await loadOperation(sessionId, operationId)
   assert(op.status === "pending" && op.phase === "agent" && op.delegation?.grant && op.proposal, "phase", "delegation required", 409)
   if (op.agent?.status === "executed") return toResult(op)
@@ -394,6 +397,12 @@ export async function agentRun(sessionId: string, operationId: string) {
 // ── fulfillment (server redeem) + OmniOne outbox ──────────────────────
 export async function redeem(sessionId: string, operationId: string, input: { idempotencyKey: string; bodyDigest: string }) {
   const op = await loadOperation(sessionId, operationId)
+  // A committed retry is valid after phase=done and must not re-query/re-write a chain.
+  const prior = await readStore((db) => db.idempotency[`${operationId}:redeem:${input.idempotencyKey}`])
+  if (prior) {
+    assert(prior.bodyDigest === input.bodyDigest, "idempotency_conflict", "same key, different body", 409)
+    return toResult(await loadOperation(sessionId, operationId))
+  }
   assert(op.status === "pending" && op.phase === "fulfillment" && op.agent?.status === "executed" && op.agent.txDigest, "phase", "verified Sui execution required", 409)
   // independent re-verification of the Sui execution before committing service state
   const suiTx = await readTransaction(op.agent.txDigest)
@@ -403,6 +412,7 @@ export async function redeem(sessionId: string, operationId: string, input: { id
   const outboxRecord = await mutate(sessionId, operationId, (o, db) => {
     const idem = db.idempotency[`${operationId}:redeem:${input.idempotencyKey}`]
     if (idem) { assert(idem.bodyDigest === input.bodyDigest, "idempotency_conflict", "same key, different body", 409); return null }
+    assert(o.status === "pending" && o.phase === "fulfillment" && o.agent?.status === "executed", "phase", "fulfillment is no longer pending", 409)
     const f = o.fulfillment!
     const recheck = {
       credential: !o.credential || isPast(o.credential.validUntil) ? "expired" : o.credential.status,
@@ -442,7 +452,10 @@ export async function redeem(sessionId: string, operationId: string, input: { id
 export async function processOutbox(outboxId: string) {
   const row = await readStore((db) => db.outbox[outboxId])
   if (!row || row.status === "confirmed" || row.status === "failed") return row
-  if (!omnioneConfigured()) { await withStore((db) => { const r = db.outbox[outboxId]; r.lastError = "omnione_unconfigured"; r.updatedAt = nowIso(); mirror(db, r) }); return row }
+  if (!omnioneConfigured()) {
+    await withStore((db) => { const r = db.outbox[outboxId]; r.lastError = hkConfig().isolatedMock ? "isolated_mock_external_disabled" : "omnione_unconfigured"; r.updatedAt = nowIso(); mirror(db, r) })
+    return readStore((db) => db.outbox[outboxId])
+  }
   try {
     if (row.status === "pending" || row.status === "unknown") {
       // recover by eventKey first (never resend blindly)

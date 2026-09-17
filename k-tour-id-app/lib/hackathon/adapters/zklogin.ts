@@ -12,10 +12,11 @@
 // switching paths changes users' zkLogin addresses. Fine for the demo perk (no assets).
 import { createHmac } from "node:crypto"
 import { decodeJwt, genAddressSeed, jwtToAddress } from "@mysten/sui/zklogin"
-import { hkConfig } from "../config"
+import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { HkError } from "../util"
 
 export function zkLoginConfigured() {
+  if (hkConfig().isolatedMock) return false
   const c = hkConfig().sui
   return Boolean(c.googleClientId && c.zkSaltSeed)
 }
@@ -37,7 +38,7 @@ export type ZkProofInputs = {
 }
 
 const ENOKI_API = process.env.ENOKI_API_URL || "https://api.enoki.mystenlabs.com/v1"
-export function enokiConfigured() { return Boolean(process.env.ENOKI_API_KEY) }
+export function enokiConfigured() { return !hkConfig().isolatedMock && Boolean(process.env.ENOKI_API_KEY) }
 export function zkLoginProverLabel() { return enokiConfigured() ? "enoki" : "dev-prover" }
 
 async function enoki<T>(path: string, init: { method?: string; jwt: string; body?: unknown }): Promise<T> {
@@ -53,6 +54,7 @@ async function enoki<T>(path: string, init: { method?: string; jwt: string; body
 }
 
 export async function proveZkLogin(opts: { jwt: string; extendedEphemeralPublicKey: string; maxEpoch: number; jwtRandomness: string }): Promise<{ address: string; salt: string; inputs: ZkProofInputs; sub: string; aud: string }> {
+  assertExternalServicesEnabled("zkLogin provider authentication")
   const c = hkConfig().sui
   const decoded = decodeJwt(opts.jwt)
   if (!decoded.sub || !decoded.aud || !decoded.iss) throw new HkError("zklogin_jwt", "jwt missing claims", 400)

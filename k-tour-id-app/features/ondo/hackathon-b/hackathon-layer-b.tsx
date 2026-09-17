@@ -5,13 +5,13 @@
 // Consumer copy uses actions ("신원 확인", "혜택 확인", "확인하고 사용하기");
 // technology names live in the evidence section.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Play, Ticket, X } from "lucide-react"
+import { Ticket, X } from "lucide-react"
 import type { OperationResult } from "@/lib/hackathon/types"
 import { requestPlaceServiceReturnB } from "../commerce-b/place-service-registry-b"
 import { useOndoB } from "../shared/state/ondo-b-provider"
 import { ONDO_MODAL_PRIORITY } from "../shared/ui/modal-layer-priority"
 import { useDocumentScrollLock, useModalIsolation } from "../shared/ui/use-modal-isolation"
-import { HACKATHON_DEMO_ENTRY, HACKATHON_OPEN_EVENT_B, openHackathonVenueB, readPendingHackathon, writePendingHackathon, type HackathonOpenDetail } from "./hackathon-campaign"
+import { HACKATHON_ENABLED, HACKATHON_DEMO_ENTRY, HACKATHON_OPEN_EVENT_B, manualHackathonDetail, openHackathonVenueB, readPendingHackathon, writePendingHackathon, type HackathonOpenDetail } from "./hackathon-campaign"
 import { ApiError, api, beginZkLogin, canonicalJson, clearJourneySecrets, createDemoSigner, ensureHolderKey, fetchCxBrowserQr, CX_BROWSER_QR, type CxBrowserQr, finishZkLogin, holderSign, readSigner, sha256Hex, signPersonalMessage, signTransactionBytes, fromBase64, type EntitlementInfo, type PublicConfig, type StoredSigner } from "./hackathon-client"
 import styles from "./hackathon-b.module.css"
 
@@ -21,41 +21,58 @@ const T = {
     title: "체험 혜택", sub: "신원 확인 → 패스 → 혜택 확인 → 사용", close: "닫기", back: "같은 장소로 돌아가기",
     steps: ["동의", "신원 확인", "K-Tour 패스", "패스 제시", "혜택 제안", "실행 승인", "실행", "사용 확정", "기록"],
     consentTitle: "이용 조건 확인", consentBody: "해커톤 체험용 비금전 혜택 1회입니다. 실제 결제·예약·매장의 제공 의무가 없고, 신원 확인 결과는 혜택 자격 판단에만 쓰이며 신분증·패스 원문은 체인에 올리지 않습니다.",
-    consentCheck: "위 내용을 확인했고 이 장소의 체험 혜택 1회를 진행합니다.", start: "확인하고 시작", startIdentity: "모바일 신분증으로 확인", mockApprove: "샘플 확인 승인", mockCancel: "취소 시뮬레이션", mockFail: "실패 시뮬레이션",
-    identityWait: "모바일 신분증 앱에서 확인을 마치면 아래 버튼으로 결과를 가져옵니다.", fetchResult: "결과 확인", sampleInstead: "샘플 결과로 계속 (SIMULATION)",
-    cxQrTitle: "실제 OmniOne CX QR",
-    cxQrNote: "브라우저가 OmniOne CX 서버에 직접 요청해 발급받은 실제 QR입니다. 배포 서버는 CX에 접근할 수 없어(클라우드 차단) 스캔 결과를 검증하지 못하므로, 아래 진행은 샘플로 기록됩니다.",
-    cxQrLoad: "실제 CX QR 받기", cxQrFail: "CX QR을 받지 못했어요 (한국 네트워크에서만 동작합니다)",
-    sampleNote: "모바일 운전면허증이 없으면 아래에서 샘플 결과로 진행할 수 있어요. 샘플은 실제 신분증 결과가 아니며 증거에 SIMULATION으로 남습니다.", issuing: "K-Tour 패스를 발급하고 보관 중…", present: "패스 제시", deny: "제시하지 않기",
-    presentBody: "이 장소의 혜택 목적으로 최소 항목만 제시합니다.", propose: "혜택 제안 받기", approveTitle: "실행 범위 확인", approveBody: "도우미가 아래 범위 안에서 1회만 실행합니다. 대상·수령 지갑·기한 밖 실행은 계약이 거절합니다.",
-    approveCheck: "이 범위에 동의하고 실행 권한을 1회 위임합니다.", signerZk: "Google로 계속 (zkLogin)", signerDemo: "샘플 서명자로 계속", signDelegate: "위임 서명", runAgent: "실행", redeem: "확인하고 사용하기",
-    done: "혜택 사용이 확정됐어요", blocked: "사용이 확정되지 않았어요", chainPending: "기록 확인 중", chainConfirmed: "기록 확정", reconcile: "다시 확인", evidence: "증거 보기", cancel: "그만두기",
+    consentCheck: "위 내용을 확인했고 이 장소의 체험 혜택 1회를 진행합니다.", start: "확인하고 시작", startIdentity: "모바일 신분증으로 확인", mockApprove: "샘플 확인 승인", mockCancel: "취소 결과 보기", mockFail: "실패 결과 보기",
+    identityWait: "모바일 신분증 앱에서 확인을 마치면 아래 버튼으로 결과를 가져옵니다.", fetchResult: "결과 확인", sampleInstead: "샘플 결과로 계속",
+    cxQrTitle: "외부 신분증 확인 QR",
+    cxQrNote: "외부 서비스에 QR을 요청합니다. QR 표시만으로 신원 확인이 완료되지는 않으며, 이 화면의 후속 체험은 샘플로 기록됩니다.",
+    cxQrLoad: "확인 QR 요청", cxQrFail: "현재 QR을 받지 못했어요. 연결 상태나 서비스 설정을 확인해 주세요.",
+    sampleNote: "샘플 결과로 확인 과정을 체험합니다. 실제 신분증 확인 결과가 아니며 샘플로 기록됩니다.", issuing: "K-Tour 패스를 발급하고 보관 중…", present: "패스 제시", deny: "제시하지 않기",
+    presentBody: "이 장소의 혜택에 필요한 확인 결과와 패스 유효기간만 제시합니다.", propose: "혜택 제안 받기", approveTitle: "진행 범위 확인", approveBody: "허용한 장소·혜택·횟수·기한을 확인해 주세요. 아래 범위의 1회 진행에만 동의합니다.",
+    approveCheck: "이 범위에 동의하고 한 번만 진행하도록 승인합니다.", signerZk: "Google로 계속", signerDemo: "샘플 계정으로 계속", signDelegate: "한 번만 진행하도록 승인", runAgent: "혜택 진행", redeem: "확인하고 사용하기",
+    done: "혜택 사용이 확정됐어요", blocked: "사용이 확정되지 않았어요", chainPending: "기록 확인 중", chainConfirmed: "기록 확정", reconcile: "다시 확인", evidence: "기술 기록 보기", cancel: "그만두기",
     sample: "SAMPLE", live: "LIVE", chain: "TESTNET",
   },
   en: {
     title: "Experience perk", sub: "Identity → pass → perk → use", close: "Close", back: "Return to this place",
     steps: ["Consent", "Identity", "K-Tour pass", "Present", "Proposal", "Approve", "Execute", "Confirm", "Record"],
     consentTitle: "Before you start", consentBody: "One non-financial hackathon perk. No payment, reservation or merchant obligation. The identity result is used only for eligibility; ID and pass originals never go on-chain.",
-    consentCheck: "I understand and want to use this place's one-time perk.", start: "Confirm and start", startIdentity: "Check with Mobile ID", mockApprove: "Approve sample check", mockCancel: "Simulate cancel", mockFail: "Simulate failure",
-    identityWait: "Finish in the Mobile ID app, then fetch the result.", fetchResult: "Fetch result", sampleInstead: "Continue with a sample result (SIMULATION)",
-    cxQrTitle: "Live OmniOne CX QR",
-    cxQrNote: "This QR was issued by the OmniOne CX server, requested straight from your browser. This deployment cannot reach CX (cloud egress is blocked), so a scan cannot be verified here and continuing below is recorded as a sample.",
-    cxQrLoad: "Get a live CX QR", cxQrFail: "Could not reach CX (works from a Korean network)",
-    sampleNote: "No mobile driver's licence? Continue with a sample result. It is not a government ID result and is recorded as SIMULATION.", issuing: "Issuing and storing your K-Tour pass…", present: "Present pass", deny: "Don't present",
-    presentBody: "Only the minimum claims for this place and purpose are presented.", propose: "Get a perk proposal", approveTitle: "Confirm execution scope", approveBody: "The assistant executes once within this scope. Anything outside target, recipient or expiry is rejected by the contract.",
-    approveCheck: "I agree to this scope and delegate a single execution.", signerZk: "Continue with Google (zkLogin)", signerDemo: "Continue with sample signer", signDelegate: "Sign delegation", runAgent: "Execute", redeem: "Confirm and use",
-    done: "Perk use confirmed", blocked: "Use was not confirmed", chainPending: "Recording", chainConfirmed: "Recorded", reconcile: "Check again", evidence: "Show evidence", cancel: "Stop",
+    consentCheck: "I understand and want to use this place's one-time perk.", start: "Confirm and start", startIdentity: "Check with Mobile ID", mockApprove: "Approve sample check", mockCancel: "Sample cancellation", mockFail: "Sample failure",
+    identityWait: "Finish in the Mobile ID app, then fetch the result.", fetchResult: "Fetch result", sampleInstead: "Continue with a sample result",
+    cxQrTitle: "External identity QR",
+    cxQrNote: "Request a QR from the external service. Displaying it does not confirm identity; continuing with this experience is recorded as a sample.",
+    cxQrLoad: "Request identity QR", cxQrFail: "The QR is unavailable. Check the connection or service settings.",
+    sampleNote: "Explore the check using a sample result. This is not a real identity check and is recorded as a sample.", issuing: "Issuing and storing your K-Tour pass…", present: "Present pass", deny: "Don't present",
+    presentBody: "Share only the check result and pass validity needed for this place's perk.", propose: "Get a perk proposal", approveTitle: "Confirm the scope", approveBody: "Review the place, perk, use limit and expiry. You are approving one action within this scope.",
+    approveCheck: "I agree to this scope and approve one action.", signerZk: "Continue with Google", signerDemo: "Continue with sample account", signDelegate: "Approve one action", runAgent: "Continue with perk", redeem: "Confirm and use",
+    done: "Perk use confirmed", blocked: "Use was not confirmed", chainPending: "Recording", chainConfirmed: "Recorded", reconcile: "Check again", evidence: "Show technical record", cancel: "Stop",
     sample: "SAMPLE", live: "LIVE", chain: "TESTNET",
   },
+  ja: {
+    title: "体験特典", sub: "本人確認 → パス → 特典確認 → 利用", close: "閉じる", back: "同じ場所に戻る",
+    steps: ["同意", "本人確認", "K-Tourパス", "パスの提示", "特典の提案", "承認", "実行", "利用確認", "記録"],
+    consentTitle: "利用条件の確認", consentBody: "ハッカソン体験用の金銭を伴わない1回限りの特典です。実際の決済・予約や店舗の提供義務はありません。本人確認の結果は利用資格の判断にのみ使います。",
+    consentCheck: "条件を確認し、この場所の特典を1回体験します。", start: "確認して始める", startIdentity: "モバイル身分証で確認", mockApprove: "サンプル確認を承認", mockCancel: "キャンセルを体験", mockFail: "失敗を体験",
+    identityWait: "身分証アプリで確認後、下のボタンで結果を取得してください。", fetchResult: "結果を確認", sampleInstead: "サンプル結果で続ける",
+    cxQrTitle: "外部の本人確認QR", cxQrNote: "外部サービスにQRをリクエストします。QRの表示だけでは本人確認は完了しません。この画面で続ける体験はサンプルとして記録されます。", cxQrLoad: "確認QRをリクエスト", cxQrFail: "QRを取得できません。接続やサービス設定を確認してください。",
+    sampleNote: "サンプル結果で体験できます。実際の身分証確認ではなく、サンプルとして記録されます。", issuing: "K-Tourパスを発行・保存中…", present: "パスを提示", deny: "提示しない",
+    presentBody: "この場所の特典に必要な確認結果とパスの有効期間だけを提示します。", propose: "特典の提案を受ける", approveTitle: "進める範囲の確認", approveBody: "場所・特典・回数・期限を確認してください。この範囲の1回の操作だけを承認します。",
+    approveCheck: "この範囲に同意し、1回だけの操作を承認します。", signerZk: "Googleで続ける", signerDemo: "サンプルアカウントで続ける", signDelegate: "1回だけの操作を承認", runAgent: "特典を進める", redeem: "確認して利用する",
+    done: "特典の利用が確定しました", blocked: "利用は確定していません", chainPending: "記録を確認中", chainConfirmed: "記録済み", reconcile: "再確認", evidence: "技術記録を見る", cancel: "中止する", sample: "サンプル", live: "接続済み", chain: "TESTNET",
+  },
 } as const
-const copyFor = (l: Locale) => (l === "en" ? T.en : T.ko)
+const copyFor = (l: Locale) => T[l]
 
 const STEP_OF_PHASE: Record<string, number> = { consent: 0, identity: 1, issuance: 2, presentation: 3, proposal: 4, delegation: 5, agent: 6, fulfillment: 7, done: 8, cancelled: 1, failed: 1, expired: 1 }
 
 export function HackathonEntitlementLayerB() {
   const [open, setOpen] = useState<HackathonOpenDetail | null>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
-    const onOpen = (e: Event) => { const d = (e as CustomEvent<HackathonOpenDetail>).detail; if (d?.venueId) setOpen(d) }
+    if (!HACKATHON_ENABLED) return
+    const onOpen = (e: Event) => {
+      const d = manualHackathonDetail((e as CustomEvent<unknown>).detail)
+      if (d) { openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setOpen(d) }
+    }
     window.addEventListener(HACKATHON_OPEN_EVENT_B, onOpen)
     // resume after an external app return / reload
     const url = new URL(window.location.href)
@@ -64,13 +81,21 @@ export function HackathonEntitlementLayerB() {
     if (pending && (!hk || hk === pending.resumeOperationId)) setOpen(pending)
     // `/hackathon` deep link → jump to the designated venue so the CTA is one tap away
     else if (hk === "start" && HACKATHON_DEMO_ENTRY) openHackathonVenueB(300)
-    // `/?hk=auto` (or `hk=auto-execute`) → open the venue and run the whole journey hands-free
-    else if ((hk === "auto" || hk === "auto-execute") && HACKATHON_DEMO_ENTRY) openHackathonVenueB(300, hk === "auto" ? "redeem" : "execute")
+    // Legacy automatic-entry links are view-only shortcuts. They never open or approve a journey.
+    else if ((hk === "auto" || hk === "auto-execute") && HACKATHON_DEMO_ENTRY) openHackathonVenueB(300)
     if (hk) { url.searchParams.delete("hk"); window.history.replaceState(null, "", url.toString()) }
     return () => window.removeEventListener(HACKATHON_OPEN_EVENT_B, onOpen)
   }, [])
+  if (!HACKATHON_ENABLED) return null
   if (!open) return HACKATHON_DEMO_ENTRY ? <DemoEntryButton /> : null
-  return <Journey key={open.resumeOperationId ?? open.venueId} detail={open} onClose={() => setOpen(null)} />
+  return <Journey key={open.resumeOperationId ?? open.venueId} detail={open} onClose={() => {
+    setOpen(null)
+    window.setTimeout(() => {
+      const opener = openerRef.current
+      const target = opener?.isConnected && !opener.closest("[inert]") ? opener : document.querySelector<HTMLElement>("[data-testid='hackathon-entitlement-open']")
+      target?.focus({ preventScroll: true })
+    }, 100)
+  }} />
 }
 
 /** Floating map shortcut (demo builds only): opens the designated venue's place sheet. */
@@ -78,23 +103,19 @@ function DemoEntryButton() {
   const { state } = useOndoB()
   if (state.tab !== "ondo" || state.surface.kind !== "map") return null
   const label = state.locale === "en" ? "Start perk journey" : state.locale === "ja" ? "体験特典を始める" : "체험 혜택 여정 시작"
-  const autoLabel = state.locale === "en" ? "Run full journey" : state.locale === "ja" ? "全フロー自動実行" : "전체 플로우 자동 실행"
-  const loc = state.locale === "en" ? "en" : state.locale === "ja" ? "ja" : "ko"
   return (
     <div className={styles.entryGroup}>
       <button type="button" className={styles.entry} data-testid="hackathon-demo-entry" onClick={() => openHackathonVenueB()}>
         <Ticket size={16} aria-hidden="true" /><span>{label}</span>
-      </button>
-      <button type="button" className={styles.entry} data-variant="auto" data-testid="hackathon-demo-entry-auto" onClick={() => openHackathonVenueB(0, "redeem", loc)}>
-        <Play size={16} aria-hidden="true" /><span>{autoLabel}</span>
       </button>
     </div>
   )
 }
 
 function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: () => void }) {
-  const locale: Locale = detail.locale === "ja" ? "ko" : detail.locale
+  const locale: Locale = detail.locale
   const c = copyFor(locale)
+  const tr = (ko: string, en: string, ja: string) => locale === "ko" ? ko : locale === "ja" ? ja : en
   const [info, setInfo] = useState<EntitlementInfo | null>(null)
   const [config, setConfig] = useState<PublicConfig | null>(null)
   const [op, setOp] = useState<OperationResult | null>(null)
@@ -128,19 +149,15 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
       const resumeId = detail.resumeOperationId ?? ent.operation?.operationId
       if (resumeId) {
         let current = await api.get(resumeId).catch(() => null)
-        // A finished operation is not resumable: drop the stale pending marker and, in
-        // autopilot, start a fresh journey instead of re-showing the old result.
-        if (current && current.status !== "pending") { writePendingHackathon(null); if (detail.auto) current = null }
+        if (current && current.status !== "pending") writePendingHackathon(null)
         if (current && alive) { setOp(current); setSigner(readSigner(current.operationId)); try { vcRef.current = JSON.parse(sessionStorage.getItem(`ondo-b.hackathon.vc:${current.operationId}`) ?? "null") } catch { vcRef.current = null } }
-        // zkLogin callback stored a JWT for this operation?
-        const jwt = sessionStorage.getItem(`ondo-b.hackathon.jwt:${resumeId}`)
-        if (jwt && current) { sessionStorage.removeItem(`ondo-b.hackathon.jwt:${resumeId}`); run("zk", async () => { setSigner(await finishZkLogin(resumeId, jwt)) }) }
+        // OAuth return restores the view only; finishing sign-in requires a fresh tap.
       }
     })().catch((e) => setError(e instanceof Error ? e.message : "load failed"))
     return () => { alive = false }
   }, [detail.venueId, detail.resumeOperationId, run])
 
-  useEffect(() => { if (op && op.status === "pending") writePendingHackathon({ venueId: detail.venueId, locale: detail.locale, resumeOperationId: op.operationId, auto: detail.auto }) }, [op, detail.venueId, detail.locale, detail.auto])
+  useEffect(() => { if (op && op.status === "pending") writePendingHackathon({ venueId: detail.venueId, locale: detail.locale, resumeOperationId: op.operationId }) }, [op, detail.venueId, detail.locale])
 
   const close = useCallback((returnToPlace: boolean) => {
     if (op && op.status !== "pending") { writePendingHackathon(null); clearJourneySecrets(op.operationId); try { sessionStorage.removeItem(`ondo-b.hackathon.vc:${op.operationId}`) } catch { /* ignore */ } }
@@ -149,7 +166,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   }, [onClose, op, detail.venueId])
 
   // ── step actions ──────────────────────────────────────────────────
-  const start = () => run("start", async () => { setOp(await api.create(detail.venueId, info?.consentVersion ?? config?.consentVersion ?? "", locale)) })
+  const start = () => run("start", async () => { if (consent && info?.supported) setOp(await api.create(detail.venueId, info?.consentVersion ?? config?.consentVersion ?? "", locale)) })
   const identityStart = () => run("identity", async () => { if (op) setOp(await api.identityStart(op.operationId, isMobile)) })
   const identityComplete = (sample?: { outcome: string; subjectSeed: string }) => run("identity", async () => { if (op) setOp(await api.identityComplete(op.operationId, sample)) })
   const issueAndAck = useCallback(() => run("issue", async () => {
@@ -162,7 +179,6 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
     const ackPayload = canonicalJson({ typ: "ondo-kpass-holder-ack/v1", credentialRef: cred.credentialRef, vcId: cred.vcId, holderBinding: cred.holderBinding })
     setOp(await api.holderAck(op.operationId, await holderSign(holder, ackPayload)))
   }), [op, run])
-  useEffect(() => { if (op?.phase === "issuance" && !op.credential && !busy) issueAndAck() }, [op?.phase, op?.credential, busy, issueAndAck])
 
   const present = () => run("present", async () => {
     if (!op) return
@@ -181,13 +197,16 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   const chooseSigner = (kind: "zklogin" | "demo") => run("signer", async () => {
     if (!op) return
     if (kind === "demo") { setSigner(createDemoSigner(op.operationId)); return }
+    if (config?.isolatedMock !== false) throw new Error(tr("이 체험에서는 Google 연결을 사용하지 않아요.", "Google sign-in is disabled for this isolated experience.", "この体験ではGoogle連携を使用しません。"))
+    const jwt = sessionStorage.getItem(`ondo-b.hackathon.jwt:${op.operationId}`)
+    if (jwt) { setSigner(await finishZkLogin(op.operationId, jwt)); sessionStorage.removeItem(`ondo-b.hackathon.jwt:${op.operationId}`); return }
     const params = await api.zkParams()
-    if (!params.configured) throw new Error("zkLogin is not configured (NEXT_PUBLIC_GOOGLE_CLIENT_ID / HK_ZKLOGIN_SALT_SEED)")
-    writePendingHackathon({ venueId: detail.venueId, locale: detail.locale, resumeOperationId: op.operationId, auto: detail.auto })
+    if (!params.configured) throw new Error(tr("Google 연결이 준비되지 않았어요.", "Google sign-in is not configured.", "Google連携の準備ができていません。"))
+    writePendingHackathon({ venueId: detail.venueId, locale: detail.locale, resumeOperationId: op.operationId })
     window.location.assign(await beginZkLogin(op.operationId, params.googleClientId, params.maxEpoch))
   })
   const delegate = () => run("delegate", async () => {
-    if (!op || !signer || !op.proposal || !op.presentation?.decisionRef) return
+    if (!approve || !op || !signer || !op.proposal || !op.presentation?.decisionRef) return
     const message = `ondo-hk-wallet-proof:${op.operationId}:${op.presentation.decisionRef}`
     const prepared = await api.delegationPrepare(op.operationId, { userAddress: signer.address, signer: signer.kind, walletProof: { message, signature: await signPersonalMessage(signer, message) }, approvedProposalDigest: op.proposal.proposalDigest })
     setOp(prepared.result)
@@ -214,116 +233,36 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
     try { setCxQr(await fetchCxBrowserQr()) } catch (e) { setCxQrError(e instanceof Error ? e.message : "unknown"); setCxQr(null) }
   })
 
-  // ── autopilot ─────────────────────────────────────────────────────
-  // Drives the same step actions a person would tap, one server phase at a time.
-  // Stops (and hands back to the UI) on any error, on a real-provider handoff
-  // (QR / Mobile ID app, Google zkLogin redirect) or when the chosen end is reached.
-  const auto = detail.auto
-  const [autoPaused, setAutoPaused] = useState(false)
-  const autoFiredRef = useRef("")
-  const autoReconcileRef = useRef(0)
-  const autoActive = Boolean(auto) && !autoPaused && !error
-  useEffect(() => {
-    if (!autoActive || busy || !info || !config) return
-    const key = op
-      ? `${op.phase}:${op.status}:${op.identity?.handoff?.kind ?? ""}:${op.credential ? 1 : 0}:${op.presentation?.decision ?? ""}:${op.proposal ? 1 : 0}:${signer?.kind ?? ""}:${op.delegation?.status ?? ""}:${op.agent?.status ?? ""}:${op.fulfillment?.status ?? ""}`
-      : `consent:${info.supported}:${info.redeemed ? 1 : 0}`
-    if (autoFiredRef.current === key) return
-    autoFiredRef.current = key
-    if (!op) {
-      // `info.redeemed` refers to the session's last verified subject; with one sample
-      // person per operation the server decides at identity time, so start regardless.
-      if (info.supported) { setConsent(true); start() }
-      return
-    }
-    if (op.status !== "pending") {
-      // done: poll the OmniOne outbox a few times until the record is confirmed
-      if (op.phase === "done" && op.chain && (op.chain.status === "pending" || op.chain.status === "submitted" || op.chain.status === "unknown") && autoReconcileRef.current < 6) {
-        autoReconcileRef.current += 1
-        const t = window.setTimeout(() => { autoFiredRef.current = ""; reconcile() }, 2500)
-        return () => window.clearTimeout(t)
-      }
-      return
-    }
-    switch (op.phase) {
-      case "identity":
-        if (!op.identity?.handoff) identityStart()
-        // Real CX handoff needs a holder with that credential; autopilot takes the
-        // clearly-labelled sample path so the rest of the journey can still be shown.
-        else approveSample()
-        break
-      case "issuance":
-        break // handled by the issuance effect above
-      case "presentation":
-        if (op.presentation?.decision !== "deny") present()
-        break
-      case "proposal":
-        propose()
-        break
-      case "delegation":
-        if (!op.proposal) break
-        if (!signer) chooseSigner("demo") // zkLogin needs a Google redirect; autopilot uses the sample signer
-        else if (signer.kind === "zklogin" && signer.jwtPending) break
-        else if (op.delegation?.status !== "delegated") { setApprove(true); delegate() }
-        break
-      case "agent":
-        if (op.agent?.status === "unknown") reconcile()
-        else runAgent()
-        break
-      case "fulfillment":
-        if (auto === "redeem" && op.fulfillment?.status !== "blocked") redeem()
-        break
-      default:
-        break
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoActive, busy, info, config, op, signer])
-
   const stepIndex = op ? STEP_OF_PHASE[op.phase] ?? 0 : 0
   const modes = info?.modes ?? config?.modes ?? {}
-  const tone = (m: string | undefined) => (m === "mock" || m === "rule" || m === "demo-signer" ? "sample" : m === "unconfigured" ? "sample" : "live")
+  const isolated = config?.isolatedMock !== false
+  const tone = (m: string | undefined) => !isolated && (m === "cx" || m === "opendid" || m === "gemini") ? "live" : "sample"
   const stateOf = (i: number) => (op?.status === "cancelled" || op?.status === "failed" || op?.status === "expired" ? (i < stepIndex ? "done" : i === stepIndex ? "blocked" : "todo") : i < stepIndex ? "done" : i === stepIndex ? "current" : "todo")
   const title = useMemo(() => info?.campaign?.title?.[locale] ?? c.title, [info, locale, c.title])
-  const stepMeta = stepIndex === 1 && op?.identity?.mode ? op.identity.mode.toUpperCase() : stepIndex === 5 && (signer?.kind ?? op?.delegation?.signer) ? (signer?.kind ?? op?.delegation?.signer) : ""
 
   return (
-    <div ref={rootRef} className={styles.root} role="dialog" aria-modal="true" aria-label={c.title} data-testid="hackathon-layer" data-modal-layer-priority={ONDO_MODAL_PRIORITY.critical}>
+    <div ref={rootRef} className={styles.root} role="dialog" aria-modal="true" aria-label={c.title} lang={locale} data-testid="hackathon-layer" data-locale={locale} data-phase={op?.phase ?? "consent"} data-status={op?.status ?? "pending"} data-chain-status={op?.chain?.status ?? "none"} data-modal-layer-priority={ONDO_MODAL_PRIORITY.critical} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); close(true) } }}>
       <div className={styles.sheet}>
         <header className={styles.head}>
           <div className={styles.headRow}>
             <h2>{title}</h2>
-            <button type="button" className={styles.close} aria-label={c.close} onClick={() => close(true)}><X size={18} /></button>
+            <button type="button" className={styles.close} aria-label={c.close} data-testid="hackathon-close" onClick={() => close(true)}><X size={18} aria-hidden="true" /></button>
           </div>
           <div className={styles.progress} role="group" aria-label={`${c.steps[stepIndex]} · ${stepIndex + 1}/${c.steps.length}`}>
-            <div className={styles.progressLabel}><span><b>{c.steps[stepIndex]}</b>{stepMeta ? ` · ${stepMeta}` : ""}</span><span>{stepIndex + 1} / {c.steps.length}</span></div>
+            <div className={styles.progressLabel}><span><b>{c.steps[stepIndex]}</b></span><span>{stepIndex + 1} / {c.steps.length}</span></div>
             <div className={styles.segments} aria-hidden="true">{c.steps.map((s, i) => <span key={s} className={styles.segment} data-state={stateOf(i)} />)}</div>
           </div>
-          <div className={styles.chips} aria-label="modes">
-            <span className={styles.badge} data-tone={op?.identity ? tone(op.identity.mode) : tone(modes.cx)}>ID {(op?.identity ? op.identity.mode === "cx" : modes.cx === "cx") ? c.live : c.sample}</span>
-            <span className={styles.badge} data-tone={tone(modes.opendid)}>PASS {modes.opendid === "opendid" ? c.live : c.sample}</span>
-            <span className={styles.badge} data-tone={modes.sui === "testnet" ? "chain" : "sample"}>SUI {modes.sui === "testnet" ? c.chain : "—"}</span>
-            <span className={styles.badge} data-tone={modes.omnione === "stage" ? "chain" : "sample"}>OMNIONE {modes.omnione === "stage" ? "STAGE" : "—"}</span>
-          </div>
+          <span className={styles.badge} data-tone="sample">{tr("체험용 · 실제 혜택 아님", "Preview · not a real perk", "体験用・実際の特典ではありません")}</span>
         </header>
         <div className={styles.body}>
-          {auto ? (
-            <div className={styles.notice} data-tone={autoActive ? "ok" : undefined} data-testid="hackathon-autopilot">
-              {autoActive
-                ? (locale === "ko" ? `자동 실행 중 · ${auto === "redeem" ? "사용 확정까지" : "실행까지"} 진행합니다` : `Autopilot · running to ${auto === "redeem" ? "confirmation" : "execution"}`)
-                : (locale === "ko" ? "자동 실행이 멈췄어요. 아래 버튼으로 직접 진행할 수 있어요." : "Autopilot paused. Continue with the buttons below.")}
-              {" "}
-              <button type="button" className={styles.ghost} onClick={() => { if (autoActive) setAutoPaused(true); else { setError(null); autoFiredRef.current = ""; setAutoPaused(false) } }} disabled={!!busy}>
-                {autoActive ? (locale === "ko" ? "멈추기" : "Pause") : (locale === "ko" ? "다시 자동 실행" : "Resume")}
-              </button>
-            </div>
-          ) : null}
-          {error ? <div className={styles.notice} data-tone="error">{error}</div> : null}
+          {isolated ? <div className={styles.notice} data-testid="hackathon-isolated-notice">{tr("외부 서비스에 연결하지 않는 샘플 체험입니다. 실제 신원 확인이나 혜택 사용은 이루어지지 않습니다.", "This isolated sample does not connect to external services or verify a real identity or perk use.", "外部サービスに接続しないサンプル体験です。実際の本人確認や特典利用は行いません。")}</div> : null}
+          {error ? <div className={styles.notice} data-tone="error" role="alert">{error}</div> : null}
 
           {!op ? (
             <section className={styles.card}>
               <h3>{c.consentTitle}</h3>
-              <p>{info?.campaign?.description?.[locale] ?? c.consentBody}</p>
-              {info?.redeemed ? <div className={styles.notice} data-tone="ok">{locale === "ko" ? `이미 사용한 혜택이에요 (${info.redeemed.redeemedAt.slice(0, 16).replace("T", " ")})` : `Already used (${info.redeemed.redeemedAt.slice(0, 16).replace("T", " ")})`}</div> : null}
+              <p>{c.consentBody}</p>
+              {info?.redeemed ? <div className={styles.notice} data-tone="ok">{tr("이미 사용한 혜택이에요", "Already used", "利用済みの特典です")} ({info.redeemed.redeemedAt.slice(0, 16).replace("T", " ")})</div> : null}
               <label className={styles.check}><input type="checkbox" id="hk-consent" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> <span>{c.consentCheck}</span></label>
               <div className={styles.actions}><button type="button" className={styles.primary} disabled={!consent || !!busy || !info?.supported} onClick={start} data-testid="hackathon-start">{busy === "start" ? <span className={styles.spinner} /> : null}{c.start}</button><button type="button" className={styles.ghost} onClick={() => close(true)}>{c.back}</button></div>
             </section>
@@ -331,18 +270,17 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
 
           {op?.phase === "identity" ? (
             <section className={styles.card}>
-              <h3>{c.steps[1]} <span className={styles.badge} data-tone={tone(modes.cx)}>{modes.cx === "cx" ? c.live : c.sample}</span></h3>
+              <h3>{c.steps[1]} <span className={styles.badge} data-tone={tone(modes.cx)}>{!isolated && modes.cx === "cx" ? c.live : c.sample}</span></h3>
               {!op.identity?.handoff ? <>
-                <p>{locale === "ko" ? "행안부 모바일 신분증(주민등록증·운전면허증)으로 본인 여부만 확인합니다. 생년월일 전체는 받지 않습니다." : "Verifies you with the government Mobile ID. Full date of birth is not received."}</p>
-                <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={identityStart} data-testid="hackathon-identity-start">{c.startIdentity}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel}>{c.cancel}</button></div>
+                <p>{isolated ? c.sampleNote : tr("연결된 신분증 서비스에서 확인을 시작합니다. 결과를 받은 뒤 다음 단계로 진행합니다.", "Start a check with the connected identity service, then retrieve the result.", "接続された身分証サービスで確認後、結果を取得して次に進みます。")}</p>
+                <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={identityStart} data-testid="hackathon-identity-start">{isolated ? tr("샘플 확인 시작", "Start sample check", "サンプル確認を始める") : c.startIdentity}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
               </> : op.identity.handoff.kind === "mock" ? <>
-                <div className={styles.notice}>{op.identity.handoff.label} · {locale === "ko" ? "배포 서버가 CX에 접근할 수 없어 결과를 샘플로 대체합니다. 서버는 이 결과를 실제 신분증 결과로 표기하지 않습니다." : "The deployed server cannot reach CX, so the result is replaced by a sample; it is never labelled as a government ID result."}</div>
-                {CX_BROWSER_QR ? (
+                <div className={styles.notice}>{c.sampleNote}</div>
+                {CX_BROWSER_QR && !isolated ? (
                   <section className={styles.card} data-testid="hackathon-cx-browser-qr">
                     <h3>{c.cxQrTitle} <span className={styles.badge} data-tone="live">{c.live}</span></h3>
                     {cxQr ? <img className={styles.qr} alt="OmniOne CX QR" src={`data:image/png;base64,${cxQr.qrBase64}`} /> : null}
-                    {cxQr ? <dl className={styles.kv}><dt>provider</dt><dd>{cxQr.provider}</dd><dt>cxId</dt><dd>{cxQr.cxId}</dd></dl> : null}
-                    <div className={styles.notice}>{cxQrError ? `${c.cxQrFail} · ${cxQrError}` : c.cxQrNote}</div>
+                    <div className={styles.notice}>{cxQrError ? c.cxQrFail : c.cxQrNote}</div>
                     <div className={styles.actions}>
                       <button type="button" className={styles.secondary} disabled={busy === "cxqr"} onClick={loadCxQr} data-testid="hackathon-cx-qr-load">{busy === "cxqr" ? <span className={styles.spinner} /> : null}{c.cxQrLoad}</button>
                     </div>
@@ -352,42 +290,47 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
                   <button type="button" className={styles.primary} disabled={!!busy} onClick={approveSample} data-testid="hackathon-identity-approve">{busy === "identity" ? <span className={styles.spinner} /> : null}{c.mockApprove}</button>
                 </div>
                 <div className={styles.actions}>
-                  <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => identityComplete({ outcome: "cancelled", subjectSeed: sampleSeed })}>{c.mockCancel}</button>
-                  <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => identityComplete({ outcome: "failed", subjectSeed: sampleSeed })}>{c.mockFail}</button>
+                  <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => identityComplete({ outcome: "cancelled", subjectSeed: sampleSeed })} data-testid="hackathon-identity-cancel">{c.mockCancel}</button>
+                  <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => identityComplete({ outcome: "failed", subjectSeed: sampleSeed })} data-testid="hackathon-identity-fail">{c.mockFail}</button>
+                  <button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button>
                 </div>
               </> : op.identity.handoff.kind === "qr" ? <>
                 <img className={styles.qr} alt="Mobile ID QR" src={`data:image/png;base64,${op.identity.handoff.qrBase64}`} />
                 <p>{c.identityWait}</p>
-                <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={() => identityComplete()}>{c.fetchResult}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel}>{c.cancel}</button></div>
+                <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={() => identityComplete()}>{c.fetchResult}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
                 <div className={styles.notice}>{c.sampleNote}</div>
                 <div className={styles.actions}><button type="button" className={styles.secondary} disabled={!!busy} onClick={approveSample} data-testid="hackathon-identity-sample">{c.sampleInstead}</button></div>
               </> : <>
                 <div className={styles.actions}>
-                  {op.identity.handoff.ssPayLink ? <a className={styles.primary} href={op.identity.handoff.ssPayLink}>Samsung Wallet</a> : null}
-                  {op.identity.handoff.androidLink ? <a className={styles.secondary} href={op.identity.handoff.androidLink}>Mobile ID (Android)</a> : null}
-                  {op.identity.handoff.iosLink ? <a className={styles.secondary} href={op.identity.handoff.iosLink}>Mobile ID (iOS)</a> : null}
+                  {!isolated && op.identity.handoff.ssPayLink ? <a className={styles.primary} href={op.identity.handoff.ssPayLink}>Samsung Wallet</a> : null}
+                  {!isolated && op.identity.handoff.androidLink ? <a className={styles.secondary} href={op.identity.handoff.androidLink}>Mobile ID (Android)</a> : null}
+                  {!isolated && op.identity.handoff.iosLink ? <a className={styles.secondary} href={op.identity.handoff.iosLink}>Mobile ID (iOS)</a> : null}
                 </div>
                 <p>{c.identityWait}</p>
-                <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={() => identityComplete()}>{c.fetchResult}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel}>{c.cancel}</button></div>
+                <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={() => identityComplete()}>{c.fetchResult}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
                 <div className={styles.notice}>{c.sampleNote}</div>
                 <div className={styles.actions}><button type="button" className={styles.secondary} disabled={!!busy} onClick={approveSample} data-testid="hackathon-identity-sample">{c.sampleInstead}</button></div>
               </>}
             </section>
           ) : null}
 
-          {op?.phase === "issuance" ? <section className={styles.card}><h3>{c.steps[2]} <span className={styles.badge} data-tone={tone(modes.opendid)}>{modes.opendid === "opendid" ? c.live : c.sample}</span></h3><p><span className={styles.spinner} />{c.issuing}</p>{op.credential ? <dl className={styles.kv}><dt>VC</dt><dd>{op.credential.vcId}</dd><dt>holder</dt><dd>{op.credential.holderBinding.slice(0, 18)}…</dd></dl> : null}{!busy && op.credential && !op.credential.holderAckAt ? <div className={styles.actions}><button type="button" className={styles.primary} onClick={issueAndAck}>{c.fetchResult}</button></div> : null}</section> : null}
+          {op?.phase === "issuance" ? <section className={styles.card}>
+            <h3>{c.steps[2]} <span className={styles.badge} data-tone={tone(modes.opendid)}>{!isolated && modes.opendid === "opendid" ? c.live : c.sample}</span></h3>
+            <p>{busy === "issue" ? c.issuing : tr("이 체험에서 사용할 패스를 받아 보관합니다.", "Receive and keep a pass for this experience.", "この体験で使うパスを受け取り、保存します。")}</p>
+            <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={issueAndAck} data-testid="hackathon-issue">{busy === "issue" ? <span className={styles.spinner} /> : null}{tr("패스 받기", "Get pass", "パスを受け取る")}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
+          </section> : null}
 
           {op?.phase === "presentation" ? (
             <section className={styles.card}>
               <h3>{c.steps[3]}</h3>
               <p>{c.presentBody}</p>
-              <dl className={styles.kv}><dt>{locale === "ko" ? "제시 항목" : "Claims"}</dt><dd>schemaVersion · personVerified · serviceAccess · validUntil · policyVersion · statusRef</dd><dt>{locale === "ko" ? "제시 안 함" : "Not shared"}</dt><dd>{locale === "ko" ? "이름 · 생년월일 · 국적 · 신분증 원문" : "name · DOB · nationality · ID original"}</dd></dl>
-              {op.presentation?.decision === "deny" ? <div className={styles.notice} data-tone="error">{locale === "ko" ? `거절됨: ${op.presentation.denyReason}` : `Denied: ${op.presentation.denyReason}`}</div> : null}
-              <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={present} data-testid="hackathon-present">{busy === "present" ? <span className={styles.spinner} /> : null}{c.present}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={deny}>{c.deny}</button></div>
+              <p>{tr("이름·생년월일·국적·신분증 원문은 제시하지 않습니다.", "Your name, date of birth, nationality and original ID are not shared.", "氏名・生年月日・国籍・身分証の原文は提示しません。")}</p>
+              {op.presentation?.decision === "deny" ? <div className={styles.notice} data-tone="error">{tr("패스 제시가 승인되지 않았어요.", "Pass presentation was not approved.", "パスの提示は承認されていません。")}</div> : null}
+              <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={present} data-testid="hackathon-present">{busy === "present" ? <span className={styles.spinner} /> : null}{c.present}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={deny} data-testid="hackathon-presentation-deny">{c.deny}</button></div>
             </section>
           ) : null}
 
-          {op?.phase === "proposal" ? <section className={styles.card}><h3>{c.steps[4]} <span className={styles.badge} data-tone={tone(modes.ai)}>{modes.ai === "gemini" ? "GEMINI" : "RULE"}</span></h3><p>{locale === "ko" ? "도우미는 허용된 혜택 1개만 제안합니다. 자격 판정은 서버가 이미 끝냈고, 도우미는 금액·대상·계약을 바꿀 수 없습니다." : "The assistant proposes only the one allowed perk. Eligibility was decided by the server; the assistant cannot change amounts, targets or contracts."}</p><div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={propose} data-testid="hackathon-propose">{busy === "propose" ? <span className={styles.spinner} /> : null}{c.propose}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel}>{c.cancel}</button></div></section> : null}
+          {op?.phase === "proposal" ? <section className={styles.card}><h3>{c.steps[4]}</h3><p>{tr("이 장소에서 체험할 수 있는 혜택 하나를 확인합니다. 내용을 보고 진행 여부를 직접 선택해 주세요.", "Review the one available experience perk, then choose whether to continue.", "この場所で体験できる特典を1つ確認し、進めるかどうか選んでください。")}</p><div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={propose} data-testid="hackathon-propose">{busy === "propose" ? <span className={styles.spinner} /> : null}{c.propose}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div></section> : null}
 
           {op?.phase === "delegation" && op.proposal ? (
             <section className={styles.card}>
@@ -397,42 +340,44 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
               <h3>{c.approveTitle}</h3>
               <p>{c.approveBody}</p>
               <dl className={styles.kv}>
-                <dt>{locale === "ko" ? "행동" : "Action"}</dt><dd>{op.proposal.output.action}</dd>
-                <dt>{locale === "ko" ? "대상" : "Target"}</dt><dd>{op.venueId} · {op.campaignId}</dd>
-                <dt>{locale === "ko" ? "횟수" : "Uses"}</dt><dd>1</dd>
-                <dt>{locale === "ko" ? "기한" : "Expires"}</dt><dd>{op.delegation ? new Date(op.delegation.expiresAtMs).toLocaleTimeString() : "≤ 10 min"}</dd>
-                <dt>{locale === "ko" ? "수령 지갑" : "Recipient"}</dt><dd>{signer?.address ? signer.address.slice(0, 12) + "…" : "—"}</dd>
-                <dt>{locale === "ko" ? "제안 digest" : "Proposal"}</dt><dd>{op.proposal.proposalDigest.slice(0, 22)}…</dd>
+                <dt>{tr("대상", "Perk", "対象")}</dt><dd>{title}</dd>
+                <dt>{tr("횟수", "Uses", "回数")}</dt><dd>1</dd>
+                <dt>{tr("기한", "Expires", "期限")}</dt><dd>{op.delegation ? new Date(op.delegation.expiresAtMs).toLocaleTimeString(locale) : tr("승인 후 최대 10분", "Up to 10 minutes after approval", "承認から最大10分")}</dd>
+                <dt>{tr("수령 계정", "Recipient", "受取アカウント")}</dt><dd>{signer?.address ? signer.address.slice(0, 12) + "…" : "—"}</dd>
               </dl>
               {!signer || (signer.kind === "zklogin" && signer.jwtPending) ? <div className={styles.actions}>
-                <button type="button" className={styles.primary} disabled={!!busy} onClick={() => chooseSigner("zklogin")}>{c.signerZk}</button>
+                {!isolated ? <button type="button" className={styles.primary} disabled={!!busy} onClick={() => chooseSigner("zklogin")} data-testid="hackathon-signer-google">{c.signerZk}</button> : null}
                 <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => chooseSigner("demo")} data-testid="hackathon-signer-demo">{c.signerDemo}</button>
               </div> : <>
-                <div className={styles.notice}>{signer.kind === "zklogin" ? `zkLogin · ${signer.address.slice(0, 16)}…` : `${c.sample} signer · ${signer.address.slice(0, 16)}…`}</div>
+                <div className={styles.notice}>{signer.kind === "zklogin" ? tr("Google 계정 연결됨", "Google account connected", "Googleアカウント接続済み") : tr("샘플 계정이 준비됐어요", "Sample account ready", "サンプルアカウントの準備ができました")}</div>
                 <label className={styles.check}><input type="checkbox" id="hk-approve" checked={approve} onChange={(e) => setApprove(e.target.checked)} /> <span>{c.approveCheck}</span></label>
-                <div className={styles.actions}><button type="button" className={styles.primary} disabled={!approve || !!busy} onClick={delegate} data-testid="hackathon-delegate">{busy === "delegate" ? <span className={styles.spinner} /> : null}{c.signDelegate}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel}>{c.cancel}</button></div>
+                <div className={styles.actions}><button type="button" className={styles.primary} disabled={!approve || !!busy} onClick={delegate} data-testid="hackathon-delegate">{busy === "delegate" ? <span className={styles.spinner} /> : null}{c.signDelegate}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
               </>}
             </section>
           ) : null}
 
-          {op?.phase === "agent" ? <section className={styles.card}><h3>{c.steps[6]} <span className={styles.badge} data-tone="chain">SUI {c.chain}</span></h3><p>{locale === "ko" ? "위임된 권한 안에서 도우미가 1회 실행하고 결정·실행 기록을 남깁니다." : "The assistant executes once within the delegated scope and records its decision."}</p>{op.delegation?.grant ? <dl className={styles.kv}><dt>grant</dt><dd>{op.delegation.grant.objectId}</dd><dt>tx</dt><dd>{op.delegation.grant.txDigest}</dd></dl> : null}<div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={runAgent} data-testid="hackathon-agent-run">{busy === "agent" ? <span className={styles.spinner} /> : null}{c.runAgent}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile}>{c.reconcile}</button></div></section> : null}
+          {op?.phase === "agent" ? <section className={styles.card}><h3>{c.steps[6]}</h3><p>{tr("확인한 범위 안에서 한 번만 진행합니다. 아래 버튼을 눌러 시작해 주세요.", "Continue once within the approved scope. Tap below when ready.", "承認した範囲内で1回だけ進めます。下のボタンを押してください。")}</p><div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={runAgent} data-testid="hackathon-agent-run">{busy === "agent" ? <span className={styles.spinner} /> : null}{c.runAgent}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div></section> : null}
 
-          {op?.phase === "fulfillment" ? <section className={styles.card}><h3>{c.steps[7]}</h3>{op.fulfillment?.status === "blocked" ? <div className={styles.notice} data-tone="error">{c.blocked} · {op.fulfillment.reason}</div> : <p>{locale === "ko" ? "실행 기록을 검증한 뒤 현재 자격을 다시 확인하고 1회 사용을 확정합니다." : "Verifies the execution, re-checks eligibility and confirms the single use."}</p>}<div className={styles.actions}>{op.fulfillment?.status !== "blocked" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={redeem} data-testid="hackathon-redeem">{busy === "redeem" ? <span className={styles.spinner} /> : null}{c.redeem}</button> : null}<button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile}>{c.reconcile}</button></div></section> : null}
+          {op?.phase === "fulfillment" ? <section className={styles.card}><h3>{c.steps[7]}</h3>{op.fulfillment?.status === "blocked" ? <div className={styles.notice} data-tone="error">{c.blocked}</div> : <p>{tr("진행 결과와 이용 조건을 다시 확인한 뒤 1회 사용을 확정합니다.", "Re-check the result and eligibility before confirming a single use.", "結果と利用条件を再確認し、1回の利用を確定します。")}</p>}<div className={styles.actions}>{op.fulfillment?.status !== "blocked" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={redeem} data-testid="hackathon-redeem">{busy === "redeem" ? <span className={styles.spinner} /> : null}{c.redeem}</button> : null}<button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div></section> : null}
 
           {op && (op.phase === "done" || op.status !== "pending") ? (
             <section className={styles.card}>
-              <h3>{op.fulfillment?.status === "redeemed" ? c.done : op.status === "cancelled" ? (locale === "ko" ? "그만두었어요" : "Stopped") : op.status === "expired" ? (locale === "ko" ? "만료됐어요" : "Expired") : c.blocked}</h3>
-              {op.fulfillment?.redemptionRef ? <dl className={styles.kv}><dt>{locale === "ko" ? "사용 번호" : "Use ref"}</dt><dd>{op.fulfillment.redemptionRef}</dd><dt>{locale === "ko" ? "시각" : "At"}</dt><dd>{op.fulfillment.redeemedAt}</dd></dl> : null}
-              {op.chain ? <div className={styles.notice} data-tone={op.chain.status === "confirmed" ? "ok" : undefined}><span className={styles.badge} data-tone="chain">OMNIONE</span> {op.chain.status === "confirmed" ? c.chainConfirmed : c.chainPending} · {op.chain.status}{op.chain.txHash ? ` · ${op.chain.txHash.slice(0, 18)}…` : ""}{op.chain.lastError ? ` · ${op.chain.lastError}` : ""}</div> : null}
+              <h3>{op.fulfillment?.status === "redeemed" ? isolated ? tr("샘플 체험을 마쳤어요", "Sample experience complete", "サンプル体験が完了しました") : c.done : op.status === "cancelled" ? tr("그만두었어요", "Stopped", "中止しました") : op.status === "expired" ? tr("만료됐어요", "Expired", "期限切れです") : c.blocked}</h3>
+              {op.fulfillment?.redemptionRef ? <dl className={styles.kv}><dt>{tr("체험 번호", "Experience ref", "体験番号")}</dt><dd>{op.fulfillment.redemptionRef}</dd><dt>{tr("시각", "At", "時刻")}</dt><dd>{op.fulfillment.redeemedAt}</dd></dl> : null}
+              {op.chain ? <div className={styles.notice} data-tone={op.chain.status === "confirmed" ? "ok" : undefined}>{isolated ? tr("샘플 기록입니다. 실제 외부 기록은 생성하지 않았습니다.", "This is a sample record. No real external record was created.", "サンプル記録です。実際の外部記録は作成していません。") : op.chain.status === "confirmed" ? c.chainConfirmed : c.chainPending}</div> : null}
               <div className={styles.actions}>
-                {op.chain && op.chain.status !== "confirmed" ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={reconcile}>{c.reconcile}</button> : null}
-                <button type="button" className={styles.secondary} disabled={!!busy} onClick={loadEvidence}>{c.evidence}</button>
+                {op.chain && op.chain.status !== "confirmed" ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button> : null}
                 <button type="button" className={styles.primary} onClick={() => close(true)} data-testid="hackathon-return">{c.back}</button>
               </div>
             </section>
           ) : null}
 
-          {evidence ? <section className={styles.card}><h3>Evidence</h3><pre className={styles.evidence}>{JSON.stringify(evidence, null, 2)}</pre>{config?.sui.explorer && op?.agent?.txDigest ? <a className={styles.link} href={`${config.sui.explorer}/tx/${op.agent.txDigest}`} target="_blank" rel="noreferrer">Sui explorer · agent tx</a> : null}</section> : null}
+          {op ? <details className={styles.card} data-testid="hackathon-technical-details">
+            <summary>{tr("기술 정보", "Technical details", "技術情報")}</summary>
+            <pre className={styles.evidence}>{JSON.stringify({ modes, isolatedMock: isolated, credential: op.credential, presentation: op.presentation, proposalDigest: op.proposal?.proposalDigest, grant: op.delegation?.grant, chain: op.chain, cx: cxQr, cxError: cxQrError }, null, 2)}</pre>
+          </details> : null}
+          {op ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={loadEvidence} data-testid="hackathon-evidence">{c.evidence}</button> : null}
+          {evidence ? <section className={styles.card}><h3>{c.evidence}</h3><pre className={styles.evidence}>{JSON.stringify(evidence, null, 2)}</pre>{!isolated && config?.sui.explorer && op?.agent?.txDigest ? <a className={styles.link} href={`${config.sui.explorer}/tx/${op.agent.txDigest}`} target="_blank" rel="noreferrer">Sui explorer · agent tx</a> : null}</section> : null}
         </div>
       </div>
     </div>

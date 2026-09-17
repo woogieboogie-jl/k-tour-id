@@ -36,6 +36,7 @@ function venueCtx(venueId: string, loc: "ko" | "en" | "ja") {
 }
 
 export async function GET(req: Request, ctx: Ctx) {
+  if (process.env.HK_API_ENABLED !== "1" || process.env.NEXT_PUBLIC_HK_ENABLED !== "1") return json({ error: { code: "not_found" } }, 404)
   const { path } = await ctx.params
   try {
     if (path[0] === "config") return json(hkPublicConfig())
@@ -64,6 +65,7 @@ export async function GET(req: Request, ctx: Ctx) {
 }
 
 export async function POST(req: Request, ctx: Ctx) {
+  if (process.env.HK_API_ENABLED !== "1" || process.env.NEXT_PUBLIC_HK_ENABLED !== "1") return json({ error: { code: "not_found" } }, 404)
   const { path } = await ctx.params
   try {
     await assertSameOrigin()

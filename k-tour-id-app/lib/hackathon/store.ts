@@ -61,13 +61,13 @@ function backend(): Backend {
   if (backendSingleton) return backendSingleton
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || ""
   const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || ""
-  if (url && token) {
+  if (!hkConfig().isolatedMock && url && token) {
     backendSingleton = { kind: "redis", url: url.replace(/\/+$/, ""), token, key: process.env.HK_STORE_KEY || "ondo:hackathon:journey:v1" }
     return backendSingleton
   }
   const configured = hkConfig().dataDir
   // Vercel/Lambda: the project dir is read-only; only /tmp is writable (per instance, not durable).
-  const dir = process.env.VERCEL && !configured.startsWith("/tmp") ? "/tmp/ondo-hackathon" : resolve(process.cwd(), configured)
+  const dir = !hkConfig().isolatedMock && process.env.VERCEL && !configured.startsWith("/tmp") ? "/tmp/ondo-hackathon" : resolve(process.cwd(), configured)
   mkdirSync(dir, { recursive: true })
   backendSingleton = { kind: "file", path: resolve(dir, "journey.json") }
   return backendSingleton
@@ -146,11 +146,13 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
   const run = async () => {
     const b = backend()
     if (b.kind === "file") {
-      const db = fileLoad(b.path)
+      // Failed mutations must not leak through the in-memory cache or a later write.
+      const db = structuredClone(fileLoad(b.path))
       const result = await fn(db)
       prune(db)
       filePersist(b.path, db)
-      return result
+      fileCache = db
+      return structuredClone(result)
     }
     const token = await redisLock(b)
     try {
@@ -171,7 +173,7 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
 /** Read-only view (fresh from the backend; never mutate the result). */
 export async function readStore<T>(fn: (db: Db) => T): Promise<T> {
   const b = backend()
-  if (b.kind === "file") return fn(fileLoad(b.path))
+  if (b.kind === "file") return fn(structuredClone(fileLoad(b.path)))
   return fn(await redisLoad(b))
 }
 
