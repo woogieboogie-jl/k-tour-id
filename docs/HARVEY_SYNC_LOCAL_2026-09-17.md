@@ -3,7 +3,7 @@
 ## 이번 통합 범위
 
 - 통합 브랜치: `integration/harvey-sync-20260917` (로컬 전용, 미푸시·미배포).
-- 가져온 원본: `JSHan94/k-tour-id`, `feat/hackathon-integration-harvey`. 최초 `b151c745d59c9ac8aaeba9892302f371c8e63edb`, 검사 중 추가된 `84254d24db3d7d91a2ce40ec1a2b53a3e3525824`까지 동기화합니다.
+- 가져온 원본: `JSHan94/k-tour-id`, `feat/hackathon-integration-harvey`. 최초 `b151c745d59c9ac8aaeba9892302f371c8e63edb`, 검사 중 추가된 `84254d24db3d7d91a2ce40ec1a2b53a3e3525824`까지 `0a73b5b5`에서 병합했습니다.
 - 기존 모바일 UI·Pass 방문 기록 등 90개 파일을 `d55a31f0`에 먼저 보존하고, `aee13d92`에서 Harvey 코드를 병합했습니다. 원래 UI 작업 폴더와 그 미커밋 변경은 건드리지 않았습니다.
 - 계약/체인 주소·Move/Solidity 로직은 이번 작업에서 변경하지 않았습니다. 비밀값·기존 `.env`도 가져오지 않았습니다.
 
@@ -19,7 +19,7 @@
 - 로컬 격리 모드는 CX를 샘플 결과, OpenDID를 로컬 서명 샘플, AI를 규칙 제안으로 고정하고 Sui·OmniOne·Google 인증·외부 QR·Redis 접근은 차단합니다. 체인 결과를 가짜 성공으로 만들지 않습니다.
 - 미구현 OpenDID 제공자 경로는 503으로 차단합니다. 클라이언트가 `__verifierConfirmed`를 보내도 승인하지 않습니다. 실제 holder 발급/보관/제시 수명주기 구현이 필요합니다.
 - 최종 사용 이후 동일 요청 재시도의 멱등성과 파일 저장소 실패 롤백을 보강했습니다.
-- 추가 커밋 `84254d24`의 화면 간소화도 반영합니다. 결과 검증과 연결되지 않은 브라우저 CX QR·개발용 결과 버튼·기술 배지는 제거하고, 실제 Google 경로가 설정된 경우 샘플 서명자를 우회 선택하지 않게 합니다. 샘플 고지·필수 동의 범위와 기존 수동 승인/일본어 개선은 유지합니다. 이 추가 커밋에는 Sui 계약 변경이 없습니다.
+- 추가 커밋 `84254d24`의 화면 간소화도 반영했습니다. 결과 검증과 연결되지 않은 브라우저 CX QR·개발용 결과 버튼·기술 배지는 제거하고, 실제 Google 경로가 설정된 경우 샘플 서명자 선택 버튼을 숨깁니다. 이것은 UI 선택지 정리이며 서버의 실제 zkLogin 서명 검증을 증명하지 않습니다. 샘플 고지·필수 동의 범위와 기존 수동 승인/일본어 개선은 유지합니다. 이 추가 커밋에는 Sui 계약 변경이 없습니다.
 
 ## 실행과 검수 경계
 
@@ -49,7 +49,7 @@ pnpm test:harvey:bff
 
 **로컬 서버 자체는 제안 이후 Sui 준비 단계에서 중단되는 것이 정상입니다.** 끝까지 이어지는 신규 브라우저 fixture의 “사용/기록 확정”은 화면 검사일 뿐이며 실제 API·블록체인 성공 증거가 아닙니다. CX 실기기, OpenDID 실제 holder, zkLogin, 실제 체인 거래·영수증은 이번에 실행하지 않았습니다.
 
-최종 실행 결과는 아래 검수 결과에 기록합니다.
+실행 결과는 아래 검수 결과에 기록했습니다.
 
 ## 다음 Harvey 동기화에서 확인할 사항
 
@@ -68,4 +68,17 @@ pnpm test:harvey:bff
 
 ## 검수 결과
 
-검수 진행 중. 최종 결과는 이 문서를 갱신한 로컬 커밋 기준으로 확인합니다.
+- 최신 `84254d24` 통합 후 전체 앱 production 빌드·TypeScript 검사 통과.
+- 정적 계약 검사 **917/917**, 격리 백엔드 단위 검사 **9/9** 통과.
+- 최신 빌드의 브라우저 fixture **10/10** 통과(27.1초, 재시도·skip 없음). Google 설정 시 샘플 버튼 숨김도 외부 OAuth 없이 확인했습니다.
+- 최신 빌드의 실제 로컬 BFF 브라우저 검사 **1/1** 통과(3.2초). 로컬 패스 서명·제시 후 Sui 준비 요청은 503, 위임 제출·실행·사용 요청은 0건입니다.
+- 서버 런타임 API 플래그를 뺀 별도 프로세스에서 GET config와 POST session 모두 **404** 확인. 점검용 프로세스는 종료했습니다.
+- 공개 지도용 `build:vercel:ondo-b`와 client artifact scanner 통과. 생성된 공개 앱에는 hackathon API가 없고, 기능 컴포넌트는 inert stub입니다. 운영 배포를 실행했다는 뜻은 아닙니다.
+- 보존한 UI의 9개 spec을 mobile Chromium으로 실행: **51 통과 / 3 기존 일본어 기대값 실패 / 10 desktop 전용 건 skip** (7분). 이 넓은 회귀 검사는 `b151c745` 통합+보호 변경 빌드를 사용했습니다. 이후 `84254d24`가 수정한 것은 연동 전용 UI와 CX 샘플 라벨이며 기존 지도/Pass/결제/방문 UI 파일은 바뀌지 않았습니다.
+- 일본어 테스트는 통합 전 `d55a31f0`와 비교해 오래된 문구·모바일 메뉴 경로를 현재 UI에 맞췄습니다. 언어 저장 검사를 강화하고, 방문 전 빈 상태/방문 후 정확한 Recent 장소/저장 목록은 별개라는 확인을 유지했습니다. **최신 빌드 재검사 3/3** 통과(16.2초, 재시도·skip 없음). 앱 코드를 옛 테스트에 맞춰 되돌리지 않았습니다.
+- 모바일 실행에서 제외된 데스크톱 건을 **최신 빌드에서 10/10** 별도 통과(1.3분, 재시도·skip 없음): EN/KO/JA × 라이트/다크의 1440px Pass, 820/1440px 라이트/다크 시트 모서리.
+- 따라서 선택한 기존 UI 시나리오 **64개**와 신규 연동 시나리오 **11개**가 각 위 실행에서 통과했습니다. 단일 실행의 전체 서비스 E2E 75개라는 뜻은 아니며, 처음 실패한 항목과 재검사 범위를 숨기지 않습니다.
+
+기존 UI 검사 파일: `ktour-journey-pass`, `ktour-journey-keepsake-completion`, `ktour-mobile-dialog-position`, `ktour-mobile-footer-alignment`, `ktour-public-guide-visual`, `ktour-sheet-corner-paint`, `ktour-ux-refinement-commerce`, `ondo-b-ja-critical-journey`, `ondo-stablecoin-funding` (`k-tour-id-app/tests/e2e/*.spec.ts`). 전용 연동 결과/스크린샷은 로컬 `artifacts/qa/harvey-integration-fixtures/`에 있습니다.
+
+브라우저 범위는 선택한 Chromium 시나리오입니다. Safari/WebKit·실기기·실제 제공자·실제 체인까지 모두 통과했다고 해석하면 안 됩니다.

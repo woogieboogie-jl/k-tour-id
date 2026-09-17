@@ -33,6 +33,9 @@ async function reachPresentation(page: Page, fixture: HarveyFixture) {
   await phase(page, "identity")
   expect(fixture.actionCount("identity/start")).toBe(0)
   await page.getByTestId("hackathon-identity-start").click()
+  await expect(page.getByTestId("hackathon-cx-qr-load")).toHaveCount(0)
+  await expect(page.getByTestId("hackathon-identity-fail")).toHaveCount(0)
+  await expect(page.getByTestId("hackathon-identity-cancel")).toHaveCount(0)
   await page.getByTestId("hackathon-identity-approve").click()
   await phase(page, "issuance")
   expect(fixture.actionCount("credential/issue")).toBe(0)
@@ -187,6 +190,27 @@ test("HK-FIXTURE-07 cancelling at the approval boundary never signs or consumes 
   for (const action of ["delegation/prepare", "delegation/submit", "agent/run", "redeem"]) expect(harvey.actionCount(action)).toBe(0)
   await returnToPlace(page)
   expect(await page.evaluate(() => sessionStorage.getItem("ondo-b.hackathon.pending.v1"))).toBeNull()
+})
+
+test("HK-FIXTURE-08 configured Google has no demo-signer bypass and viewing never starts OAuth or delegation", async ({ page, harvey }) => {
+  // Fictional configuration response only. No live provider is configured in
+  // the test server and the Google control must never be clicked here.
+  harvey.config.isolatedMock = false
+  harvey.config.modes.zklogin = "google"
+  await harvey.preferences()
+  await harvey.open()
+  await reachProposal(page, harvey)
+  await page.getByTestId("hackathon-propose").click()
+  await phase(page, "delegation")
+  await expect(page.getByTestId("hackathon-signer-google")).toBeVisible()
+  await expect(page.getByTestId("hackathon-signer-demo")).toHaveCount(0)
+  await expect(page.locator("#hk-approve")).toHaveCount(0)
+  const mutationCount = harvey.calls.filter(call => call.method === "POST").length
+  await page.waitForTimeout(400)
+  expect(harvey.calls.filter(call => call.method === "POST")).toHaveLength(mutationCount)
+  expect(harvey.count("/zklogin/params")).toBe(0)
+  expect(harvey.count("/zklogin/prove")).toBe(0)
+  for (const action of ["delegation/prepare", "delegation/submit", "agent/run", "redeem"]) expect(harvey.actionCount(action)).toBe(0)
 })
 
 for (const layout of [{ locale: "ja", width: 320, height: 568 }, { locale: "ko", width: 390, height: 844 }] as const) {
