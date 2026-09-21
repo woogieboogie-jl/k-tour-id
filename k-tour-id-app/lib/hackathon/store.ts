@@ -14,6 +14,8 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "
 import { resolve } from "node:path"
 import { hkConfig } from "./config"
 import type { OperationResult } from "./types"
+import { HkError } from "./util"
+import { parseStoredJourney } from "./store-integrity"
 
 export type OperationRecord = OperationResult & {
   sessionId: string
@@ -22,6 +24,8 @@ export type OperationRecord = OperationResult & {
     holderPublicKeyPem?: string     // holder binding (mock holder)
     holderKeyAlg?: "Ed25519" | "ECDSA-P256"
     presentationChallenge?: string
+    presentationBinding?: { operationId: string; presentationId: string; nonce: string; credentialRef: string; vcDigest: string; holderBinding: string; requestDigest: string; decisionRef: string; subjectRef: string }
+    delegationPreparation?: { claimId: string; stage: "issuing" | "building" | "ready" | "unknown"; issueTxDigest: string | null }
     lastTxBytesB64?: string         // sponsored user PTB bytes awaiting user signature
     cxToken?: string
     cxTxId?: string
@@ -80,12 +84,8 @@ let fileCache: Db | null = null
 function fileLoad(path: string): Db {
   if (fileCache) return fileCache
   if (!existsSync(path)) { fileCache = structuredClone(EMPTY); return fileCache }
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Db
-    fileCache = { ...structuredClone(EMPTY), ...parsed }
-  } catch {
-    fileCache = structuredClone(EMPTY)
-  }
+  // An unreadable ledger must never silently become a fresh, redeemable account.
+  fileCache = parseStoredJourney(readFileSync(path, "utf8"))
   return fileCache
 }
 function filePersist(path: string, db: Db) {
@@ -103,11 +103,13 @@ async function redisCmd<T = unknown>(b: RedisBackend, cmd: (string | number)[]):
 }
 async function redisLoad(b: RedisBackend): Promise<Db> {
   const raw = await redisCmd<string | null>(b, ["GET", b.key])
-  if (!raw) return structuredClone(EMPTY)
-  try { return { ...structuredClone(EMPTY), ...(JSON.parse(raw) as Db) } } catch { return structuredClone(EMPTY) }
+  if (raw === null) return structuredClone(EMPTY)
+  return parseStoredJourney(raw)
 }
-async function redisPersist(b: RedisBackend, db: Db) {
-  await redisCmd(b, ["SET", b.key, JSON.stringify(db)])
+async function redisPersist(b: RedisBackend, db: Db, token: string) {
+  // Atomic compare-and-write: an expired lease cannot overwrite a newer owner.
+  const committed = await redisCmd<number>(b, ["EVAL", "if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('SET', KEYS[2], ARGV[2]); return 1 end return 0", 2, `${b.key}:lock`, b.key, token, JSON.stringify(db)])
+  if (committed !== 1) throw new HkError("store_lease_lost", "Journey changed while saving. Check the current result before retrying.", 503)
 }
 async function redisLock(b: RedisBackend): Promise<string> {
   const lockKey = `${b.key}:lock`
@@ -159,8 +161,8 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       const db = await redisLoad(b)
       const result = await fn(db)
       prune(db)
-      await redisPersist(b, db)
-      return result
+      await redisPersist(b, db, token)
+      return structuredClone(result)
     } finally {
       await redisUnlock(b, token)
     }

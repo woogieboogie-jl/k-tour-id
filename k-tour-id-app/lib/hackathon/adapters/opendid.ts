@@ -45,6 +45,10 @@ export type KPassVc = {
 
 export type IssueInput = { operationId: string; subjectRef: string; holderPublicKeyPem: string; holderKeyAlg: "Ed25519" | "ECDSA-P256"; evidenceId: string }
 
+export function sampleSubjectCommitment(subjectRef: string) {
+  return digestOf({ subject: subjectRef, seed: createHash("sha256").update(hkConfig().opendid.signingSeed).digest("hex") })
+}
+
 export async function issueCredential(input: IssueInput): Promise<{ summary: CredentialSummary; document: unknown; offer?: unknown }> {
   const c = hkConfig().opendid
   const validFrom = nowIso(), validUntil = plusMs(HK_TTL.credentialMs)
@@ -55,7 +59,7 @@ export async function issueCredential(input: IssueInput): Promise<{ summary: Cre
     throw new HkError("opendid_provider_unimplemented", "OpenDID provider issuance and verification are not implemented; no provider credential was issued", 503)
   }
   const { priv, pubPem } = issuerKeyPair()
-  const subjectCommitment = digestOf({ subject: input.subjectRef, seed: createHash("sha256").update(c.signingSeed).digest("hex") })
+  const subjectCommitment = sampleSubjectCommitment(input.subjectRef)
   const unsigned = {
     "@context": ["https://www.w3.org/ns/credentials/v2", "urn:ondo:kpass:context:v1"],
     id: vcId, type: ["VerifiableCredential", "KPassHackathonCredential"], issuer: c.issuerDid, issuanceDate: validFrom, expirationDate: validUntil,

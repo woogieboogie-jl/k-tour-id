@@ -8,13 +8,20 @@
 //   agent   : consumes the Grant exactly once with a 2-command PTB (consume + attest_execution).
 // Every result is verified from effects/events/objects, never from a client-side "success".
 import { SuiGrpcClient } from "@mysten/sui/grpc"
-import { Transaction } from "@mysten/sui/transactions"
+import { Transaction, TransactionDataBuilder } from "@mysten/sui/transactions"
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519"
 import { fromBase64, toBase64 } from "@mysten/sui/utils"
 import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { hexToBytes, sha256Hex, HkError } from "../util"
+import { chainId, commitment, verifyDelegationEvidence, verifyExecutionEvidence, type ChainTransaction, type GrantExpectation, type ExecutionExpectation } from "../sui-evidence"
 
 export type ObjRef = { objectId: string; version: string; digest: string }
+
+/** Hash already-built full BCS bytes locally; unlike Transaction.getDigest this
+ * cannot invoke resolution plugins or an RPC client. Not the UI SHA-256 digest. */
+export function transactionDigest(bytes: Uint8Array): string {
+  return TransactionDataBuilder.getDigestFromBytes(bytes)
+}
 
 let clientSingleton: SuiGrpcClient | null = null
 export function suiClient() {
@@ -62,6 +69,7 @@ async function executeSigned(bytes: Uint8Array, signatures: string[]) {
   const res = await client.executeTransaction({ transaction: bytes, signatures, include: { effects: true, events: true } })
   const txn = res.Transaction ?? res.FailedTransaction
   if (!txn) throw new HkError("sui_execute", "no transaction result", 502, true)
+  if (txn.digest !== transactionDigest(bytes)) throw new HkError("sui_evidence_mismatch", "transaction response digest differs from submitted bytes", 502)
   if (!txn.status.success) throw new HkError("sui_execute_failed", `Sui execution failed: ${JSON.stringify(txn.status.error).slice(0, 300)}`, 502)
   // executeTransaction returns on validator certification; the fullnode we read from
   // may lag by a checkpoint. Wait until it has indexed this tx so the follow-up
@@ -94,6 +102,9 @@ async function getObjectRetry(objectId: string, include?: { json?: boolean }, ti
 }
 
 type Executed = Awaited<ReturnType<typeof executeSigned>>
+function transactionEvidence(txn: Executed): ChainTransaction {
+  return { digest: txn.digest, success: txn.status.success, events: (txn.events ?? []).map((e) => ({ type: e.eventType, sender: e.sender, json: e.json })), createdObjectIds: createdRefs(txn).map((o) => o.objectId) }
+}
 function createdRefs(txn: Executed): ObjRef[] {
   const effects = txn.effects
   if (!effects) return []
@@ -104,7 +115,7 @@ async function objectType(objectId: string) {
 }
 
 // ── issuer: mint entitlement to user (sponsored by sponsor) ───────────
-export async function issueEntitlement(opts: { intentRefHex: string; holder: string; expiresAtMs: number }) {
+export async function issueEntitlement(opts: { intentRefHex: string; holder: string; expiresAtMs: number; beforeBroadcast?: (digest: string) => Promise<void> }) {
   const t = suiTargets(); const k = suiKeys()
   const tx = new Transaction()
   tx.setSender(k.issuerAddress)
@@ -113,6 +124,7 @@ export async function issueEntitlement(opts: { intentRefHex: string; holder: str
   const bytes = await tx.build({ client: suiClient() })
   const sigs = [(await k.issuer.signTransaction(bytes)).signature]
   if (k.sponsorAddress !== k.issuerAddress) sigs.push((await k.sponsor.signTransaction(bytes)).signature)
+  await opts.beforeBroadcast?.(transactionDigest(bytes))
   const txn = await executeSigned(bytes, sigs)
   const created = createdRefs(txn)
   let entitlement: ObjRef | null = null
@@ -140,72 +152,87 @@ export async function buildDelegationPtb(opts: { userAddress: string; entitlemen
 }
 
 /** Execute the delegation with the user's signature (zkLogin or Ed25519) + the sponsor's. */
-export async function executeDelegation(opts: { txBytesB64: string; userSignature: string; sponsorSignature: string; expectedGrantOwner: string }) {
+export async function executeDelegation(opts: { txBytesB64: string; userSignature: string; sponsorSignature: string; expected: GrantExpectation }) {
   const t = suiTargets()
   const bytes = fromBase64(opts.txBytesB64)
   const txn = await executeSigned(bytes, [opts.userSignature, opts.sponsorSignature])
   const granted = (txn.events ?? []).find((e) => e.eventType === t.events.granted)
-  const consent = (txn.events ?? []).find((e) => e.eventType === t.events.consent)
-  if (!granted || !consent) throw new HkError("sui_delegate_verify", "GrantCreated/ConsentAttested events missing", 502)
+  if (!granted) throw new HkError("sui_delegate_verify", "GrantCreated event missing", 502)
   const json = (granted.json ?? {}) as Record<string, unknown>
   const grantId = String(json.grant ?? "")
   if (!grantId) throw new HkError("sui_delegate_verify", "grant id missing in event", 502)
-  const grant = await objectType(grantId)
-  if (grant.type !== t.types.grant) throw new HkError("sui_delegate_verify", "grant object type mismatch", 502)
-  const owner = grant.owner
-  const initialSharedVersion = owner.$kind === "Shared" ? owner.Shared.initialSharedVersion : null
-  if (!initialSharedVersion) throw new HkError("sui_delegate_verify", "grant is not shared", 502)
-  if (String(json.owner ?? "").toLowerCase() !== opts.expectedGrantOwner.toLowerCase()) throw new HkError("sui_delegate_verify", "grant owner mismatch", 502)
-  return { txDigest: txn.digest, grant: { objectId: grantId, initialSharedVersion }, event: json }
+  const grant = await readGrant(grantId)
+  verifyDelegationEvidence(transactionEvidence(txn), grant, opts.expected)
+  return { txDigest: txn.digest, grant: { objectId: grantId, initialSharedVersion: grant.initialSharedVersion! }, event: json }
 }
 
 // ── agent: consume grant + attest execution (2 commands, sponsored) ───
-export async function agentConsume(opts: { grant: { objectId: string; initialSharedVersion: string }; decisionCommitmentHex: string; manifestCommitmentHex: string; expectedRecipient: string; expectedIntentRefHex: string }) {
+export async function agentConsume(opts: { grant: { objectId: string; initialSharedVersion: string }; expected: ExecutionExpectation; beforeBroadcast?: (digest: string) => Promise<void> }) {
   const t = suiTargets(); const k = suiKeys()
   const tx = new Transaction()
   tx.setSender(k.agentAddress)
   tx.setGasOwner(k.sponsorAddress)
   const grantArg = tx.sharedObjectRef({ objectId: opts.grant.objectId, initialSharedVersion: Number(opts.grant.initialSharedVersion), mutable: true })
-  const recordId = tx.moveCall({ target: t.fn.consume, arguments: [campaignArg(tx, true), grantArg, bytes32(tx, opts.decisionCommitmentHex), clockArg(tx)] })
-  tx.moveCall({ target: t.fn.attestExecution, arguments: [campaignArg(tx, false), recordId, bytes32(tx, opts.manifestCommitmentHex)] })
+  const recordId = tx.moveCall({ target: t.fn.consume, arguments: [campaignArg(tx, true), grantArg, bytes32(tx, opts.expected.decisionCommitment), clockArg(tx)] })
+  tx.moveCall({ target: t.fn.attestExecution, arguments: [campaignArg(tx, false), recordId, bytes32(tx, opts.expected.manifestCommitment)] })
   const bytes = await tx.build({ client: suiClient() })
   const sigs = [(await k.agent.signTransaction(bytes)).signature]
   if (k.sponsorAddress !== k.agentAddress) sigs.push((await k.sponsor.signTransaction(bytes)).signature)
+  await opts.beforeBroadcast?.(transactionDigest(bytes))
   const txn = await executeSigned(bytes, sigs)
-  const consumed = (txn.events ?? []).find((e) => e.eventType === t.events.consumed)
-  const attested = (txn.events ?? []).find((e) => e.eventType === t.events.attested)
-  if (!consumed || !attested) throw new HkError("sui_consume_verify", "GrantConsumed/ExecutionAttested events missing", 502)
-  const json = (consumed.json ?? {}) as Record<string, unknown>
-  const recipient = String(json.recipient ?? "").toLowerCase()
-  if (recipient !== opts.expectedRecipient.toLowerCase()) throw new HkError("sui_consume_verify", "recipient mismatch", 502)
-  const intentRef = vecToHex(json.intent_ref)
-  if (intentRef && intentRef !== opts.expectedIntentRefHex.toLowerCase()) throw new HkError("sui_consume_verify", "intent_ref mismatch", 502)
-  const record = String(json.record ?? "")
-  return { txDigest: txn.digest, recordId: record, event: json }
+  const grant = await readGrant(opts.grant.objectId)
+  const verified = verifyExecutionEvidence(transactionEvidence(txn), grant, opts.expected)
+  await verifyExecutionRecord(verified.recordId, opts.expected, verified.executedAtMs)
+  return { txDigest: txn.digest, ...verified, grantUses: grant.uses }
 }
 
 export async function readGrant(objectId: string) {
   assertExternalServicesEnabled("Sui grant lookup")
   const object = await getObjectRetry(objectId, { json: true })
   const j = (object.json ?? {}) as Record<string, unknown>
-  return { type: object.type, version: object.version, uses: Number(j.uses ?? -1), revoked: Boolean(j.revoked), agent: String(j.agent ?? ""), owner: String(j.owner ?? ""), recipient: String(j.recipient ?? ""), expiresAtMs: Number(j.expires_at_ms ?? 0), json: j }
+  return { objectId: object.objectId, type: object.type, initialSharedVersion: object.owner.$kind === "Shared" ? object.owner.Shared.initialSharedVersion : null, version: object.version, uses: Number(j.uses ?? -1), revoked: j.revoked !== false, agent: String(j.agent ?? ""), owner: String(j.owner ?? ""), recipient: String(j.recipient ?? ""), expiresAtMs: Number(j.expires_at_ms ?? 0), json: j }
 }
 
 export async function readTransaction(digest: string) {
   const res = await suiClient().getTransaction({ digest, include: { effects: true, events: true } })
   const txn = res.Transaction ?? res.FailedTransaction
-  return txn ? { digest: txn.digest, success: txn.status.success, events: (txn.events ?? []).map((e) => ({ type: e.eventType, json: e.json })) } : null
+  return txn ? transactionEvidence(txn) : null
+}
+
+async function verifyExecutionRecord(recordId: string, expected: ExecutionExpectation, executedAtMs: number) {
+  const object = await getObjectRetry(recordId, { json: true })
+  const j = (object.json ?? {}) as Record<string, unknown>
+  const ids = [[object.objectId, recordId], [j.campaign, expected.campaignId], [j.grant, expected.grantId], [j.agent, expected.agent]]
+  const hashes = [[j.intent_ref, expected.intentRef], [j.action_commitment, expected.actionCommitment], [j.decision_commitment, expected.decisionCommitment]]
+  if (object.type !== suiTargets().types.record || object.owner.$kind !== "AddressOwner" || chainId(object.owner.AddressOwner) !== chainId(expected.recipient)
+    || ids.some(([a, b]) => !chainId(b) || chainId(a) !== chainId(b))
+    || hashes.some(([a, b]) => !commitment(b) || commitment(a) !== commitment(b))
+    || String(j.executed_at_ms) !== String(executedAtMs)) throw new HkError("sui_evidence_mismatch", "ExecutionRecord does not match this operation", 502)
+}
+
+export async function verifyReadExecution(digest: string, expected: ExecutionExpectation) {
+  const tx = await readTransaction(digest)
+  if (!tx) throw new HkError("sui_evidence_missing", "execution transaction is not indexed", 502, true)
+  const grant = await readGrant(expected.grantId)
+  const verified = verifyExecutionEvidence(tx, grant, expected, digest)
+  await verifyExecutionRecord(verified.recordId, expected, verified.executedAtMs)
+  return { txDigest: tx.digest, ...verified, grantUses: grant.uses }
+}
+
+export async function verifyReadDelegation(digest: string, expected: GrantExpectation) {
+  const tx = await readTransaction(digest)
+  if (!tx) throw new HkError("sui_evidence_missing", "delegation transaction is not indexed", 502, true)
+  const event = tx.events.find((e) => e.type === expected.events.granted)?.json as Record<string, unknown> | undefined
+  const grantId = chainId(event?.grant)
+  if (!grantId) throw new HkError("sui_evidence_mismatch", "delegation grant missing", 502)
+  const grant = await readGrant(grantId)
+  verifyDelegationEvidence(tx, grant, expected, digest)
+  return { txDigest: tx.digest, grant: { objectId: grantId, initialSharedVersion: grant.initialSharedVersion! } }
 }
 
 export async function currentEpoch() {
   const s = await suiClient().getCurrentSystemState()
   return Number((s as unknown as { systemState?: { epoch?: string | number } }).systemState?.epoch ?? (s as unknown as { epoch?: string }).epoch ?? 0)
-}
-
-function vecToHex(v: unknown): string | null {
-  if (Array.isArray(v)) return "0x" + v.map((n) => Number(n).toString(16).padStart(2, "0")).join("")
-  if (typeof v === "string") return v.startsWith("0x") ? v.toLowerCase() : "0x" + Buffer.from(v, "base64").toString("hex")
-  return null
 }
 
 export function explorerTx(digest: string) { return `${hkConfig().sui.explorer}/tx/${digest}` }

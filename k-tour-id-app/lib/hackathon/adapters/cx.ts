@@ -34,24 +34,20 @@ async function cxPostRaw(path: string, body: Record<string, unknown>) {
     signal: AbortSignal.timeout(15_000),
   })
   const text = await res.text()
-  if (!res.ok) throw new HkError("cx_http", `CX ${path} ${res.status}: ${text.slice(0, 200)}`, 502, true)
-  try { return JSON.parse(text) as Record<string, unknown> } catch { return {} as Record<string, unknown> }
+  // Provider bodies may include ID data: never forward them into UI errors/logs.
+  if (!res.ok) throw new HkError("cx_http", `CX request failed (${res.status})`, 502, true)
+  try {
+    const json: unknown = JSON.parse(text)
+    if (json && typeof json === "object" && !Array.isArray(json)) return json as Record<string, unknown>
+  } catch { /* fail closed below */ }
+  throw new HkError("cx_response", "CX returned an invalid response", 502, true)
 }
 
 async function cxPost(path: string, body: Record<string, unknown>) {
-  const c = hkConfig().cx
-  const res = await fetch(`${c.baseUrl}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...(c.apiKey ? { "x-api-key": c.apiKey } : {}) },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(15_000),
-  })
-  const text = await res.text()
-  let json: Record<string, unknown> = {}
-  try { json = JSON.parse(text) } catch { /* keep raw */ }
-  if (!res.ok) throw new HkError("cx_http", `CX ${path} ${res.status}: ${text.slice(0, 200)}`, 502, true)
-  const code = Number(json.code ?? json.resultCode ?? 200)
-  if (code && code !== 200) throw new HkError("cx_error", `CX ${path} code ${code}: ${String(json.message ?? "")}`, 502, code >= 500)
+  const json = await cxPostRaw(path, body)
+  const code = Number(json.resultCode ?? json.code)
+  if (!Number.isInteger(code)) throw new HkError("cx_response", "CX returned an invalid result code", 502)
+  if (code !== 200) throw new HkError("cx_error", `CX returned result code ${code}`, 502, code >= 500)
   return json
 }
 
@@ -82,9 +78,10 @@ export async function cxComplete(opts: {
   sample?: { outcome: "verified" | "cancelled" | "failed" | "expired"; subjectSeed: string }
 }): Promise<CxResult | { pending: true } | { failed: "cancelled" | "failed" | "expired" }> {
   const c = hkConfig().cx
-  // Sample path: always in mock mode, and in live mode only when the caller explicitly
-  // asked for it (holder without this credential type). Evidence stays mode "mock".
-  if (c.mode === "mock" || (c.sampleFallback && opts.sample)) {
+  // A real-provider operation cannot be downgraded by a client-supplied sample.
+  // Run a separate explicitly mock-configured journey for demonstrations.
+  if (c.mode === "cx" && opts.sample) throw new HkError("cx_sample_not_allowed", "Sample identity results cannot complete a provider check", 409)
+  if (c.mode === "mock") {
     const s = opts.sample ?? { outcome: "verified", subjectSeed: "sample-person-1" }
     if (s.outcome !== "verified") return { failed: s.outcome }
     // subjectRef: keyed HMAC of a sample subject seed. In cx mode this comes
@@ -101,7 +98,8 @@ export async function cxComplete(opts: {
   // outcome here, so this call must not throw on a non-200 CX code.
   const result = await cxPostRaw(opts.mobile ? "/oacx/api/v1.0/authen/app/result" : "/oacx/api/v1.0/authen/qr/result", { provider: `${c.provider}_v1.5`, token: opts.token, txId: opts.txId, cxId: opts.cxId })
   const status = String(result.oacxStatus ?? result.status ?? "")
-  const code = Number(result.resultCode ?? result.code ?? 200)
+  const code = Number(result.resultCode ?? result.code)
+  if (!Number.isInteger(code)) throw new HkError("cx_response", "CX returned an invalid result code", 502)
   // 402 OACX_NOT_SIGNED: the holder has not finished in the Mobile ID app yet.
   if (code === 402 || code === 408) return { pending: true }
   // 406 OACX_CANCLED_SIGNED: cancelled by the holder, or the request expired.
@@ -111,18 +109,26 @@ export async function cxComplete(opts: {
   // 30020 OACX_VERIFIER_ERROR: no completed submission for this transaction
   // (e.g. the QR was never scanned, or the holder has no credential of this type).
   if (code === 30020) return { failed: "failed" }
-  if (code !== 200) throw new HkError("cx_error", `CX result code ${code}: ${String(result.oacxCode ?? "")}`, 502, true)
-  if (status && status !== "AFTER_RESULT") return { pending: true }
+  if (code !== 200) throw new HkError("cx_error", `CX result code ${code}`, 502, true)
+  if (status !== "AFTER_RESULT") return { pending: true }
   const rd = dataOf(result)
-  if (!rd.verified) return { failed: "failed" }
+  if (rd.verified !== true) return { failed: "failed" }
   const parsed = await cxPost("/oacx/api/v1.0/trans/token", { token: String(result.token ?? opts.token) })
   // Claims are nested under `data` and include full PII (name/birth/ihidnum/address).
   // Only the correlation handle and the adult flag are read; nothing else is returned or stored.
   const claims = dataOf(parsed)
-  const ci = typeof claims.ci === "string" ? claims.ci : ""
-  const txid = String(claims.txId ?? claims.txid ?? opts.txId)
-  // Same-person linkage: CI when provided by the provider, else provider txid+cxid (documented D1 blocker for coresidence).
-  const subjectRef = "subj_" + hmacHex(hkConfig().opendid.signingSeed, ci ? `cx-ci:${ci}` : `cx-tx:${txid}:${String(claims.cxId ?? claims.cxid ?? opts.cxId ?? "")}`).slice(2, 34)
+  const ci = typeof claims.ci === "string" ? claims.ci.trim() : ""
+  const txid = claims.txId ?? claims.txid
+  if (typeof txid !== "string" || !txid) throw new HkError("cx_transaction_missing", "CX did not return the verified transaction reference", 502)
+  const returnedCxId = claims.cxId ?? claims.cxid
+  if (txid !== opts.txId || (returnedCxId !== undefined && String(returnedCxId) !== opts.cxId)) {
+    throw new HkError("cx_transaction_mismatch", "CX result does not match this identity request", 502)
+  }
+  // A new transaction is not a new person. This campaign promises one use per
+  // person: an absent stable provider handle is a configuration blocker, not
+  // permission to generate a fresh subject from txId on every attempt.
+  if (!ci) throw new HkError("cx_subject_unavailable", "A stable provider subject is required for this one-per-person campaign", 503)
+  const subjectRef = "subj_" + hmacHex(hkConfig().opendid.signingSeed, `cx-ci:${ci}`).slice(2, 34)
   const adult = claims.adult ?? claims.adultYn ?? claims.isAdult ?? (rd.zkp === true ? true : undefined)
   return { evidence: {
     evidenceId: randomId("evd"), subjectRef, source: "cx_mobile_id", mode: "cx", provider: String(claims.provider ?? c.provider),

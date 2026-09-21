@@ -19,7 +19,7 @@
     "dev:harvey:local": "node scripts/hackathon-local.mjs dev",
     "test:harvey:unit": "node --import tsx --test tests/hackathon/*.test.ts",
     "test:harvey:e2e": "playwright test --config=playwright.harvey-integration.config.ts",
-    "test:harvey:bff": "PLAYWRIGHT_BASE_URL=http://127.0.0.1:3137 playwright test tests/e2e/ktour-harvey-bff-local.spec.ts --project=mobile-chromium --workers=1",
+    "test:harvey:bff": "PLAYWRIGHT_BASE_URL=http://127.0.0.1:3137 playwright test tests/e2e/ktour-harvey-bff-local.spec.ts tests/e2e/ktour-harvey-bff-recovery.spec.ts --project=mobile-chromium --workers=1 --output=artifacts/qa/harvey-bff-local",
     "scan:sites:ondo-b": "node scripts/ondo-b-standalone/scan-artifact.mjs",
     "scan:next:ondo-b": "node scripts/ondo-b-next-client-artifact.mjs",
     "scan:vercel:ondo-b": "ONDO_B_NEXT_SOURCE_ROOT=.ondo-b-standalone ONDO_B_NEXT_ROOT=.ondo-b-standalone/.next node scripts/ondo-b-next-client-artifact.mjs",

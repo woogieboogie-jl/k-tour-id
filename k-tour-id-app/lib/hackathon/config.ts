@@ -58,10 +58,9 @@ export function hkConfig() {
       provider: env("HK_CX_PROVIDER", "comdl"),
       zkpType: env("HK_CX_ZKP_TYPE", "AdultVerify"),
       apiKey: env("HK_CX_API_KEY"),
-      // Live CX needs a holder who actually owns this credential type. Keep a clearly
-      // labelled sample path so the journey can still be demonstrated end to end;
-      // the resulting evidence is recorded as mode "mock", never as a provider result.
-      sampleFallback: env("HK_CX_SAMPLE_FALLBACK", "1") !== "0",
+      // Provider operations cannot fall back to client-supplied sample evidence.
+      // Use HK_MODE_CX=mock for a separate, explicitly labelled demonstration.
+      sampleFallback: false,
     },
     opendid: {
       mode: openDidMode,

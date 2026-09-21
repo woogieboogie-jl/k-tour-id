@@ -4,7 +4,8 @@
 //        → chain(OmniOne outbox) → done. Every step re-validates server state; a
 //        client can never advance a phase by asserting success.
 import { verifyPersonalMessageSignature } from "@mysten/sui/verify"
-import { toBase64 } from "@mysten/sui/utils"
+import { fromBase64, toBase64 } from "@mysten/sui/utils"
+import { parseSerializedSignature } from "@mysten/sui/cryptography"
 import { assertExternalServicesEnabled, hkConfig, HK_CONSENT_VERSION, HK_SCHEMA_VERSION, HK_SERVICE_ACCESS, HK_TTL } from "./config"
 import { withStore, readStore, redemptionKey, type OperationRecord, type OutboxRecord } from "./store"
 import { canonicalJson, digestOf, isPast, nowIso, plusMs, randomHex32, randomId, sha256Hex, HkError, assert } from "./util"
@@ -12,8 +13,19 @@ import type { AllowedAction, NextAction, OperationResult, ProposalOutput } from 
 import { cxComplete, cxStart } from "./adapters/cx"
 import { issueCredential, presentationPayload, verifyHolderSignature, verifyIssuerSignature, type KPassVc } from "./adapters/opendid"
 import { proposePerk } from "./adapters/ai"
-import { agentConsume, buildDelegationPtb, executeDelegation, issueEntitlement, readGrant, readTransaction, suiClient, suiKeys, suiTargets, explorerTx, explorerObject } from "./adapters/sui"
+import { agentConsume, buildDelegationPtb, executeDelegation, issueEntitlement, readGrant, verifyReadExecution, verifyReadDelegation, transactionDigest, suiClient, suiKeys, suiTargets, explorerTx, explorerObject } from "./adapters/sui"
 import { getRedemption, omnioneConfigured, receiptStatus, submitRedemption } from "./adapters/omnione"
+import { credentialEligibility, presentationEligibility, redemptionEligibility, delegationExpectation, executionExpectation, executionManifest } from "./operation-evidence"
+import { verifyGrantEvidence } from "./sui-evidence"
+import { prepareDelegationOnce } from "./delegation-preparation"
+
+function chainBindingConfig() {
+  const t = suiTargets()
+  return { campaignId: t.campaign.objectId, grantType: t.types.grant, events: t.events }
+}
+function assertSnapshot(current: OperationRecord, snapshot: OperationRecord) {
+  assert(current.revision === snapshot.revision, "operation_changed", "operation changed while verification was in flight; reload first", 409)
+}
 
 /** Sui GraphQL endpoint for the configured network (used only as a zkLogin verification cross-check). */
 function zkLoginGraphqlUrl(): string | null {
@@ -37,8 +49,16 @@ function allowed(op: OperationRecord): { allowedActions: AllowedAction[]; safeNe
     case "issuance": return op.credential ? { allowedActions: ["ack_holder", "cancel"], safeNextAction: "wait" } : { allowedActions: ["issue", "cancel"], safeNextAction: "wait" }
     case "presentation": return { allowedActions: ["present", "cancel", "check_status"], safeNextAction: "wait" }
     case "proposal": return { allowedActions: ["propose", "cancel"], safeNextAction: "wait" }
-    case "delegation": return op.delegation?.status === "awaiting_signature" ? { allowedActions: ["sign_delegation", "cancel", "check_status"], safeNextAction: "wait" } : { allowedActions: ["approve", "cancel"], safeNextAction: "wait" }
-    case "agent": return { allowedActions: ["run_agent", "check_status", "reconcile"], safeNextAction: "check_status" }
+    case "delegation": {
+      const d = op.delegation
+      if (!d) return { allowedActions: ["approve", "cancel"], safeNextAction: "wait" }
+      if (d.status === "awaiting_signature" && !d.userTxDigest) return { allowedActions: ["sign_delegation", "cancel", "check_status"], safeNextAction: "wait" }
+      // An issuer attempt or signed transaction already exists. Inspect that
+      // attempt; never advertise another approval/mint while it is unresolved.
+      const canCancel = !d.userTxDigest || d.status === "failed"
+      return { allowedActions: canCancel ? ["check_status", "reconcile", "cancel"] : ["check_status", "reconcile"], safeNextAction: "check_status" }
+    }
+    case "agent": return { allowedActions: op.agent?.status === "unknown" || op.agent?.status === "queued" ? ["check_status", "reconcile"] : ["run_agent", "check_status", "reconcile"], safeNextAction: "check_status" }
     case "fulfillment": return op.fulfillment?.status === "blocked" ? { allowedActions: ["check_status", "return"], safeNextAction: "return" } : { allowedActions: ["redeem", "check_status", "reconcile"], safeNextAction: "check_status" }
     default: return { allowedActions: ["check_status"], safeNextAction: "check_status" }
   }
@@ -152,9 +172,16 @@ export async function credentialIssue(sessionId: string, operationId: string, ho
   assert(op.status === "pending" && op.phase === "issuance" && op.identity?.personVerified, "phase", "identity required", 409)
   assert(!isPast(op.identity.expiresAt), "evidence_expired", "identity evidence expired", 409)
   assert(/BEGIN PUBLIC KEY/.test(holder.publicKeyPem) && holder.publicKeyPem.length < 1200, "holder_key", "holder public key must be SPKI PEM")
-  if (op.credential) return toResult(op)
+  const replay = (o: OperationRecord) => {
+    assert(o.secrets.holderPublicKeyPem === holder.publicKeyPem && o.secrets.holderKeyAlg === holder.alg, "holder_mismatch", "issued credential is bound to a different holder", 409)
+    return { result: toResult(o), vc: o.secrets.vcDocument ?? null, offer: null }
+  }
+  if (op.credential) return replay(op)
   const issued = await issueCredential({ operationId, subjectRef: op.identity.subjectRef, holderPublicKeyPem: holder.publicKeyPem, holderKeyAlg: holder.alg, evidenceId: op.identity.evidenceId })
   return mutate(sessionId, operationId, (o) => {
+    assert(o.status === "pending" && o.phase === "issuance", "phase", "issuance is no longer pending", 409)
+    if (o.credential) return replay(o)
+    assertSnapshot(o, op)
     o.credential = issued.summary
     o.secrets.vcDocument = issued.document; o.secrets.holderPublicKeyPem = holder.publicKeyPem; o.secrets.holderKeyAlg = holder.alg
     touch(o, "credential.issued", { mode: issued.summary.mode, vcId: issued.summary.vcId })
@@ -226,6 +253,7 @@ export async function presentationSubmit(sessionId: string, operationId: string,
     }
     p.submittedAt = nowIso(); p.verifiedAt = p.submittedAt; nonceRow.consumedAt = p.submittedAt
     p.decision = "allow"; p.decisionRef = randomId("dec"); p.decisionExpiresAt = plusMs(HK_TTL.decisionMs)
+    o.secrets.presentationBinding = { operationId, presentationId: p.presentationId, nonce: p.nonce, credentialRef: o.credential.credentialRef, vcDigest: digestOf(vc), holderBinding: o.credential.holderBinding, requestDigest: p.requestDigest, decisionRef: p.decisionRef, subjectRef: o.identity?.subjectRef ?? "" }
     o.phase = "proposal"
     touch(o, "presentation.verified", { decisionRef: p.decisionRef })
     return toResult(o)
@@ -234,10 +262,15 @@ export async function presentationSubmit(sessionId: string, operationId: string,
 
 export async function presentationDeny(sessionId: string, operationId: string) {
   return mutate(sessionId, operationId, (o, db) => {
-    assert(o.status === "pending" && o.phase === "presentation" && o.presentation, "phase", "presentation not requested", 409)
+    if (o.status === "cancelled" && o.phase === "cancelled") return toResult(o)
+    assert(o.status === "pending" && o.phase === "presentation", "phase", "presentation is not pending", 409)
     const p = o.presentation
-    if (db.nonces[p.nonce]) db.nonces[p.nonce].consumedAt = nowIso()
-    p.submittedAt = nowIso(); p.decision = "deny"; p.denyReason = "holder_declined"
+    // The consent UI may decline before a challenge has been requested.
+    if (p) {
+      if (db.nonces[p.nonce]) db.nonces[p.nonce].consumedAt = nowIso()
+      p.submittedAt = nowIso(); p.decision = "deny"; p.denyReason = "holder_declined"
+    }
+    delete o.secrets.presentationBinding
     o.status = "cancelled"; o.phase = "cancelled"
     touch(o, "presentation.holder_declined")
     return toResult(o)
@@ -267,10 +300,16 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
   const op = await loadOperation(sessionId, operationId)
   assert(op.status === "pending" && op.phase === "delegation" && op.proposal && op.presentation?.decision === "allow", "phase", "proposal approval required", 409)
   assert(op.proposal.proposalDigest === input.approvedProposalDigest, "proposal_digest", "approved proposal does not match", 409)
+  assert(credentialEligibility(op) === null && presentationEligibility(op) === null, "eligibility", "current credential and presentation required", 409)
+  assert(op.presentation.decisionExpiresAt && Date.parse(op.presentation.decisionExpiresAt) > Date.now(), "decision_expired", "presentation decision expired", 409)
   assert(/^0x[0-9a-f]{64}$/i.test(input.userAddress), "address", "bad sui address")
   // wallet ownership proof: personal message bound to this operation
   const expectedMsg = `ondo-hk-wallet-proof:${operationId}:${op.presentation.decisionRef}`
   assert(input.walletProof.message === expectedMsg, "wallet_proof", "wallet proof message mismatch")
+  let signatureScheme: string
+  try { signatureScheme = parseSerializedSignature(input.walletProof.signature).signatureScheme }
+  catch { throw new HkError("wallet_proof", "wallet proof signature is malformed", 400) }
+  assert(input.signer === "zklogin" ? signatureScheme === "ZkLogin" : signatureScheme === "ED25519", "wallet_proof", "signer label does not match the signature scheme", 400)
   try {
     await verifyPersonalMessageSignature(new TextEncoder().encode(expectedMsg), input.walletProof.signature, { address: input.userAddress, client: suiClient() })
   } catch (e) {
@@ -304,21 +343,18 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
     if (!accepted) throw new HkError("wallet_proof", `wallet proof invalid: ${detail}`, 400)
   }
   if (op.delegation?.status === "awaiting_signature" && op.secrets.lastTxBytesB64 && op.delegation.userAddress === input.userAddress) {
+    assert(op.delegation.expiresAtMs > Date.now(), "grant_window_expired", "delegation window expired", 409)
     return { result: toResult(op), txBytesB64: op.secrets.lastTxBytesB64 }
   }
+  assert(!op.delegation, "delegation_pending", "existing delegation must be reconciled or cancelled, not replaced", 409)
   const intentRef = randomHex32()
-  const expiresAtMs = Date.now() + HK_TTL.grantExecutionMs
+  const expiresAtMs = Math.min(Date.now() + HK_TTL.grantExecutionMs, Date.parse(op.presentation.decisionExpiresAt), Date.parse(op.credential!.validUntil), Date.parse(op.expiresAt))
   const actionCommitment = digestOf({ action: op.proposal.output.action, target: op.proposal.output.target, proposalDigest: op.proposal.proposalDigest, decisionRef: op.presentation.decisionRef, policyVersion: op.policyVersion })
   const consentCommitment = digestOf({ consentDigest: op.consent!.digest, proposalDigest: op.proposal.proposalDigest, userAddress: input.userAddress, recipient: input.userAddress, expiresAtMs, maxUses: 1 })
-  const issued = await issueEntitlement({ intentRefHex: intentRef, holder: input.userAddress, expiresAtMs: expiresAtMs + 60_000 })
-  const ptb = await buildDelegationPtb({ userAddress: input.userAddress, entitlement: issued.entitlement, recipient: input.userAddress, actionCommitmentHex: actionCommitment, consentCommitmentHex: consentCommitment, expiresAtMs })
-  return mutate(sessionId, operationId, (o) => {
-    o.delegation = { delegationId: randomId("dlg"), status: "awaiting_signature", intentRef, actionCommitment, consentCommitment, userAddress: input.userAddress, signer: input.signer, recipient: input.userAddress, expiresAtMs, entitlement: { ...issued.entitlement, txDigest: issued.txDigest }, grant: null, txBytesDigest: ptb.txBytesDigest, userTxDigest: null, error: null }
-    o.secrets.lastTxBytesB64 = ptb.txBytesB64
-    ;(o.secrets as Record<string, unknown>).sponsorSignature = ptb.sponsorSignature
-    touch(o, "delegation.prepared", { intentRef, entitlement: issued.entitlement.objectId, issueTx: issued.txDigest })
-    return { result: toResult(o), txBytesB64: ptb.txBytesB64 }
-  })
+  const prepared = await prepareDelegationOnce({ sessionId, operationId, expectedRevision: op.revision,
+    scope: { intentRef, actionCommitment, consentCommitment, userAddress: input.userAddress, signer: input.signer, recipient: input.userAddress, expiresAtMs },
+  }, { issue: issueEntitlement, build: buildDelegationPtb })
+  return { result: toResult(prepared), txBytesB64: prepared.secrets.lastTxBytesB64! }
 }
 
 export async function delegationSubmit(sessionId: string, operationId: string, input: { txBytesDigest: string; userSignature: string }) {
@@ -327,15 +363,30 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
   assert(op.status === "pending" && op.phase === "delegation" && op.delegation?.status === "awaiting_signature" && op.secrets.lastTxBytesB64, "phase", "no delegation awaiting signature", 409)
   assert(op.delegation.txBytesDigest === input.txBytesDigest, "tx_mismatch", "transaction bytes changed", 409)
   assert(op.delegation.expiresAtMs > Date.now(), "grant_window_expired", "delegation window expired", 409)
+  assert(credentialEligibility(op) === null && presentationEligibility(op) === null, "eligibility", "current credential and presentation required", 409)
   const sponsorSignature = String((op.secrets as Record<string, unknown>).sponsorSignature ?? "")
+  const expected = delegationExpectation(op, chainBindingConfig(), suiKeys().agentAddress)
+  const expectedTxDigest = transactionDigest(fromBase64(op.secrets.lastTxBytesB64))
+  // Persist the dispatch claim before broadcasting; a concurrent request cannot
+  // submit the same signed transaction and overwrite the winner with its failure.
+  const dispatch = await mutate(sessionId, operationId, (o) => {
+    assertSnapshot(o, op)
+    assert(o.delegation?.status === "awaiting_signature", "phase", "delegation already dispatched", 409)
+    o.delegation.status = "prepared"
+    o.delegation.userTxDigest = expectedTxDigest
+    touch(o, "delegation.dispatching")
+    return o
+  })
   let executed: Awaited<ReturnType<typeof executeDelegation>> | null = null
   let error: HkError | null = null
   try {
-    executed = await executeDelegation({ txBytesB64: op.secrets.lastTxBytesB64, userSignature: input.userSignature, sponsorSignature, expectedGrantOwner: op.delegation.userAddress })
+    executed = await executeDelegation({ txBytesB64: op.secrets.lastTxBytesB64, userSignature: input.userSignature, sponsorSignature, expected })
   } catch (e) { error = e instanceof HkError ? e : new HkError("sui_delegate", e instanceof Error ? e.message : "unknown", 502, true) }
   return mutate(sessionId, operationId, (o) => {
+    if (o.delegation?.status === "delegated" && o.delegation.userTxDigest === expectedTxDigest) return toResult(o)
+    assertSnapshot(o, dispatch)
     if (!executed) {
-      o.delegation!.status = error?.retryable ? "unknown" : "failed"; o.delegation!.error = error?.message ?? "unknown"
+      o.delegation!.status = error?.code === "sui_execute_failed" ? "failed" : "unknown"; o.delegation!.error = error?.message ?? "unknown"
       o.error = { code: error?.code ?? "sui_delegate", message: error?.message ?? "unknown", retryable: Boolean(error?.retryable) }
       touch(o, "delegation.failed", { code: error?.code })
       return toResult(o)
@@ -354,39 +405,58 @@ export async function agentRun(sessionId: string, operationId: string) {
   const op = await loadOperation(sessionId, operationId)
   assert(op.status === "pending" && op.phase === "agent" && op.delegation?.grant && op.proposal, "phase", "delegation required", 409)
   if (op.agent?.status === "executed") return toResult(op)
+  if (op.agent?.status === "unknown" || op.agent?.status === "queued") return toResult(op) // In-flight/unknown execution is never blindly dispatched again.
   const grantState = await readGrant(op.delegation.grant.objectId)
   if (grantState.uses > 0) {
     // consumed earlier (retry after unknown): find our record via the tx history is not possible without indexer; mark unknown→reconcile
-    return mutate(sessionId, operationId, (o) => { o.agent = o.agent ?? { dispatchId: randomId("agt"), status: "unknown", decisionCommitment: "", manifestCommitment: "", manifest: null, txDigest: null, recordId: null, verified: null, error: "grant already consumed; reconcile" }; touch(o, "agent.grant_already_consumed"); return toResult(o) })
+    return mutate(sessionId, operationId, (o) => {
+      assertSnapshot(o, op)
+      o.agent = { dispatchId: randomId("agt"), decisionCommitment: "", manifestCommitment: "", manifest: null, txDigest: null, recordId: null, verified: null, ...o.agent, status: "unknown", error: "grant already consumed; bound transaction evidence required" }
+      touch(o, "agent.grant_already_consumed"); return toResult(o)
+    })
   }
+  assert(credentialEligibility(op) === null && presentationEligibility(op) === null, "eligibility", "current credential and presentation required", 409)
   assert(!grantState.revoked, "grant_revoked", "grant revoked", 409)
   assert(grantState.expiresAtMs > Date.now(), "grant_expired", "grant expired", 409)
   const k = suiKeys()
-  assert(grantState.agent.toLowerCase() === k.agentAddress.toLowerCase(), "agent_mismatch", "grant names a different agent", 409)
+  const expectedGrant = delegationExpectation(op, chainBindingConfig(), k.agentAddress)
+  verifyGrantEvidence(grantState, expectedGrant, 0)
   // de-identified execution manifest (provenance): links inputs → proposal → consent → grant → decision
-  const manifest = {
-    schema: "ondo-agent-manifest/v1", operationRef: sha256Hex(operationId), campaignId: op.campaignId, venueId: op.venueId, policyVersion: op.policyVersion,
-    proposal: { proposalId: op.proposal.proposalId, model: op.proposal.model, promptVersion: op.proposal.promptVersion, inputDigest: op.proposal.inputDigest, outputDigest: op.proposal.outputDigest, proposalDigest: op.proposal.proposalDigest },
-    consentCommitment: op.delegation.consentCommitment, actionCommitment: op.delegation.actionCommitment, intentRef: op.delegation.intentRef,
-    grant: op.delegation.grant.objectId, agent: k.agentAddress, tool: "redeem_demo_entitlement", decidedAt: nowIso(),
-  }
+  const manifest = executionManifest(op, k.agentAddress, nowIso())
   const decisionCommitment = digestOf({ action: op.proposal.output.action, target: op.proposal.output.target, grant: op.delegation.grant.objectId, actionCommitment: op.delegation.actionCommitment })
   const manifestCommitment = digestOf(manifest)
+  let dispatch = await mutate(sessionId, operationId, (o) => {
+    assertSnapshot(o, op)
+    assert(!o.agent || o.agent.status === "failed", "phase", "agent already dispatched", 409)
+    o.agent = { dispatchId: o.agent?.dispatchId ?? randomId("agt"), status: "queued", decisionCommitment, manifestCommitment, manifest, txDigest: null, recordId: null, verified: null, error: null }
+    touch(o, "agent.queued")
+    return o
+  })
   let executed: Awaited<ReturnType<typeof agentConsume>> | null = null
   let error: HkError | null = null
   try {
-    executed = await agentConsume({ grant: op.delegation.grant, decisionCommitmentHex: decisionCommitment, manifestCommitmentHex: manifestCommitment, expectedRecipient: op.delegation.recipient, expectedIntentRefHex: op.delegation.intentRef })
+    executed = await agentConsume({ grant: op.delegation.grant, expected: { ...expectedGrant, grantId: op.delegation.grant.objectId, decisionCommitment, manifestCommitment }, beforeBroadcast: async (digest) => {
+      dispatch = await mutate(sessionId, operationId, (o) => {
+        assertSnapshot(o, dispatch)
+        assert(o.status === "pending" && o.phase === "agent" && o.agent?.status === "queued" && !o.agent.txDigest, "phase", "agent dispatch was stopped or already broadcast", 409)
+        assert(o.delegation && o.delegation.expiresAtMs > Date.now(), "grant_expired", "approved execution window expired before broadcast", 409)
+        o.agent.txDigest = digest
+        touch(o, "agent.dispatching")
+        return o
+      })
+    } })
   } catch (e) { error = e instanceof HkError ? e : new HkError("sui_consume", e instanceof Error ? e.message : "unknown", 502, true) }
-  const after = executed ? await readGrant(op.delegation.grant.objectId) : null
   return mutate(sessionId, operationId, (o) => {
+    if (o.agent?.status === "executed" && o.agent.txDigest && o.agent.txDigest === dispatch.agent?.txDigest) return toResult(o)
+    assertSnapshot(o, dispatch)
     const dispatchId = o.agent?.dispatchId ?? randomId("agt")
     if (!executed) {
-      o.agent = { dispatchId, status: error?.retryable ? "unknown" : "failed", decisionCommitment, manifestCommitment, manifest, txDigest: null, recordId: null, verified: null, error: error?.message ?? "unknown" }
+      o.agent = { dispatchId, status: error?.code === "sui_execute_failed" ? "failed" : "unknown", decisionCommitment, manifestCommitment, manifest, txDigest: dispatch.agent?.txDigest ?? null, recordId: null, verified: null, error: error?.message ?? "unknown" }
       o.error = { code: error?.code ?? "sui_consume", message: error?.message ?? "unknown", retryable: Boolean(error?.retryable) }
       touch(o, "agent.failed", { code: error?.code })
       return toResult(o)
     }
-    o.agent = { dispatchId, status: "executed", decisionCommitment, manifestCommitment, manifest, txDigest: executed.txDigest, recordId: executed.recordId, verified: { effectsOk: true, eventOk: true, grantUses: after?.uses ?? null, checkedAt: nowIso() }, error: null }
+    o.agent = { dispatchId, status: "executed", decisionCommitment, manifestCommitment, manifest, txDigest: executed.txDigest, recordId: executed.recordId, verified: { effectsOk: true, eventOk: true, grantUses: executed.grantUses, checkedAt: nowIso() }, error: null }
     o.phase = "fulfillment"; o.error = null
     o.fulfillment = { status: "pending", reason: "authorization_consumed", redemptionRef: null, redeemedAt: null, recheck: null }
     touch(o, "agent.executed", { tx: executed.txDigest, record: executed.recordId })
@@ -405,30 +475,26 @@ export async function redeem(sessionId: string, operationId: string, input: { id
   }
   assert(op.status === "pending" && op.phase === "fulfillment" && op.agent?.status === "executed" && op.agent.txDigest, "phase", "verified Sui execution required", 409)
   // independent re-verification of the Sui execution before committing service state
-  const suiTx = await readTransaction(op.agent.txDigest)
-  const grant = op.delegation?.grant ? await readGrant(op.delegation.grant.objectId) : null
-  const t = suiTargets()
-  const suiOk = Boolean(suiTx?.success && suiTx.events.some((e) => e.type === t.events.consumed) && grant && grant.uses === 1)
+  const expected = executionExpectation(op, chainBindingConfig(), suiKeys().agentAddress)
+  const verified = await verifyReadExecution(op.agent.txDigest, expected)
   const outboxRecord = await mutate(sessionId, operationId, (o, db) => {
     const idem = db.idempotency[`${operationId}:redeem:${input.idempotencyKey}`]
     if (idem) { assert(idem.bodyDigest === input.bodyDigest, "idempotency_conflict", "same key, different body", 409); return null }
+    assertSnapshot(o, op)
     assert(o.status === "pending" && o.phase === "fulfillment" && o.agent?.status === "executed", "phase", "fulfillment is no longer pending", 409)
     const f = o.fulfillment!
     const recheck = {
-      credential: !o.credential || isPast(o.credential.validUntil) ? "expired" : o.credential.status,
-      presentation: !o.presentation?.decisionRef ? "missing" : o.presentation.decisionConsumedAt ? "consumed" : isPast(o.presentation.decisionExpiresAt) ? "expired_decision_ok_after_sui" : "allow",
-      sui: suiOk ? "verified" : "unverified",
+      credential: credentialEligibility(o) ?? "active",
+      presentation: presentationEligibility(o) ?? "allow",
+      sui: "verified",
       campaign: isPast(hkConfig().campaign.endsAt) ? "closed" : "open",
     }
     f.recheck = recheck
     const subject = o.identity?.subjectRef ?? ""
     const key = redemptionKey(subject, o.campaignId)
-    const block = (reason: string) => { f.status = "blocked"; f.reason = reason; o.status = "succeeded"; touch(o, "fulfillment.blocked", { reason, recheck }); return null }
-    if (!suiOk) return block("sui_unverified")
-    if (recheck.credential !== "active") return block("credential_" + recheck.credential)
-    if (recheck.presentation === "consumed") return block("decision_consumed")
-    if (recheck.campaign !== "open") return block("campaign_closed")
-    if (db.redemptions[key]) return block("already_redeemed")
+    const block = (reason: string) => { f.status = "blocked"; f.reason = reason; o.status = "failed"; touch(o, "fulfillment.blocked", { reason, recheck }); return null }
+    const reason = redemptionEligibility(o, db, verified.executedAtMs)
+    if (reason) return block(reason)
     // commit: decisionRef consumed + redemption + outbox in one store transaction
     o.presentation!.decisionConsumedAt = nowIso()
     const redemptionRef = randomId("rdm")
@@ -496,6 +562,7 @@ export async function cancel(sessionId: string, operationId: string) {
   return mutate(sessionId, operationId, (o, db) => {
     if (o.status !== "pending") return toResult(o)
     assert(o.phase !== "agent" && o.phase !== "fulfillment", "cannot_cancel", "execution already started; use reconcile", 409)
+    assert(!o.delegation?.userTxDigest || o.delegation.status === "failed", "cannot_cancel", "signed delegation may already be on-chain; use reconcile", 409)
     if (o.presentation?.nonce && db.nonces[o.presentation.nonce]) db.nonces[o.presentation.nonce].consumedAt = nowIso()
     o.status = "cancelled"; o.phase = "cancelled"
     touch(o, "cancelled", { at_phase: o.phase })
@@ -506,13 +573,34 @@ export async function cancel(sessionId: string, operationId: string) {
 export async function reconcile(sessionId: string, operationId: string) {
   const op = await loadOperation(sessionId, operationId)
   if (op.chain?.outboxId) await processOutbox(op.chain.outboxId)
-  if (op.agent?.status === "unknown" && op.delegation?.grant) {
-    const g = await readGrant(op.delegation.grant.objectId).catch(() => null)
-    if (g && g.uses === 1) await mutate(sessionId, operationId, (o) => { o.agent!.status = "executed"; o.agent!.verified = { effectsOk: true, eventOk: false, grantUses: 1, checkedAt: nowIso() }; o.phase = "fulfillment"; o.fulfillment = o.fulfillment ?? { status: "pending", reason: "authorization_consumed", redemptionRef: null, redeemedAt: null, recheck: null }; touch(o, "agent.reconciled") })
+  if (op.status === "pending" && (op.agent?.status === "unknown" || op.agent?.status === "queued") && op.delegation?.grant && op.agent.txDigest) {
+    // A consumed grant alone cannot identify which operation/transaction consumed it.
+    try {
+      const expected = executionExpectation(op, chainBindingConfig(), suiKeys().agentAddress)
+      const verified = await verifyReadExecution(op.agent.txDigest, expected)
+      await mutate(sessionId, operationId, (o) => {
+        assertSnapshot(o, op)
+        assert(o.status === "pending" && (o.agent?.status === "unknown" || o.agent?.status === "queued"), "phase", "execution no longer pending", 409)
+        o.agent.status = "executed"; o.agent.recordId = verified.recordId; o.agent.error = null
+        o.agent.verified = { effectsOk: true, eventOk: true, grantUses: verified.grantUses, checkedAt: nowIso() }
+        o.phase = "fulfillment"; o.error = null
+        o.fulfillment = o.fulfillment ?? { status: "pending", reason: "authorization_consumed", redemptionRef: null, redeemedAt: null, recheck: null }
+        touch(o, "agent.reconciled")
+      })
+    } catch { /* Missing, conflicting or unbound evidence stays unknown; never re-dispatch. */ }
   }
-  if (op.delegation?.status === "unknown" && op.delegation.userTxDigest) {
-    const tx = await readTransaction(op.delegation.userTxDigest).catch(() => null)
-    if (tx?.success) await mutate(sessionId, operationId, (o) => { o.delegation!.status = "delegated"; o.phase = "agent"; touch(o, "delegation.reconciled") })
+  if (op.status === "pending" && (op.delegation?.status === "unknown" || op.delegation?.status === "prepared") && op.delegation.userTxDigest) {
+    try {
+      const expected = delegationExpectation(op, chainBindingConfig(), suiKeys().agentAddress)
+      const verified = await verifyReadDelegation(op.delegation.userTxDigest, expected)
+      await mutate(sessionId, operationId, (o) => {
+        assertSnapshot(o, op)
+        assert(o.status === "pending" && (o.delegation?.status === "unknown" || o.delegation?.status === "prepared"), "phase", "delegation no longer pending", 409)
+        o.delegation.status = "delegated"; o.delegation.grant = { ...verified.grant, txDigest: verified.txDigest }; o.delegation.error = null
+        o.secrets.lastTxBytesB64 = undefined; delete (o.secrets as Record<string, unknown>).sponsorSignature
+        o.phase = "agent"; o.error = null; touch(o, "delegation.reconciled")
+      })
+    } catch { /* A successful transaction without operation-bound proof is not a delegation. */ }
   }
   return toResult(await loadOperation(sessionId, operationId))
 }

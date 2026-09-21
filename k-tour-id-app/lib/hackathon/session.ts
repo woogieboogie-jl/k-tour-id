@@ -29,8 +29,6 @@ export async function getSession(): Promise<SessionRecord | null> {
   return readStore((db) => db.sessions[id] ?? null)
 }
 
-const SESSION_ID_SHAPE = /^ses_[A-Za-z0-9_-]{16,40}$/
-
 export async function ensureSession(): Promise<SessionRecord> {
   const existing = await getSession()
   if (existing) {
@@ -39,10 +37,9 @@ export async function ensureSession(): Promise<SessionRecord> {
   }
   const jar = await cookies()
   const presented = jar.get(HK_SESSION_COOKIE)?.value
-  // A well-formed cookie whose record is missing (store swapped, pruned, or two parallel
-  // first requests racing to mint a cookie) is adopted instead of replaced: concurrent
-  // requests then converge on one id and the browser never sees competing Set-Cookies.
-  const sessionId = presented && SESSION_ID_SHAPE.test(presented) ? presented : randomId("ses", 18)
+  // Unknown cookies are untrusted, even when their shape looks valid. Never adopt
+  // a caller-chosen identifier as a new authenticated journey session.
+  const sessionId = randomId("ses", 18)
   const session = await withStore((db) => {
     const s = db.sessions[sessionId] ?? { sessionId, createdAt: nowIso(), lastSeenAt: nowIso(), subjectRef: null }
     s.lastSeenAt = nowIso()

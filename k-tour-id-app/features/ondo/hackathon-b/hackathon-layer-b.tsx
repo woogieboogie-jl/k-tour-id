@@ -119,6 +119,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   const [signer, setSigner] = useState<StoredSigner | null>(null)
   const [viewStep, setViewStep] = useState<number | null>(null)
   const inFlightRef = useRef(false)
+  const closedRef = useRef(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const vcRef = useRef<unknown>(null)
   const isMobile = typeof navigator !== "undefined" && /Android|iPhone|iPad/i.test(navigator.userAgent)
@@ -127,6 +128,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   const rootRef = useRef<HTMLDivElement>(null)
   useModalIsolation(true, rootRef)
   useDocumentScrollLock(true)
+  useEffect(() => { closedRef.current = false; return () => { closedRef.current = true } }, [])
 
   const run = useCallback(async (label: string, fn: () => Promise<void>) => {
     // React state updates are asynchronous: a same-frame double tap must not sign twice.
@@ -138,13 +140,22 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
 
   // Scope or recipient changes cannot inherit a previous checkbox approval.
   useEffect(() => { setApprove(false) }, [op?.proposal?.proposalDigest, op?.presentation?.decisionRef, signer?.address])
-  useEffect(() => { setViewStep(null); bodyRef.current?.scrollTo({ top: 0 }) }, [op?.phase, op?.status])
+  useEffect(() => {
+    setViewStep(null)
+    bodyRef.current?.scrollTo({ top: 0 })
+    if (!op) return
+    const frame = requestAnimationFrame(() => {
+      const heading = bodyRef.current?.querySelector<HTMLElement>("h3")
+      if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }) }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [op?.phase, op?.status])
 
   // bootstrap: config + entitlement + resume
   useEffect(() => {
     let alive = true
     ;(async () => {
-      await api.session().catch(() => undefined) // one cookie first; parallel calls below then share it
+      await api.session() // one cookie first; never proceed after a failed session bootstrap
       const [cfg, ent] = await Promise.all([api.config(), api.entitlements(detail.venueId)])
       if (!alive) return
       setConfig(cfg); setInfo(ent)
@@ -162,6 +173,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   useEffect(() => { if (op && op.status === "pending") writePendingHackathon({ venueId: detail.venueId, locale: detail.locale, resumeOperationId: op.operationId }) }, [op, detail.venueId, detail.locale])
 
   const close = useCallback((returnToPlace: boolean) => {
+    closedRef.current = true
     if (op && op.status !== "pending") { writePendingHackathon(null); clearJourneySecrets(op.operationId); try { sessionStorage.removeItem(`ondo-b.hackathon.vc:${op.operationId}`) } catch { /* ignore */ } }
     onClose()
     if (returnToPlace) window.setTimeout(() => requestPlaceServiceReturnB(detail.venueId, "offer"), 30)
@@ -212,11 +224,19 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   })
   const delegate = () => run("delegate", async () => {
     if (!approve || !op || !signer || !op.proposal || !op.presentation?.decisionRef) return
+    // Every retry, including a rejected signature, requires a fresh approval.
+    setApprove(false)
     const message = `ondo-hk-wallet-proof:${op.operationId}:${op.presentation.decisionRef}`
-    const prepared = await api.delegationPrepare(op.operationId, { userAddress: signer.address, signer: signer.kind, walletProof: { message, signature: await signPersonalMessage(signer, message) }, approvedProposalDigest: op.proposal.proposalDigest })
+    const walletSignature = await signPersonalMessage(signer, message)
+    if (closedRef.current) return
+    const prepared = await api.delegationPrepare(op.operationId, { userAddress: signer.address, signer: signer.kind, walletProof: { message, signature: walletSignature }, approvedProposalDigest: op.proposal.proposalDigest })
+    // Leaving while the request is pending must not trigger a later signature.
+    if (closedRef.current) return
     setOp(prepared.result)
     const digest = await sha256Hex(fromBase64(prepared.txBytesB64))
+    if (closedRef.current) return
     const userSignature = await signTransactionBytes(signer, prepared.txBytesB64)
+    if (closedRef.current) return
     setOp(await api.delegationSubmit(op.operationId, digest, userSignature))
   })
   const runAgent = () => run("agent", async () => { if (op) setOp(await api.agentRun(op.operationId)) })
@@ -231,12 +251,18 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   const approveSample = () => identityComplete({ outcome: "verified", subjectSeed: sampleSeed })
 
   const stepIndex = journeyStepIndex(op)
+  const activePhase = op?.status === "pending" ? op.phase : null
+  const delegationNeedsCheck = Boolean(op?.delegation && op.delegation.status !== "awaiting_signature")
+  const delegationMayStop = !op?.delegation?.userTxDigest || op.delegation.status === "failed"
   const reviewing = viewStep !== null && viewStep < stepIndex
   const shownStep = reviewing ? viewStep : stepIndex
   const reviewStep = (step: number | null) => {
     setApprove(false)
     setViewStep(step)
     bodyRef.current?.scrollTo({ top: 0 })
+    // The clicked history button may unmount; keep keyboard/Escape ownership
+    // inside this dialog instead of dropping focus onto the inert place sheet.
+    requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(`[data-testid='${step === null ? "hackathon-step-back" : "hackathon-step-live"}']`)?.focus({ preventScroll: true }))
   }
   const modes = info?.modes ?? config?.modes ?? {}
   const isolated = config?.isolatedMock !== false
@@ -270,10 +296,10 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
               {shownStep === 0 ? <><dt>{tr("동의 시각", "Consented at", "同意した日時")}</dt><dd>{op.consent?.acceptedAt ?? "—"}</dd></> : null}
               {shownStep === 1 ? <><dt>{tr("확인 방식", "Check type", "確認方法")}</dt><dd>{op.identity?.mode === "mock" ? c.sampleNote : tr("연결된 신분증 서비스", "Connected identity service", "接続された身分証サービス")}</dd></> : null}
               {shownStep === 2 ? <><dt>{tr("패스 유효기한", "Pass valid until", "パスの有効期限")}</dt><dd>{op.credential?.validUntil ?? "—"}</dd></> : null}
-              {shownStep === 3 ? <><dt>{tr("제시 결과", "Presentation decision", "提示の結果")}</dt><dd>{op.presentation?.decision ?? "—"}</dd></> : null}
+              {shownStep === 3 ? <><dt>{tr("제시 결과", "Presentation decision", "提示の結果")}</dt><dd>{op.presentation?.decision === "allow" ? tr("제시됨", "Presented", "提示済み") : tr("승인되지 않음", "Not approved", "未承認")}</dd></> : null}
               {shownStep === 4 ? <><dt>{tr("확인한 제안", "Reviewed proposal", "確認した提案")}</dt><dd>{op.proposal?.output.summary ?? "—"}</dd></> : null}
               {shownStep === 5 ? <><dt>{tr("수령 계정", "Recipient", "受取アカウント")}</dt><dd>{op.delegation?.recipient ?? "—"}</dd><dt>{tr("횟수", "Uses", "回数")}</dt><dd>1</dd></> : null}
-              {shownStep === 6 ? <><dt>{tr("진행 결과", "Execution result", "実行結果")}</dt><dd>{op.agent?.status ?? "—"}</dd></> : null}
+              {shownStep === 6 ? <><dt>{tr("진행 결과", "Execution result", "実行結果")}</dt><dd>{op.agent?.status === "executed" ? tr("진행 완료", "Executed", "実行済み") : tr("확인 필요", "Needs checking", "確認が必要")}</dd></> : null}
               {shownStep === 7 ? <><dt>{tr("체험 번호", "Experience ref", "体験番号")}</dt><dd>{op.fulfillment?.redemptionRef ?? "—"}</dd></> : null}
             </dl>
           </section> : <>
@@ -290,7 +316,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             </section>
           ) : null}
 
-          {op?.phase === "identity" ? (
+          {activePhase === "identity" && op ? (
             <section className={styles.card}>
               <h3>{c.steps[1]}</h3>
               {!op.identity?.handoff ? <>
@@ -318,13 +344,13 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             </section>
           ) : null}
 
-          {op?.phase === "issuance" ? <section className={styles.card}>
+          {activePhase === "issuance" && op ? <section className={styles.card}>
             <h3>{c.steps[2]}</h3>
             <p>{busy === "issue" ? c.issuing : tr("이 체험에서 사용할 패스를 받아 보관합니다.", "Receive and keep a pass for this experience.", "この体験で使うパスを受け取り、保存します。")}</p>
             <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={issueAndAck} data-testid="hackathon-issue">{busy === "issue" ? <span className={styles.spinner} /> : null}{tr("패스 받기", "Get pass", "パスを受け取る")}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
           </section> : null}
 
-          {op?.phase === "presentation" ? (
+          {activePhase === "presentation" && op ? (
             <section className={styles.card}>
               <h3>{c.steps[3]}</h3>
               <p>{c.presentBody}</p>
@@ -334,9 +360,9 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             </section>
           ) : null}
 
-          {op?.phase === "proposal" ? <section className={styles.card}><h3>{c.steps[4]}</h3><p>{tr("이 장소에서 체험할 수 있는 혜택 하나를 확인합니다. 내용을 보고 진행 여부를 직접 선택해 주세요.", "Review the one available experience perk, then choose whether to continue.", "この場所で体験できる特典を1つ確認し、進めるかどうか選んでください。")}</p><div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={propose} data-testid="hackathon-propose">{busy === "propose" ? <span className={styles.spinner} /> : null}{c.propose}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div></section> : null}
+          {activePhase === "proposal" && op ? <section className={styles.card}><h3>{c.steps[4]}</h3><p>{tr("이 장소에서 체험할 수 있는 혜택 하나를 확인합니다. 내용을 보고 진행 여부를 직접 선택해 주세요.", "Review the one available experience perk, then choose whether to continue.", "この場所で体験できる特典を1つ確認し、進めるかどうか選んでください。")}</p><div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={propose} data-testid="hackathon-propose">{busy === "propose" ? <span className={styles.spinner} /> : null}{c.propose}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div></section> : null}
 
-          {op?.phase === "delegation" && op.proposal ? (
+          {activePhase === "delegation" && op && op.proposal ? (
             <section className={styles.card}>
               <h3>{op.proposal.output.title}</h3>
               <p><b>{op.proposal.output.summary}</b></p>
@@ -349,7 +375,10 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
                 <dt>{tr("기한", "Expires", "期限")}</dt><dd>{op.delegation ? new Date(op.delegation.expiresAtMs).toLocaleTimeString(locale) : tr("승인 후 최대 10분", "Up to 10 minutes after approval", "承認から最大10分")}</dd>
                 <dt>{tr("수령 계정", "Recipient", "受取アカウント")}</dt><dd>{signer?.address ? signer.address.slice(0, 12) + "…" : "—"}</dd>
               </dl>
-              {!signer || (signer.kind === "zklogin" && signer.jwtPending) ? <div className={styles.actions}>
+              {delegationNeedsCheck ? <>
+                <div className={styles.notice}>{tr("이전 요청의 결과를 확인하고 있어요. 확인 전에는 새로 승인하거나 실행하지 않습니다.", "Checking the previous request. No new approval or execution is sent while its result is uncertain.", "前のリクエストの結果を確認しています。確認前に新たな承認や実行は行いません。")}</div>
+                <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button>{delegationMayStop ? <button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button> : null}</div>
+              </> : !signer || (signer.kind === "zklogin" && signer.jwtPending) ? <div className={styles.actions}>
                 {!isolated && modes.zklogin === "google" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={() => chooseSigner("zklogin")} data-testid="hackathon-signer-google">{c.signerZk}</button> : null}
                 {isolated || modes.zklogin !== "google" ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => chooseSigner("demo")} data-testid="hackathon-signer-demo">{c.signerDemo}</button> : null}
               </div> : <>
@@ -360,9 +389,9 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             </section>
           ) : null}
 
-          {op?.phase === "agent" ? <section className={styles.card}><h3>{c.steps[6]}</h3><p>{tr("확인한 범위 안에서 한 번만 진행합니다. 아래 버튼을 눌러 시작해 주세요.", "Continue once within the approved scope. Tap below when ready.", "承認した範囲内で1回だけ進めます。下のボタンを押してください。")}</p><div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={runAgent} data-testid="hackathon-agent-run">{busy === "agent" ? <span className={styles.spinner} /> : null}{c.runAgent}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div></section> : null}
+          {activePhase === "agent" && op ? <section className={styles.card}><h3>{c.steps[6]}</h3><p>{op.agent?.status === "unknown" || op.agent?.status === "queued" ? tr("진행한 요청의 결과를 확인하고 있어요. 새로 실행하지 않고 기존 결과만 다시 확인합니다.", "Your request is being checked. Check its result without starting it again.", "送信したリクエストを確認中です。再実行せず、結果だけを確認します。") : tr("확인한 범위 안에서 한 번만 진행합니다. 아래 버튼을 눌러 시작해 주세요.", "Continue once within the approved scope. Tap below when ready.", "承認した範囲内で1回だけ進めます。下のボタンを押してください。")}</p><div className={styles.actions}>{op.agent?.status !== "unknown" && op.agent?.status !== "queued" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={runAgent} data-testid="hackathon-agent-run">{busy === "agent" ? <span className={styles.spinner} /> : null}{c.runAgent}</button> : null}<button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div></section> : null}
 
-          {op?.phase === "fulfillment" ? <section className={styles.card}><h3>{c.steps[7]}</h3>{op.fulfillment?.status === "blocked" ? <div className={styles.notice} data-tone="error">{c.blocked}</div> : <p>{tr("진행 결과와 이용 조건을 다시 확인한 뒤 1회 사용을 확정합니다.", "Re-check the result and eligibility before confirming a single use.", "結果と利用条件を再確認し、1回の利用を確定します。")}</p>}<div className={styles.actions}>{op.fulfillment?.status !== "blocked" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={redeem} data-testid="hackathon-redeem">{busy === "redeem" ? <span className={styles.spinner} /> : null}{c.redeem}</button> : null}<button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div></section> : null}
+          {activePhase === "fulfillment" && op ? <section className={styles.card}><h3>{c.steps[7]}</h3>{op.fulfillment?.status === "blocked" ? <div className={styles.notice} data-tone="error">{c.blocked}</div> : <p>{tr("진행 결과와 이용 조건을 다시 확인한 뒤 1회 사용을 확정합니다.", "Re-check the result and eligibility before confirming a single use.", "結果と利用条件を再確認し、1回の利用を確定します。")}</p>}<div className={styles.actions}>{op.fulfillment?.status !== "blocked" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={redeem} data-testid="hackathon-redeem">{busy === "redeem" ? <span className={styles.spinner} /> : null}{c.redeem}</button> : null}<button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div></section> : null}
 
           {op && (op.phase === "done" || op.status !== "pending") ? (
             <section className={styles.card}>

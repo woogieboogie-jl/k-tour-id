@@ -10,7 +10,7 @@ if (target.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes
 
 export default defineConfig({
   testDir: "tests/e2e",
-  testMatch: "ktour-harvey-integration.spec.ts",
+  testMatch: ["ktour-harvey-integration.spec.ts", "ktour-harvey-final-review.spec.ts"],
   outputDir: "artifacts/qa/harvey-integration-fixtures",
   workers: 1,
   fullyParallel: false,

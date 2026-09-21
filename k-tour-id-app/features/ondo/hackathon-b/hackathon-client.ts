@@ -97,7 +97,8 @@ export async function ensureHolderKey(operationId: string): Promise<StoredHolder
   const jwk = await crypto.subtle.exportKey("jwk", pair.privateKey)
   const spki = await crypto.subtle.exportKey("spki", pair.publicKey)
   const stored: StoredHolder = { alg, jwk, publicKeyPem: pemFromSpki(spki) }
-  try { sessionStorage.setItem(key, JSON.stringify(stored)) } catch { /* ignore */ }
+  // Do not issue/ack a pass to a holder key that cannot survive a page return.
+  sessionStorage.setItem(key, JSON.stringify(stored))
   return stored
 }
 export async function holderSign(holder: StoredHolder, payload: string): Promise<string> {
@@ -111,20 +112,21 @@ export function canonicalJson(value: unknown): string {
   return JSON.stringify(sort(value))
 }
 export function clearJourneySecrets(operationId: string) {
-  try { sessionStorage.removeItem(`${HOLDER_KEY}:${operationId}`); sessionStorage.removeItem(`${SIGNER_KEY}:${operationId}`) } catch { /* ignore */ }
+  try { sessionStorage.removeItem(`${HOLDER_KEY}:${operationId}`); sessionStorage.removeItem(`${SIGNER_KEY}:${operationId}`); sessionStorage.removeItem(`ondo-b.hackathon.jwt:${operationId}`) } catch { /* ignore */ }
 }
 
 // ── Sui signer: zkLogin (Google) or demo signer ───────────────────────
 const SIGNER_KEY = "ondo-b.hackathon.signer.v1"
 export type StoredSigner =
   | { kind: "demo"; address: string; secretKey: string }
-  | { kind: "zklogin"; address: string; ephemeralSecretKey: string; maxEpoch: number; randomness: string; inputs: ZkInputs | null; nonce: string; jwtPending: boolean }
+  | { kind: "zklogin"; address: string; ephemeralSecretKey: string; maxEpoch: number; randomness: string; inputs: ZkInputs | null; nonce: string; jwtPending: boolean; oauthState?: string }
 
 export function readSigner(operationId: string): StoredSigner | null {
   try { const raw = sessionStorage.getItem(`${SIGNER_KEY}:${operationId}`); return raw ? (JSON.parse(raw) as StoredSigner) : null } catch { return null }
 }
 export function writeSigner(operationId: string, s: StoredSigner | null) {
-  try { if (!s) sessionStorage.removeItem(`${SIGNER_KEY}:${operationId}`); else sessionStorage.setItem(`${SIGNER_KEY}:${operationId}`, JSON.stringify(s)) } catch { /* ignore */ }
+  if (!s) sessionStorage.removeItem(`${SIGNER_KEY}:${operationId}`)
+  else sessionStorage.setItem(`${SIGNER_KEY}:${operationId}`, JSON.stringify(s))
 }
 export function createDemoSigner(operationId: string): StoredSigner {
   const kp = Ed25519Keypair.generate()
@@ -138,9 +140,10 @@ export async function beginZkLogin(operationId: string, googleClientId: string, 
   const eph = Ed25519Keypair.generate()
   const randomness = generateRandomness()
   const nonce = generateNonce(eph.getPublicKey(), maxEpoch, randomness)
-  writeSigner(operationId, { kind: "zklogin", address: "", ephemeralSecretKey: eph.getSecretKey(), maxEpoch, randomness, inputs: null, nonce, jwtPending: true })
+  const oauthState = crypto.randomUUID()
+  writeSigner(operationId, { kind: "zklogin", address: "", ephemeralSecretKey: eph.getSecretKey(), maxEpoch, randomness, inputs: null, nonce, jwtPending: true, oauthState })
   const redirect = `${window.location.origin}/hackathon/zklogin/callback`
-  const params = new URLSearchParams({ client_id: googleClientId, redirect_uri: redirect, response_type: "id_token", scope: "openid", nonce, state: operationId, prompt: "select_account" })
+  const params = new URLSearchParams({ client_id: googleClientId, redirect_uri: redirect, response_type: "id_token", scope: "openid", nonce, state: oauthState, prompt: "select_account" })
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
 }
 /** Finish zkLogin after the OAuth callback stored the JWT: prove and derive the address. */
