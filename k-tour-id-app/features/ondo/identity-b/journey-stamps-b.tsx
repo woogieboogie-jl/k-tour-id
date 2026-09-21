@@ -97,10 +97,10 @@ export function JourneyStampsCardB({ locale }: { locale: OndoBLocale }) {
   return <article className={styles.card} data-testid="ondo-b-stamp-milestone" data-stamps={count} data-mode={review ? "review" : "unavailable"}>
     <div className={styles.cardHeading}>
       <span className={styles.icon}><Stamp size={20} strokeWidth={1.6} aria-hidden="true" /></span>
-      <div><h2>{copy.title}</h2><p>{!review ? copy.unavailable : count === 10 ? copy.complete : count === 0 ? copy.empty : copy.recent}</p></div>
+      <div><h2>{copy.title}</h2>{!review || count > 0 ? <p>{!review ? copy.unavailable : count === 10 ? copy.complete : copy.recent}</p> : null}</div>
       {review ? <strong className={styles.count} aria-label={copy.progress(count)}>{count}<span>/10</span></strong> : null}
     </div>
-    {review ? <StampProgress count={count} locale={locale} /> : null}
+    {review && count > 0 ? <StampProgress count={count} locale={locale} /> : null}
     {recentName ? <p className={styles.recent}><MapPin size={14} aria-hidden="true" /><span>{recentName}</span></p> : null}
     {review ? <p className={styles.review} data-testid="journey-stamps-lifetime">{copy.review}</p> : null}
     <div className={styles.cardActions}>

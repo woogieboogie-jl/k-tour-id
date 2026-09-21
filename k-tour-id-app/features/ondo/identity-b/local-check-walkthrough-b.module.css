@@ -65,8 +65,8 @@
 .routeChoices button span { display: grid; min-width: 0; gap: 2px; }
 .routeChoices button strong { font-size: 14px; font-weight: 780; line-height: 1.25; }
 .routeChoices button small { color: #766f6a; font-size: 12px; font-weight: 680; line-height: 1.25; }
-.reviewScope { display: flex; align-items: center; gap: 7px; margin: 10px 0 0; color: #6b3552; font-size: 12px; font-weight: 720; line-height: 1.35; }
-.reviewScope svg { flex: 0 0 auto; }
+.reviewScope { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; color: var(--ondo-muted, #666); font-size: 15px; font-weight: 650; line-height: 1.45; }
+.reviewScope svg { flex: 0 0 auto; margin-top: 3px; }
 .routeReturn {
   display: flex;
   width: 100%;

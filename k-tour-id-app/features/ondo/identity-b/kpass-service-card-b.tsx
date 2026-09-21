@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { createPortal } from "react-dom"
 import { ArrowUpRight, Check, ChevronRight, Gift, LockKeyhole, ShieldCheck, SlidersHorizontal, WalletCards, Wine } from "lucide-react"
 import { evaluateKPassService, KPASS_DEMO_SCENARIOS, type KPassService } from "../contracts/kpass-capabilities"
 import { STABLE_B_OFFER_VENUE_ID } from "../commerce-b/stable-commerce-model-b"
@@ -29,6 +30,9 @@ export function KPassServiceCardB({ paymentReady = false, compact = false }: { p
   const [picker, setPicker] = useState(false)
   const [error, setError] = useState(false)
   const presence = useSheetPresence(picker ? true : null)
+  // A Pass card lives inside the scrolling tab. Mount the modal in the same
+  // stationary canvas as the other identity checks, never in that scroll box.
+  const pickerHost = typeof document === "undefined" ? null : document.querySelector("[data-testid='ondo-canvas']")
   const copy = COPY[state.locale]
   const compactCopy = COMPACT_COPY[state.locale]
   const credential = state.identityCredential
@@ -50,6 +54,6 @@ export function KPassServiceCardB({ paymentReady = false, compact = false }: { p
       </>}
       {compact ? <details className={styles.disclosure} data-testid="kpass-service-disclosure"><summary data-testid="kpass-service-toggle"><span>{copy.title}</span><ChevronRight size={18} aria-hidden="true" /></summary>{services}</details> : services}
     </section>
-    {presence.value ? <SheetB locale={state.locale} label={copy.settings} variant="decision" header={<span>{copy.sample}</span>} presenceState={presence.phase} onClose={() => setPicker(false)}><div className={styles.picker}><h2>{copy.settings}</h2><p>{copy.notice}</p><div role="group" aria-label={copy.settings}>{["guest" as const, ...KPASS_DEMO_SCENARIOS].map((scenario, index) => <button type="button" key={scenario} data-testid={`kpass-scenario-${scenario}`} aria-pressed={scenario === "guest" ? !credential : Boolean(credential && state.identityDemoScenario === scenario)} onClick={() => { const ok = actions.setIdentityDemoScenario(scenario); setError(!ok); if (ok) setPicker(false) }}><span>{index === 0 ? copy.guest : copy.scenario[index - 1]}</span><ArrowUpRight size={17} aria-hidden="true" /></button>)}</div>{error ? <p role="alert">{copy.error}</p> : null}</div></SheetB> : null}
+    {presence.value && pickerHost ? createPortal(<SheetB locale={state.locale} label={copy.settings} variant="decision" header={<span>{copy.sample}</span>} presenceState={presence.phase} onClose={() => setPicker(false)}><div className={styles.picker} data-testid="kpass-sample-picker-body"><h2>{copy.settings}</h2><p>{copy.notice}</p><div role="group" aria-label={copy.settings}>{["guest" as const, ...KPASS_DEMO_SCENARIOS].map((scenario, index) => <button type="button" key={scenario} data-testid={`kpass-scenario-${scenario}`} aria-pressed={scenario === "guest" ? !credential : Boolean(credential && state.identityDemoScenario === scenario)} onClick={() => { const ok = actions.setIdentityDemoScenario(scenario); setError(!ok); if (ok) setPicker(false) }}><span>{index === 0 ? copy.guest : copy.scenario[index - 1]}</span><ArrowUpRight size={17} aria-hidden="true" /></button>)}</div>{error ? <p role="alert">{copy.error}</p> : null}</div></SheetB>, pickerHost) : null}
   </>
 }

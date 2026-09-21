@@ -185,13 +185,16 @@ for (const layout of layouts) {
     await expect(detail).toHaveAttribute("data-venue-id", PLACE)
     const primary = detail.getByTestId("canonical-meal-benefit-open")
     const primaryPaint = await paint(primary)
-    expect(primaryPaint.background).toEqual(primaryPaint.control)
+    // 9/21: payment and reservation are quiet full-width rows, not competing
+    // primary tiles. All entries remain reachable and high contrast.
+    expect(primaryPaint.background).not.toEqual(primaryPaint.control)
+    expect(primaryPaint.ratio).toBeGreaterThanOrEqual(4.5)
     for (const id of ["place-reservation-open", "experience-open", "canonical-journey-open", "canonical-place-table"]) {
       const action = detail.getByTestId(id)
       await action.scrollIntoViewIfNeeded()
       await target(action, page)
       const colors = await paint(action)
-      expect(colors.background, id).not.toEqual(primaryPaint.background)
+      expect(colors.background, id).toEqual(primaryPaint.background)
       const textPaint = []
       for (const text of await action.locator("strong, small").all()) {
         const result = await paint(text)

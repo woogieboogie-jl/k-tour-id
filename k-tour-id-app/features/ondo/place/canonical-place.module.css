@@ -1052,11 +1052,12 @@
   border-color: rgb(23 23 23 / 10%);
   background: #fff;
 }
-.pulsePanel > summary { min-height: 72px; }
-.pulsePanel > summary > div { width: 100%; }
+.pulsePanel > summary { min-height: 52px; padding: 10px 12px; }
+.pulsePanel > summary > div { display: flex; width: 100%; min-width: 0; align-items: center; gap: 12px; }
+.pulsePanel > summary > div > span:first-child { flex: 0 1 auto; letter-spacing: 0; line-height: 1.35; }
 .pulsePanel > summary > svg { flex: 0 0 auto; color: #555; transition: transform 180ms ease; }
 .pulsePanel[open] > summary > svg { transform: rotate(90deg); }
-.pulsePanel .pulseVisualMeter { width: min(260px, 58vw); margin-top: 5px; }
+.pulsePanel .pulseVisualMeter { width: auto; min-width: 60px; max-width: 180px; flex: 1 0 60px; margin-top: 0; }
 
 .tableEmpty {
   display: grid;
@@ -1824,6 +1825,7 @@
   box-shadow: var(--ondo-shadow, 0 10px 28px rgb(0 0 0 / 6%));
 }
 .pulsePeek { border-left-color: var(--pulse-level); }
+.pulsePanel { margin-block:12px; padding:0; box-shadow:none; }
 .pulsePanelBody > dl div { border-color: var(--ondo-line, rgb(23 23 23 / 12%)); background: var(--ondo-surface-soft, #f3f3f1); }
 .pulsePanel dd,
 .pulsePanel > summary h3,
@@ -1935,7 +1937,8 @@
 /* Full-detail companions are quiet rows, not competing primary cards. Keep
    the commerce/reservation hierarchy and every peek/other entry untouched. */
 .body > :global([data-testid="experience-open"]),
-.body > :global([data-testid="canonical-journey-open"]) {
+.body > :global([data-testid="canonical-journey-open"]),
+.body > :global([data-testid="hackathon-entitlement-open"]) {
   min-height:64px;
   margin:0;
   padding:12px 0;
@@ -1946,6 +1949,12 @@
   color:var(--ondo-ink, #171717);
   box-shadow:none;
 }
+.body > :global([data-testid="hackathon-entitlement-open"]) { grid-template-columns:24px minmax(0,1fr) 18px; gap:12px; }
+.body > :global([data-testid="hackathon-entitlement-open"]) strong { font-size:15px; }
+.body > :global([data-testid="experience-open"]) strong { font-size:17px; }
+.body > :global([data-testid="experience-open"]) small,
+.body > :global([data-testid="canonical-journey-open"]) small,
+.body > :global([data-testid="hackathon-entitlement-open"]) small { font-size:13px; line-height:1.4; }
 .body > :global([data-testid="canonical-journey-open"]) > span:first-child {
   flex-basis:24px;
   width:24px;
@@ -1958,18 +1967,25 @@
   border-radius:0;
   background:transparent;
   box-shadow:none;
-  padding:12px 0;
+  margin:0;
+  padding:0;
 }
 .body > .tableActions .tablePrimary {
-  border-color:var(--ondo-line, #dedede);
-  background:var(--ondo-surface, #fff);
+  gap:12px;
+  border:0;
+  border-bottom:1px solid var(--ondo-line, #dedede);
+  border-radius:0;
+  padding:10px 0;
+  background:transparent;
   color:var(--ondo-ink, #171717);
   box-shadow:none;
 }
+.body > .tableActions .tablePrimary strong { font-size:15px; }
 .body > .tableActions .tablePrimary small { color:var(--ondo-muted, #626262); }
 @media (forced-colors:active) {
   .body > :global([data-testid="experience-open"]),
-  .body > :global([data-testid="canonical-journey-open"]) { border-block-end-color:CanvasText; color:CanvasText; }
+  .body > :global([data-testid="canonical-journey-open"]),
+  .body > :global([data-testid="hackathon-entitlement-open"]) { border-block-end-color:CanvasText; color:CanvasText; }
   .body > .tableActions .tablePrimary { border-color:CanvasText; background:Canvas; color:CanvasText; }
   .body > .tableActions .tablePrimary small { color:CanvasText; }
 }

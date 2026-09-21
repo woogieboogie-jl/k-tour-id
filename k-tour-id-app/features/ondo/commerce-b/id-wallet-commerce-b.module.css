@@ -733,7 +733,11 @@
 .benefitCard > button {
   border-top-color: var(--ondo-line, rgb(23 23 23 / 9%));
   color: var(--ondo-ink, #171717);
+  min-height: 48px;
+  font-size: 14px;
+  line-height: 1.45;
 }
+.benefitCard > button > svg { flex: 0 0 auto; }
 .activityReceipt button + button { margin-top: 7px; }
 .activityReceipt code { overflow-wrap: anywhere; }
 .storageError {

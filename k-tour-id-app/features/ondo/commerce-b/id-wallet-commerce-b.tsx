@@ -2406,7 +2406,6 @@ export function IdWalletCommerceB() {
       </section>
 
       <div className={styles.walletMapActions}>
-        <button type="button" className={styles.primary} data-testid="wallet-balance-places" onClick={openBenefitPlace}><MapPin size={18} aria-hidden="true" />{words("Find places to use it", "잔액으로 이용할 곳 보기", "残高を使える場所を見る")}<ChevronRight size={18} aria-hidden="true" /></button>
         {walletStatus === "ready" ? <button type="button" className={styles.secondary} data-testid="wallet-add-funds" onClick={event => openWalletFundingSheet(event.currentTarget, { locale, source: activeFundingSource, purpose: "topup", walletReady: true })}>{fundingCopy.addFunds}</button> : null}
         <details className={styles.privacy} data-testid="wallet-balance-info"><summary><Info size={16} aria-hidden="true" />{words("About this balance", "잔액 안내", "残高について")}</summary><p>{FUNDING_COPY[locale].technicalBody}</p></details>
       </div>
@@ -2415,7 +2414,7 @@ export function IdWalletCommerceB() {
         <section className={styles.benefitCard} data-testid="wallet-benefit">
           <div className={styles.cardHeading}><Gift size={20} aria-hidden="true" /><span>{copy.benefits}</span><small>{commerce.status === "paid" && commerce.voucherApplied ? copy.benefitUsed : copy.benefitState}</small></div>
           <h3>{copy.benefitTitle(formatKrwFromSettlementUnits(STABLE_B_VOUCHER_VALUE, locale))}</h3><p>{copy.benefitBody}</p>
-          <button type="button" onClick={openBenefitPlace}><MapPin size={16} aria-hidden="true" />{copy.explore}<ChevronRight size={16} aria-hidden="true" /></button>
+          <button type="button" data-testid="wallet-balance-places" onClick={openBenefitPlace}><MapPin size={18} aria-hidden="true" />{words("Find places to use it", "잔액으로 이용할 곳 보기", "残高を使える場所を見る")}<ChevronRight size={18} aria-hidden="true" /></button>
         </section>
 
         <section className={styles.methodCard} data-testid="wallet-payment-method" data-funding-source={activeFundingSource}>

@@ -8,6 +8,10 @@
 }
 
 .card { margin-top: 12px; border: 1px solid var(--journey-line); border-radius: 23px; padding: 16px; background: var(--ondo-surface, #fff); }
+/* An empty collection is a compact invitation, not ten empty destinations.
+   Its count, reset boundary and Explore action remain visible. */
+.card[data-stamps="0"] { padding-block: 12px; }
+.card[data-stamps="0"] .cardActions { margin-top: 0; }
 .cardHeading { display: flex; align-items: center; gap: 10px; }
 .cardHeading > div { flex: 1; min-width: 0; }
 .icon { display: grid; width: 37px; height: 37px; flex: 0 0 auto; place-items: center; border: 1px solid color-mix(in srgb, var(--journey-accent) 17%, transparent); border-radius: 12px; color: var(--journey-accent); background: color-mix(in srgb, var(--journey-accent) 6%, var(--ondo-surface, #fff)); }

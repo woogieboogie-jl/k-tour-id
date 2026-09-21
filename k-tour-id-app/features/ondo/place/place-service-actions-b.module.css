@@ -10,4 +10,10 @@
 .secondary small { color:var(--ondo-muted); }
 .actions button:focus-visible { outline:3px solid var(--ondo-focus-ring, #2563eb); outline-offset:3px; }
 @media (max-width:360px) { .actions { gap:8px; } .actions button { grid-template-columns:minmax(0,1fr) 16px; padding:12px 10px; } .actions button > svg:first-child { display:none; } .actions strong { font-size:13px; } }
+.actions[data-service-layout="rows"] { grid-template-columns:minmax(0,1fr); gap:0; margin:0; }
+.actions[data-service-layout="rows"] button { min-height:64px; grid-template-columns:24px minmax(0,1fr) 18px; gap:12px; padding:10px 0; border:0; border-bottom:1px solid var(--ondo-line); border-radius:0; background:transparent; color:var(--ondo-ink); }
+.actions[data-service-layout="rows"] button > svg:first-child { display:block; }
+.actions[data-service-layout="rows"] button > span { gap:2px; }
+.actions[data-service-layout="rows"] strong { font-size:15px; line-height:1.35; }
+.actions[data-service-layout="rows"] small { color:var(--ondo-muted); font-size:13px; line-height:1.4; opacity:1; }
 @media (forced-colors:active) { .actions button { background:Canvas; color:CanvasText; border-color:CanvasText; } }

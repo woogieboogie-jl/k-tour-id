@@ -176,7 +176,7 @@ const COPY = {
     pulseTooHotBody: "Compare a calmer place from the same curated area.",
     pulseAlternative: "Open calmer place",
     pulseLocalEvidence: "Your recent signal",
-    table: "View Table",
+    table: "Dining plans",
     tableBody: (schedule: string) => `${schedule} · Korean + English · 1 seat left`,
     tableClosedBody: "This Table has ended · view details",
     browseTables: "Browse all Tables",
@@ -258,7 +258,7 @@ const COPY = {
     pulseTooHotBody: "같은 선별 지역에서 더 여유로운 장소를 살펴보세요.",
     pulseAlternative: "더 여유로운 장소 열기",
     pulseLocalEvidence: "내 최근 신호",
-    table: "테이블 보기",
+    table: "식사 계획",
     tableBody: (schedule: string) => `${schedule} · 한국어 + 영어 · 1자리 남음`,
     tableClosedBody: "종료된 테이블 · 상세 보기",
     browseTables: "전체 테이블 보기",
@@ -340,7 +340,7 @@ const COPY = {
     pulseTooHotBody: "同じ選定エリアから、より落ち着いた場所を比べられます。",
     pulseAlternative: "落ち着いた場所を開く",
     pulseLocalEvidence: "自分の最近のシグナル",
-    table: "テーブルを見る",
+    table: "食事プラン",
     tableBody: (schedule: string) => `${schedule}・韓国語＋英語・残り1席`,
     tableClosedBody: "終了したTable・詳細を見る",
     browseTables: "すべてのテーブルを見る",
@@ -1142,11 +1142,11 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
             </div>
           </details>
 
+          <PlaceServiceActionsB placeId={currentVenueId} locale={locale} onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open" presentation="place-detail" />
           <HackathonEntitlementCtaB venueId={currentVenueId} locale={locale} />
-          <PlaceServiceActionsB placeId={currentVenueId} locale={locale} onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open" />
           <JourneyVisitEntryB key={`journey-${currentVenueId}`} locale={locale} venueId={currentVenueId} />
           {placeTable ? (
-            <section className={styles.tableActions} aria-label={locale === "ko" ? "이 장소의 테이블" : locale === "ja" ? "この場所のテーブル" : "Table at this place"} data-place-return-section="table">
+            <section className={styles.tableActions} aria-label={locale === "ko" ? "이 장소의 식사 계획" : locale === "ja" ? "この場所の食事プラン" : "Dining plans at this place"} data-place-return-section="table">
               <button type="button" className={styles.tablePrimary} onClick={openTableFromPlace} data-testid="canonical-place-table" data-place-service="table">
                 <UsersRound size={18} aria-hidden="true" />
                 <span><strong>{copy.table}</strong><small>{tableUpcoming ? ondoBTableTimeline(placeTable, productTimeline, locale).schedule : copy.tableClosedBody}</small></span>
