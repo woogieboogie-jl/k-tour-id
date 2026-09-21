@@ -4,6 +4,8 @@
 > 검증한 앱 소스: `f83efff0` (최종 통합 코드/UX, 문서 커밋과 구분).
 > 이 문서는 **실제 통합 상태**의 기준입니다. 기존 제품 기획의 가이드 저장 v2와 실제 Harvey 혜택 사용 v1을 같은 구현으로 취급하지 않습니다.
 
+**9/21 후속 연동 감사:** 아래 build3의 선택된 테스트 통과와 별개로, 신규 OmniOne Outbox 감사에서 **5 통과 / 2 실패**를 확인했습니다. 동시 제출 claim 부재와 receipt 없는 `confirmed` 승격은 **현재 미수정**이며 이전 통과 집계가 이 결함을 덮지 않습니다. 현재 공개 CX는 mock, OmniOne stage의 무인증 읽기는 401로 실제 receipt 재확인이 차단됐습니다. [CX·OmniOne 최신 검증](CX_CHAIN_INTEGRATION_VERIFICATION_2026-09-21.md), [Sui 최신 검증과 독립 실검증 범위](SUI_INTEGRATION_VERIFICATION_2026-09-21.md)를 함께 확인하세요. 이번 후속 감사도 신규 체인 거래·배포는 수행하지 않았습니다.
+
 ## 1. 합친 것과 유지한 것
 
 - Harvey 최종 소스: [`JSHan94/k-tour-id@f4526af3`](https://github.com/JSHan94/k-tour-id/commit/f4526af3ecd35b73459776bd3b8e8c18dd245a0d), `feat/hackathon-integration-harvey`. 병합 커밋 `323d3f2e`.
