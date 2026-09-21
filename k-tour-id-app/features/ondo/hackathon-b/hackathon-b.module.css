@@ -22,6 +22,8 @@
 
 /* body */
 .body { min-height:0; min-width:0; overflow:auto; overscroll-behavior:contain; overflow-wrap:anywhere; padding:14px 16px calc(16px + env(safe-area-inset-bottom)); display:grid; gap:12px; align-content:start; -webkit-overflow-scrolling:touch; }
+.stepNav { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 12px; border-bottom:1px solid var(--ondo-line, var(--border, #dedede)); background:var(--ondo-surface, var(--card, #fff)); }
+.stepNav .ghost, .stepNav .secondary { flex:0 1 auto; font-size:13px; min-height:44px; }
 .card { min-width:0; border:1px solid var(--ondo-line, var(--border, #dedede)); border-radius:14px; padding:14px; background:var(--ondo-surface, var(--card, #fff)); display:grid; gap:10px; }
 .card h3 { margin:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:15px; font-weight:740; line-height:1.3; }
 .card p { margin:0; font-size:13.5px; line-height:1.55; color:var(--ondo-muted, var(--muted-foreground, #626262)); word-break:keep-all; }

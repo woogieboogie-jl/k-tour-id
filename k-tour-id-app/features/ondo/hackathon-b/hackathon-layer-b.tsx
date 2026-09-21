@@ -14,6 +14,7 @@ import { useDocumentScrollLock, useModalIsolation } from "../shared/ui/use-modal
 import { HACKATHON_ENABLED, HACKATHON_DEMO_ENTRY, HACKATHON_OPEN_EVENT_B, manualHackathonDetail, openHackathonVenueB, readPendingHackathon, writePendingHackathon, type HackathonOpenDetail } from "./hackathon-campaign"
 import { ApiError, api, beginZkLogin, canonicalJson, clearJourneySecrets, createDemoSigner, ensureHolderKey, finishZkLogin, holderSign, readSigner, sha256Hex, signPersonalMessage, signTransactionBytes, fromBase64, type EntitlementInfo, type PublicConfig, type StoredSigner } from "./hackathon-client"
 import styles from "./hackathon-b.module.css"
+import { journeyStepIndex } from "./hackathon-navigation"
 
 type Locale = "ko" | "en" | "ja"
 const T = {
@@ -55,8 +56,6 @@ const T = {
 } as const
 const copyFor = (l: Locale) => T[l]
 
-const STEP_OF_PHASE: Record<string, number> = { consent: 0, identity: 1, issuance: 2, presentation: 3, proposal: 4, delegation: 5, agent: 6, fulfillment: 7, done: 8, cancelled: 1, failed: 1, expired: 1 }
-
 export function HackathonEntitlementLayerB() {
   const [open, setOpen] = useState<HackathonOpenDetail | null>(null)
   const openerRef = useRef<HTMLElement | null>(null)
@@ -75,7 +74,7 @@ export function HackathonEntitlementLayerB() {
     // `/hackathon` deep link → jump to the designated venue so the CTA is one tap away
     else if (hk === "start" && HACKATHON_DEMO_ENTRY) openHackathonVenueB(300)
     // Legacy automatic-entry links are view-only shortcuts. They never open or approve a journey.
-    else if ((hk === "auto" || hk === "auto-execute") && HACKATHON_DEMO_ENTRY) openHackathonVenueB(300)
+    else if ((hk === "auto" || hk === "auto-execute" || hk === "step") && HACKATHON_DEMO_ENTRY) openHackathonVenueB(300)
     if (hk) { url.searchParams.delete("hk"); window.history.replaceState(null, "", url.toString()) }
     return () => window.removeEventListener(HACKATHON_OPEN_EVENT_B, onOpen)
   }, [])
@@ -118,6 +117,9 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   const [approve, setApprove] = useState(false)
   const [evidence, setEvidence] = useState<Record<string, unknown> | null>(null)
   const [signer, setSigner] = useState<StoredSigner | null>(null)
+  const [viewStep, setViewStep] = useState<number | null>(null)
+  const inFlightRef = useRef(false)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const vcRef = useRef<unknown>(null)
   const isMobile = typeof navigator !== "undefined" && /Android|iPhone|iPad/i.test(navigator.userAgent)
   // Sit above the place sheet in the app's modal stack: the sheet (and dock)
@@ -127,9 +129,16 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   useDocumentScrollLock(true)
 
   const run = useCallback(async (label: string, fn: () => Promise<void>) => {
+    // React state updates are asynchronous: a same-frame double tap must not sign twice.
+    if (inFlightRef.current) return
+    inFlightRef.current = true
     setBusy(label); setError(null)
-    try { await fn() } catch (e) { setError(e instanceof ApiError ? `${e.message} (${e.code})` : e instanceof Error ? e.message : "unknown error") } finally { setBusy(null) }
+    try { await fn() } catch (e) { setError(e instanceof ApiError ? `${e.message} (${e.code})` : e instanceof Error ? e.message : "unknown error") } finally { inFlightRef.current = false; setBusy(null) }
   }, [])
+
+  // Scope or recipient changes cannot inherit a previous checkbox approval.
+  useEffect(() => { setApprove(false) }, [op?.proposal?.proposalDigest, op?.presentation?.decisionRef, signer?.address])
+  useEffect(() => { setViewStep(null); bodyRef.current?.scrollTo({ top: 0 }) }, [op?.phase, op?.status])
 
   // bootstrap: config + entitlement + resume
   useEffect(() => {
@@ -166,8 +175,10 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
     if (!op) return
     const holder = await ensureHolderKey(op.operationId)
     const issued = await api.issue(op.operationId, holder.publicKeyPem, holder.alg)
+    // Never acknowledge holder storage if the browser rejected it. Retrying uses
+    // the same holder and the server's idempotent issuance envelope.
+    sessionStorage.setItem(`ondo-b.hackathon.vc:${op.operationId}`, JSON.stringify(issued.vc))
     vcRef.current = issued.vc
-    try { sessionStorage.setItem(`ondo-b.hackathon.vc:${op.operationId}`, JSON.stringify(issued.vc)) } catch { /* ignore */ }
     const cred = issued.result.credential!
     const ackPayload = canonicalJson({ typ: "ondo-kpass-holder-ack/v1", credentialRef: cred.credentialRef, vcId: cred.vcId, holderBinding: cred.holderBinding })
     setOp(await api.holderAck(op.operationId, await holderSign(holder, ackPayload)))
@@ -175,6 +186,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
 
   const present = () => run("present", async () => {
     if (!op) return
+    if (!vcRef.current) throw new Error(tr("보관된 패스를 찾지 못했어요. 중지 후 다시 시작해 주세요.", "The saved pass is unavailable. Stop this journey and start again.", "保存したパスが見つかりません。中止してからやり直してください。"))
     const holder = await ensureHolderKey(op.operationId)
     const req = await api.presentationRequest(op.operationId)
     const p = req.result.presentation!
@@ -218,14 +230,21 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   const sampleSeed = op ? `sample-${op.operationId}`.slice(0, 64) : "sample-person-1"
   const approveSample = () => identityComplete({ outcome: "verified", subjectSeed: sampleSeed })
 
-  const stepIndex = op ? STEP_OF_PHASE[op.phase] ?? 0 : 0
+  const stepIndex = journeyStepIndex(op)
+  const reviewing = viewStep !== null && viewStep < stepIndex
+  const shownStep = reviewing ? viewStep : stepIndex
+  const reviewStep = (step: number | null) => {
+    setApprove(false)
+    setViewStep(step)
+    bodyRef.current?.scrollTo({ top: 0 })
+  }
   const modes = info?.modes ?? config?.modes ?? {}
   const isolated = config?.isolatedMock !== false
   const stateOf = (i: number) => (op?.status === "cancelled" || op?.status === "failed" || op?.status === "expired" ? (i < stepIndex ? "done" : i === stepIndex ? "blocked" : "todo") : i < stepIndex ? "done" : i === stepIndex ? "current" : "todo")
   const title = useMemo(() => info?.campaign?.title?.[locale] ?? c.title, [info, locale, c.title])
 
   return (
-    <div ref={rootRef} className={styles.root} role="dialog" aria-modal="true" aria-label={c.title} lang={locale} data-testid="hackathon-layer" data-locale={locale} data-phase={op?.phase ?? "consent"} data-status={op?.status ?? "pending"} data-chain-status={op?.chain?.status ?? "none"} data-modal-layer-priority={ONDO_MODAL_PRIORITY.critical} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); close(true) } }}>
+    <div ref={rootRef} className={styles.root} role="dialog" aria-modal="true" aria-label={c.title} lang={locale} data-testid="hackathon-layer" data-locale={locale} data-phase={op?.phase ?? "consent"} data-reviewing={reviewing} data-status={op?.status ?? "pending"} data-chain-status={op?.chain?.status ?? "none"} data-modal-layer-priority={ONDO_MODAL_PRIORITY.critical} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); close(true) } }}>
       <div className={styles.sheet}>
         <header className={styles.head}>
           <div className={styles.headRow}>
@@ -238,7 +257,26 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
           </div>
           <span className={styles.badge} data-tone="sample">{tr("체험용 · 실제 혜택 아님", "Preview · not a real perk", "体験用・実際の特典ではありません")}</span>
         </header>
-        <div className={styles.body}>
+        {op && stepIndex > 0 ? <nav className={styles.stepNav} aria-label={tr("진행 단계 돌아보기", "Review journey steps", "進んだステップを確認")}>
+          <button type="button" className={styles.ghost} disabled={shownStep <= 0 || !!busy} onClick={() => reviewStep(Math.max(0, shownStep - 1))} data-testid="hackathon-step-back">{tr("이전 단계 보기", "Review previous", "前のステップを見る")}</button>
+          {reviewing ? <button type="button" className={styles.secondary} onClick={() => reviewStep(null)} data-testid="hackathon-step-live">{tr("현재 단계로", "Back to current", "現在のステップへ")}</button> : null}
+        </nav> : null}
+        <div ref={bodyRef} className={styles.body}>
+          {reviewing && op ? <section className={styles.card} data-testid="hackathon-step-review">
+            <h3>{c.steps[shownStep]}</h3>
+            <p>{tr("이미 진행한 단계의 기록입니다. 돌아보아도 인증·동의·실행이 다시 이루어지지 않습니다.", "A read-only record of an earlier step. Reviewing never repeats verification, consent or execution.", "進んだステップの記録です。確認しても本人確認・同意・実行は繰り返されません。")}</p>
+            <dl className={styles.kv}>
+              <dt>{tr("장소의 혜택", "Place perk", "この場所の特典")}</dt><dd>{title}</dd>
+              {shownStep === 0 ? <><dt>{tr("동의 시각", "Consented at", "同意した日時")}</dt><dd>{op.consent?.acceptedAt ?? "—"}</dd></> : null}
+              {shownStep === 1 ? <><dt>{tr("확인 방식", "Check type", "確認方法")}</dt><dd>{op.identity?.mode === "mock" ? c.sampleNote : tr("연결된 신분증 서비스", "Connected identity service", "接続された身分証サービス")}</dd></> : null}
+              {shownStep === 2 ? <><dt>{tr("패스 유효기한", "Pass valid until", "パスの有効期限")}</dt><dd>{op.credential?.validUntil ?? "—"}</dd></> : null}
+              {shownStep === 3 ? <><dt>{tr("제시 결과", "Presentation decision", "提示の結果")}</dt><dd>{op.presentation?.decision ?? "—"}</dd></> : null}
+              {shownStep === 4 ? <><dt>{tr("확인한 제안", "Reviewed proposal", "確認した提案")}</dt><dd>{op.proposal?.output.summary ?? "—"}</dd></> : null}
+              {shownStep === 5 ? <><dt>{tr("수령 계정", "Recipient", "受取アカウント")}</dt><dd>{op.delegation?.recipient ?? "—"}</dd><dt>{tr("횟수", "Uses", "回数")}</dt><dd>1</dd></> : null}
+              {shownStep === 6 ? <><dt>{tr("진행 결과", "Execution result", "実行結果")}</dt><dd>{op.agent?.status ?? "—"}</dd></> : null}
+              {shownStep === 7 ? <><dt>{tr("체험 번호", "Experience ref", "体験番号")}</dt><dd>{op.fulfillment?.redemptionRef ?? "—"}</dd></> : null}
+            </dl>
+          </section> : <>
           {isolated ? <div className={styles.notice} data-testid="hackathon-isolated-notice">{tr("외부 서비스에 연결하지 않는 샘플 체험입니다. 실제 신원 확인이나 혜택 사용은 이루어지지 않습니다.", "This isolated sample does not connect to external services or verify a real identity or perk use.", "外部サービスに接続しないサンプル体験です。実際の本人確認や特典利用は行いません。")}</div> : null}
           {error ? <div className={styles.notice} data-tone="error" role="alert">{error}</div> : null}
 
@@ -337,6 +375,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
               </div>
             </section>
           ) : null}
+          </>}
 
           {op ? <details className={styles.card} data-testid="hackathon-technical-details">
             <summary>{tr("기술 정보", "Technical details", "技術情報")}</summary>
