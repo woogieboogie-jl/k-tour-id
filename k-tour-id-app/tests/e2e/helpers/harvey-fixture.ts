@@ -20,6 +20,8 @@ export class HarveyFixture {
   readonly pageErrors: string[] = []
   operation: OperationResult | null = null
   private failOnce = new Map<string, string>()
+  private identityResultOnce: "failed" | "expired" | null = null
+  private presentationDenialOnce: string | null = null
   private readonly now = new Date().toISOString()
   private readonly expiresAt = new Date(Date.now() + 60 * 60_000).toISOString()
   readonly config: PublicConfig = {
@@ -45,6 +47,9 @@ export class HarveyFixture {
   failNext(action: string, message = "Fixture temporary failure: retry the same step") {
     this.failOnce.set(`/operations/${OPERATION_ID}/${action}`, message)
   }
+  /** Inject DTO outcomes only; this does not test a provider or an expiry clock. */
+  identityResultNext(outcome: "failed" | "expired") { this.identityResultOnce = outcome }
+  denyNextPresentation(reason = "holder_signature") { this.presentationDenialOnce = reason }
   actionCount(action: string) { return this.count(`/operations/${OPERATION_ID}/${action}`) }
 
   async install() {
@@ -177,7 +182,16 @@ export class HarveyFixture {
         requirePhase("identity")
         expect(body?.sample).toMatchObject({ outcome: "verified" })
         expect(op.identity?.handoff?.kind).toBe("mock")
-        await send(this.advance("issuance", { identity: { ...op.identity!, personVerified: true } })); return
+        if (this.identityResultOnce) {
+          const outcome = this.identityResultOnce
+          this.identityResultOnce = null
+          // Match service.ts recovery shape: an unsuccessful/expired handoff
+          // clears identity but leaves the same pending operation restartable.
+          await send(this.advance("identity", { identity: null, safeNextAction: "wait", allowedActions: ["open_handoff", "cancel"],
+            error: outcome === "failed" ? { code: "identity_failed", message: "mobile id check failed", retryable: true } : null,
+          })); return
+        }
+        await send(this.advance("issuance", { identity: { ...op.identity!, personVerified: true }, error: null })); return
       }
       case "credential/issue": {
         requirePhase("issuance")
@@ -197,7 +211,7 @@ export class HarveyFixture {
       case "presentation/request": {
         requirePhase("presentation")
         const result = this.advance("presentation", { presentation: {
-          presentationId: "fixture-presentation", nonce: "fixture-nonce", requestDigest: fixtureDigest,
+          presentationId: `fixture-presentation-${this.actionCount("presentation/request")}`, nonce: `fixture-nonce-${this.actionCount("presentation/request")}`, requestDigest: fixtureDigest,
           requestedClaims: ["schemaVersion", "personVerified", "serviceAccess", "validUntil", "policyVersion", "statusRef"],
           expiresAt: this.expiresAt, submittedAt: null, verifiedAt: null, decision: null,
           decisionRef: null, decisionExpiresAt: null, decisionConsumedAt: null, denyReason: null,
@@ -206,7 +220,12 @@ export class HarveyFixture {
       }
       case "presentation/submit": {
         requirePhase("presentation")
-        expect(body).toMatchObject({ presentationId: "fixture-presentation", disclosed: { personVerified: true } })
+        expect(body).toMatchObject({ presentationId: op.presentation?.presentationId, disclosed: { personVerified: true } })
+        if (this.presentationDenialOnce) {
+          const denyReason = this.presentationDenialOnce
+          this.presentationDenialOnce = null
+          await send(this.advance("presentation", { presentation: { ...op.presentation!, submittedAt: this.now, decision: "deny", denyReason } })); return
+        }
         await send(this.advance("proposal", { presentation: { ...op.presentation!, submittedAt: this.now, verifiedAt: this.now, decision: "allow", decisionRef: "fixture-decision", decisionExpiresAt: this.expiresAt } })); return
       }
       case "presentation/deny": {

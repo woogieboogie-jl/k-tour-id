@@ -25,7 +25,7 @@ async function returnToPlace(page: Page) {
   await expect(page.getByTestId("hackathon-entitlement-open")).toBeFocused()
 }
 
-async function reachPresentation(page: Page, fixture: HarveyFixture) {
+async function beginIdentityHandoff(page: Page, fixture: HarveyFixture) {
   await expect(page.getByTestId("hackathon-start")).toBeDisabled()
   expect(fixture.count("/operations")).toBe(0)
   await page.locator("#hk-consent").check()
@@ -36,6 +36,11 @@ async function reachPresentation(page: Page, fixture: HarveyFixture) {
   await expect(page.getByTestId("hackathon-cx-qr-load")).toHaveCount(0)
   await expect(page.getByTestId("hackathon-identity-fail")).toHaveCount(0)
   await expect(page.getByTestId("hackathon-identity-cancel")).toHaveCount(0)
+  await expect(page.getByTestId("hackathon-identity-approve")).toBeVisible()
+}
+
+async function reachPresentation(page: Page, fixture: HarveyFixture) {
+  await beginIdentityHandoff(page, fixture)
   await page.getByTestId("hackathon-identity-approve").click()
   await phase(page, "issuance")
   expect(fixture.actionCount("credential/issue")).toBe(0)
@@ -62,7 +67,7 @@ async function reachApproval(page: Page, fixture: HarveyFixture) {
   expect(fixture.actionCount("delegation/prepare")).toBe(0)
 }
 
-async function completeFixture(page: Page, fixture: HarveyFixture) {
+async function reachPendingRecord(page: Page, fixture: HarveyFixture) {
   await page.locator("#hk-approve").check()
   await page.getByTestId("hackathon-delegate").click()
   await phase(page, "agent")
@@ -76,6 +81,10 @@ async function completeFixture(page: Page, fixture: HarveyFixture) {
   expect(fixture.operation?.fulfillment?.status).toBe("redeemed")
   expect(fixture.actionCount("reconcile")).toBe(0)
   await assertFits(page)
+}
+
+async function completeFixture(page: Page, fixture: HarveyFixture) {
+  await reachPendingRecord(page, fixture)
   await page.getByTestId("hackathon-reconcile").click()
   await expect(layer(page)).toHaveAttribute("data-chain-status", "confirmed")
   for (const action of ["credential/issue", "credential/holder-ack", "presentation/request", "presentation/submit", "delegation/prepare", "delegation/submit", "agent/run", "redeem", "reconcile"]) {
@@ -211,6 +220,122 @@ test("HK-FIXTURE-08 configured Google has no demo-signer bypass and viewing neve
   expect(harvey.count("/zklogin/params")).toBe(0)
   expect(harvey.count("/zklogin/prove")).toBe(0)
   for (const action of ["delegation/prepare", "delegation/submit", "agent/run", "redeem"]) expect(harvey.actionCount(action)).toBe(0)
+})
+
+test("HK-FIXTURE-09 cancelling an identity handoff clears resume state without issuing a pass", async ({ page, harvey }) => {
+  await harvey.preferences()
+  await harvey.open()
+  await beginIdentityHandoff(page, harvey)
+  await page.getByTestId("hackathon-cancel").click()
+  await phase(page, "cancelled")
+  await expect(layer(page)).toHaveAttribute("data-status", "cancelled")
+  for (const action of ["identity/complete", "credential/issue", "presentation/request", "delegation/prepare", "agent/run", "redeem"]) expect(harvey.actionCount(action)).toBe(0)
+  await returnToPlace(page)
+  expect(await page.evaluate(() => sessionStorage.getItem("ondo-b.hackathon.pending.v1"))).toBeNull()
+})
+
+for (const outcome of ["failed", "expired"] as const) {
+  test(`HK-FIXTURE-10 identity ${outcome} response cannot promote proof and retries the same operation manually`, async ({ page, harvey }) => {
+    harvey.identityResultNext(outcome)
+    await harvey.preferences()
+    await harvey.open()
+    await beginIdentityHandoff(page, harvey)
+    await page.getByTestId("hackathon-identity-approve").click()
+    await expect(page.getByTestId("hackathon-identity-start")).toBeVisible()
+    await phase(page, "identity")
+    await expect(layer(page)).toHaveAttribute("data-status", "pending")
+    expect(harvey.operation?.identity).toBeNull()
+    await expect(page.getByTestId("hackathon-issue")).toHaveCount(0)
+    await page.waitForTimeout(250)
+    expect(harvey.actionCount("identity/start")).toBe(1)
+    expect(harvey.actionCount("credential/issue")).toBe(0)
+    await page.getByTestId("hackathon-identity-start").click()
+    await page.getByTestId("hackathon-identity-approve").click()
+    await phase(page, "issuance")
+    expect(harvey.count("/operations")).toBe(1)
+    expect(harvey.actionCount("identity/start")).toBe(2)
+    expect(harvey.actionCount("identity/complete")).toBe(2)
+    expect(harvey.actionCount("credential/issue")).toBe(0)
+    await page.getByTestId("hackathon-cancel").click()
+    await returnToPlace(page)
+  })
+}
+
+test("HK-FIXTURE-11 an audit retry never re-executes or redeems the already-used fixture perk", async ({ page, harvey }, info) => {
+  await harvey.preferences()
+  await harvey.open()
+  await reachApproval(page, harvey)
+  await reachPendingRecord(page, harvey)
+  const redemptionRef = harvey.operation?.fulfillment?.redemptionRef
+  harvey.failNext("reconcile", "Fixture audit unavailable: retry recording only")
+  await page.getByTestId("hackathon-reconcile").click()
+  await expect(layer(page).getByRole("alert")).toContainText("Fixture audit unavailable")
+  await phase(page, "done")
+  await expect(layer(page)).toHaveAttribute("data-chain-status", "pending")
+  await expect(page.getByTestId("hackathon-agent-run")).toHaveCount(0)
+  await expect(page.getByTestId("hackathon-redeem")).toHaveCount(0)
+  await page.getByTestId("hackathon-reconcile").click()
+  await expect(layer(page)).toHaveAttribute("data-chain-status", "confirmed")
+  await expect(layer(page).getByRole("alert")).toHaveCount(0)
+  expect(harvey.operation?.fulfillment?.redemptionRef).toBe(redemptionRef)
+  expect(harvey.actionCount("reconcile")).toBe(2)
+  for (const action of ["delegation/prepare", "delegation/submit", "agent/run", "redeem"]) expect(harvey.actionCount(action)).toBe(1)
+  await page.screenshot({ path: info.outputPath("fixture-audit-retry-no-duplicate.png"), scale: "css" })
+  await returnToPlace(page)
+})
+
+test("HK-FIXTURE-12 reload after pass storage and signing reads progress without repeating either action", async ({ page, harvey }) => {
+  await harvey.preferences()
+  await harvey.open()
+  await reachPresentation(page, harvey)
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await phase(page, "presentation")
+  expect(harvey.actionCount("credential/issue")).toBe(1)
+  expect(harvey.actionCount("credential/holder-ack")).toBe(1)
+  expect(harvey.actionCount("presentation/request")).toBe(0)
+  await page.getByTestId("hackathon-present").click()
+  await page.getByTestId("hackathon-propose").click()
+  await page.getByTestId("hackathon-signer-demo").click()
+  await page.locator("#hk-approve").check()
+  await page.getByTestId("hackathon-delegate").click()
+  await phase(page, "agent")
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await phase(page, "agent")
+  await page.waitForTimeout(250)
+  expect(harvey.count("/operations")).toBe(1)
+  expect(harvey.actionCount("credential/issue")).toBe(1)
+  expect(harvey.actionCount("delegation/prepare")).toBe(1)
+  expect(harvey.actionCount("delegation/submit")).toBe(1)
+  expect(harvey.actionCount("agent/run")).toBe(0)
+  await page.getByTestId("hackathon-agent-run").click()
+  await phase(page, "fulfillment")
+  expect(harvey.actionCount("agent/run")).toBe(1)
+  expect(harvey.actionCount("redeem")).toBe(0)
+})
+
+test("HK-FIXTURE-13 a synthetic proof denial stays at presentation until an explicit fresh request", async ({ page, harvey }) => {
+  await harvey.preferences()
+  await harvey.open()
+  await reachPresentation(page, harvey)
+  // This supplies the denial DTO, not an invalid signature to a real verifier.
+  harvey.denyNextPresentation("holder_signature")
+  await page.getByTestId("hackathon-present").click()
+  await expect(layer(page)).toContainText("Pass presentation was not approved")
+  await phase(page, "presentation")
+  const deniedId = harvey.operation?.presentation?.presentationId
+  expect(harvey.operation?.presentation).toMatchObject({ decision: "deny", denyReason: "holder_signature" })
+  await expect(page.getByTestId("hackathon-propose")).toHaveCount(0)
+  expect(harvey.actionCount("proposal")).toBe(0)
+  expect(harvey.actionCount("delegation/prepare")).toBe(0)
+  await page.getByTestId("hackathon-present").click()
+  await phase(page, "proposal")
+  expect(harvey.operation?.presentation?.presentationId).not.toBe(deniedId)
+  expect(harvey.actionCount("presentation/request")).toBe(2)
+  expect(harvey.actionCount("presentation/submit")).toBe(2)
+  expect(harvey.actionCount("proposal")).toBe(0)
+  expect(harvey.count("/operations")).toBe(1)
+  await page.getByTestId("hackathon-cancel").click()
+  await returnToPlace(page)
 })
 
 for (const layout of [{ locale: "ja", width: 320, height: 568 }, { locale: "ko", width: 390, height: 844 }] as const) {
