@@ -1,5 +1,7 @@
 # Hackathon demo deployment record (2026-09-16)
 
+> Historical deployment record, not the current integrated implementation. See [2026-09-21 local integration](../../docs/HARVEY_FINAL_INTEGRATION_2026-09-21.md). The integrated branch uses explicit approval instead of autopilot, rotates unknown session cookies, fences expired Redis writers and journals transaction digests before broadcast. It has not been deployed. Credentials must stay server-side and must be rotated if exposed; testnet/demo credentials are **not** leak-tolerant. The capability/configuration rows below describe 9/16, not newly verified provider readiness.
+
 Production: https://ktourid.vercel.app (ondo-hackathon-demo.vercel.app 308-redirects here)  
 Branding: `main` (K-Tour ID logo/name, TG request from @woogieboogie_jl) merged into the hackathon branch on 2026-09-16 (PR #1 on the fork); the demo perk copy is "K-Tour ID 체험 혜택".  
 Autopilot: `/?hk=auto` (runs to 사용 확정 + OmniOne 기록), `/?hk=auto-execute` (stops after Sui 실행), or the floating "전체 플로우 자동 실행" button.

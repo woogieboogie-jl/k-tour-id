@@ -1,5 +1,7 @@
 # K-Tour ID
 
+**Current local integration (2026-09-21):** `integration/harvey-final-20260921` contains Harvey's final `f4526af3` plus the preserved mobile UX and explicit-approval/recovery hardening. It is not pushed or deployed. Start with [the integration status, local commands and remaining provider work](./docs/HARVEY_FINAL_INTEGRATION_2026-09-21.md); the production links and original handoff instructions below are historical baselines. The integrated v1 perk journey is distinct from the v2 guide-saving mock. Real OpenDID remains unimplemented; CX and the integrated chain path require separate live-environment verification.
+
 K-Tour ID is a map-first Korea food and travel product. It combines 400 official Seoul and Busan food-service records with a clearly separated Jeju editorial collection, then connects discovery to saved places, Tables and an optional privacy-preserving travel credential flow.
 
 This release is a clickable **mock**. Identity, funding, payment, reservation and chain outcomes are simulated; a sample credential, ticket or receipt is not external confirmation. CX, OpenDID, OmniOne Chain and Sui remain required developer integrations.
