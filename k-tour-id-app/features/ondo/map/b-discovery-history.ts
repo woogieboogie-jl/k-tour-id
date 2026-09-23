@@ -3,6 +3,7 @@ import { SAMPLE_ENVIRONMENT_ENABLED } from "../contracts/sample-environment"
 import { isEditorialPlaceId, type EditorialPlaceB } from "../pulse-b/japan-first-pulse-model-b"
 import { isCanonicalVenueId, type CanonicalVenueId } from "@/lib/ondo/venues/canonical-allowlist"
 import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
+import { discoveryCollectionCityB, discoveryPlaceByIdB, isDiscoveryCollectionIdB, type DiscoveryCollectionIdB } from "./discovery-collection-model-b"
 import {
   MY_KOREA_PLACE_RETURN_HISTORY_KEY,
   createMyKoreaPlaceReturnJourneyId,
@@ -33,6 +34,7 @@ type BDiscoveryFocus =
   | { kind: "city"; city: BDiscoveryCity }
   | { kind: "venue"; venueId: string }
   | { kind: "editorial-place"; editorialPlaceId: EditorialPlaceB["id"] }
+  | { kind: "discovery-place"; discoveryPlaceId: string }
   | { kind: "search" }
   | { kind: "editorial" }
   | { kind: "view-toggle" }
@@ -52,6 +54,9 @@ export type BDiscoveryHistoryEntry = {
   camera?: BDiscoveryCamera
   venueId?: string
   editorialPlaceId?: EditorialPlaceB["id"]
+  collection?: DiscoveryCollectionIdB
+  discoveryPlaceId?: string
+  collectionSelection?: string
   focus?: BDiscoveryFocus
 }
 
@@ -143,6 +148,28 @@ function editorialPlaceValue(value: unknown): EditorialPlaceB["id"] | undefined 
   return isEditorialPlaceId(value) ? value : undefined
 }
 
+function collectionValue(value: unknown, city: BDiscoveryCity | undefined): DiscoveryCollectionIdB | undefined {
+  if (!city || !isDiscoveryCollectionIdB(value)) return undefined
+  const collectionCity = discoveryCollectionCityB(value)
+  return !collectionCity || collectionCity === city ? value : undefined
+}
+
+function collectionSelectionValue(value: unknown, city: BDiscoveryCity | undefined): string | undefined {
+  if (typeof value !== "string" || !city) return undefined
+  const place = discoveryPlaceByIdB(value)
+  return place?.city === city ? place.id : undefined
+}
+
+function discoveryPlaceValue(value: unknown, city: BDiscoveryCity | undefined): string | undefined {
+  const id = collectionSelectionValue(value, city)
+  return id && discoveryPlaceByIdB(id)?.kind !== "sight" ? id : undefined
+}
+
+function withoutCollection(entry: BDiscoveryHistoryEntry): BDiscoveryHistoryEntry {
+  const { collection: _collection, collectionSelection: _selection, discoveryPlaceId: _place, ...rest } = entry
+  return rest
+}
+
 function queryValue(value: unknown): string {
   return typeof value === "string" ? value.slice(0, MAX_QUERY_LENGTH) : ""
 }
@@ -161,6 +188,10 @@ function focusValue(value: unknown): BDiscoveryFocus | undefined {
     const editorialPlaceId = editorialPlaceValue(value.editorialPlaceId)
     return editorialPlaceId ? { kind: "editorial-place", editorialPlaceId } : undefined
   }
+  if (value.kind === "discovery-place" && typeof value.discoveryPlaceId === "string") {
+    const place = discoveryPlaceByIdB(value.discoveryPlaceId)
+    return place && place.kind !== "sight" ? { kind: "discovery-place", discoveryPlaceId: place.id } : undefined
+  }
   if (value.kind === "search" || value.kind === "editorial" || value.kind === "view-toggle") return { kind: value.kind }
   return undefined
 }
@@ -172,10 +203,15 @@ function sanitizeEntry(value: unknown): BDiscoveryHistoryEntry | null {
   const city = cityValue(value.city)
   const venueId = venueValue(value.venueId)
   const editorialPlaceId = editorialPlaceValue(value.editorialPlaceId)
+  const collection = level === "nation" ? undefined : collectionValue(value.collection, city)
+  const discoveryPlaceId = collection ? discoveryPlaceValue(value.discoveryPlaceId, city) : undefined
+  const collectionSelection = collection ? collectionSelectionValue(value.collectionSelection, city) : undefined
   if (level !== "nation" && !city) return null
-  if ((level === "peek" || level === "detail") && (!venueId === !editorialPlaceId)) return null
+  if ((level === "peek" || level === "detail") && [venueId, editorialPlaceId, discoveryPlaceId].filter(Boolean).length !== 1) return null
+  if (discoveryPlaceId && level === "detail") return null
   if (editorialPlaceId && city !== "jeju") return null
-  const focus = focusValue(value.focus)
+  const rawFocus = focusValue(value.focus)
+  const focus = rawFocus?.kind === "discovery-place" && (!collection || !discoveryPlaceValue(rawFocus.discoveryPlaceId, city)) ? undefined : rawFocus
   const sheetSnap = sheetSnapForLevel(level)
   const camera = level === "nation" ? cameraValue(value.camera) : cameraValue(value.camera)
   return {
@@ -193,6 +229,9 @@ function sanitizeEntry(value: unknown): BDiscoveryHistoryEntry | null {
     ...(camera ? { camera } : {}),
     venueId: level === "peek" || level === "detail" ? venueId : undefined,
     editorialPlaceId: level === "peek" || level === "detail" ? editorialPlaceId : undefined,
+    ...(collection && !venueId ? { collection } : {}),
+    ...(collection && !venueId && collectionSelection ? { collectionSelection } : {}),
+    ...(level === "peek" && discoveryPlaceId ? { discoveryPlaceId } : {}),
     focus: level === "nation"
       ? focus?.kind === "city" ? focus : undefined
       : level === "city" ? focus : undefined,
@@ -215,6 +254,9 @@ function canonicalEntry(entry: BDiscoveryHistoryEntry, nextDocumentId = entry.do
     ...(entry.camera ? { camera: entry.camera } : {}),
     ...(entry.venueId ? { venueId: entry.venueId } : {}),
     ...(entry.editorialPlaceId ? { editorialPlaceId: entry.editorialPlaceId } : {}),
+    ...(entry.collection ? { collection: entry.collection } : {}),
+    ...(entry.discoveryPlaceId ? { discoveryPlaceId: entry.discoveryPlaceId } : {}),
+    ...(entry.collectionSelection ? { collectionSelection: entry.collectionSelection } : {}),
     ...(entry.focus ? { focus: entry.focus } : {}),
   }
 }
@@ -256,7 +298,11 @@ function dispatchBDiscoveryEntryTraversal(entry: BDiscoveryHistoryEntry, preserv
       }
       const target = focusBDiscoveryTarget(entry)
       if (target) {
-        target.focus({ preventScroll: true })
+        // Restore keyboard position without treating traversal as a fresh
+        // request to open a search menu (which would cover restored results).
+        target.dataset.discoveryRestoringFocus = "true"
+        try { target.focus({ preventScroll: true }) }
+        finally { delete target.dataset.discoveryRestoringFocus }
         if (document.activeElement === target) {
           cleanup()
           return
@@ -414,6 +460,8 @@ function entryUrl(entry: BDiscoveryHistoryEntry) {
     if (entry.query) url.searchParams.set("q", entry.query)
     if (entry.category !== "all") url.searchParams.set("category", entry.category)
     if (entry.city === "jeju" && entry.editorialCategory !== "all") url.searchParams.set("editorialCategory", entry.editorialCategory)
+    if (entry.collection) url.searchParams.set("collection", entry.collection)
+    if (entry.collection && entry.collectionSelection) url.searchParams.set("collectionSelection", entry.collectionSelection)
   }
   if ((entry.level === "peek" || entry.level === "detail") && entry.venueId) {
     url.searchParams.set("venueId", entry.venueId)
@@ -423,6 +471,7 @@ function entryUrl(entry: BDiscoveryHistoryEntry) {
     url.searchParams.set("editorialPlaceId", entry.editorialPlaceId)
     if (entry.level === "detail") url.searchParams.set("detail", "1")
   }
+  if (entry.level === "peek" && entry.collection && entry.discoveryPlaceId) url.searchParams.set("discoveryPlaceId", entry.discoveryPlaceId)
   return `${url.pathname}${url.search}`
 }
 
@@ -505,6 +554,8 @@ export type BDiscoveryCityContext = {
   listScroll?: number
   camera?: BDiscoveryCamera
   focus?: "search" | "view-toggle"
+  collection?: DiscoveryCollectionIdB
+  collectionSelection?: string
 }
 
 export function restoreBDiscoveryCityContext(input: BDiscoveryCityContext): BDiscoveryHistoryEntry | null
@@ -539,6 +590,7 @@ export function restoreBDiscoveryCityContext(input: unknown) {
     listScroll: listScrollValue(input.listScroll),
     ...(camera ? { camera } : {}),
     ...(focus ? { focus } : {}),
+    ...(collectionValue(input.collection, city) ? { collection: collectionValue(input.collection, city), collectionSelection: collectionSelectionValue(input.collectionSelection, city) } : {}),
   } satisfies BDiscoveryHistoryEntry)
 }
 
@@ -595,11 +647,16 @@ export function initializeBDiscoveryHistory(venueCity: (venueId: string) => BDis
   const url = new URL(window.location.href)
   const rawVenueId = venueValue(url.searchParams.get("venueId"))
   const rawEditorialPlaceId = editorialPlaceValue(url.searchParams.get("editorialPlaceId"))
-  const ambiguousTarget = Boolean(rawVenueId && rawEditorialPlaceId)
+  const rawDiscoveryPlace = discoveryPlaceByIdB(url.searchParams.get("discoveryPlaceId") ?? "")
+  const rawDiscoveryPlaceId = rawDiscoveryPlace && rawDiscoveryPlace.kind !== "sight" ? rawDiscoveryPlace.id : undefined
+  const ambiguousTarget = [rawVenueId, rawEditorialPlaceId, rawDiscoveryPlaceId].filter(Boolean).length > 1
   const requestedVenueId = ambiguousTarget ? undefined : rawVenueId
   const requestedEditorialPlaceId = ambiguousTarget ? undefined : rawEditorialPlaceId
   const resolvedVenueCity = requestedVenueId ? venueCity(requestedVenueId) : undefined
   const requestedCity = resolvedVenueCity ?? (requestedEditorialPlaceId ? "jeju" : cityValue(url.searchParams.get("city")))
+  const requestedCollection = requestedVenueId ? undefined : collectionValue(url.searchParams.get("collection"), requestedCity)
+  const requestedDiscoveryPlaceId = !ambiguousTarget && requestedCollection ? discoveryPlaceValue(rawDiscoveryPlaceId, requestedCity) : undefined
+  const requestedCollectionSelection = requestedCollection ? collectionSelectionValue(url.searchParams.get("collectionSelection"), requestedCity) : undefined
   const requestedView = viewValue(url.searchParams.get("view"))
   const requestedCategory = categoryValue(url.searchParams.get("category"))
   const requestedEditorialCategory = editorialCategoryValue(url.searchParams.get("editorialCategory"))
@@ -615,7 +672,7 @@ export function initializeBDiscoveryHistory(venueCity: (venueId: string) => BDis
     level: "city",
     city: requestedCity,
     view: requestedView,
-    query: requestedQuery,
+    query: requestedCollection ? "" : requestedQuery,
     category: requestedCategory,
     editorialCategory: requestedCity === "jeju" ? requestedEditorialCategory : "all",
     layer: "standard",
@@ -624,15 +681,27 @@ export function initializeBDiscoveryHistory(venueCity: (venueId: string) => BDis
     focus: { kind: requestedCity === "jeju" ? "editorial" : "search" },
   }
   pushEntry(city)
+  let placeContext = city
+  if (requestedCollection) {
+    const collection = openBDiscoveryCollection(requestedCollection)
+    if (collection) {
+      placeContext = { ...collection, ...(requestedCollectionSelection ? { collectionSelection: requestedCollectionSelection } : {}) }
+      replaceEntry(placeContext)
+    }
+  }
+  if (requestedDiscoveryPlaceId) {
+    openBDiscoveryCollectionPlace(requestedDiscoveryPlaceId)
+    return readBDiscoveryHistory()!
+  }
   if (requestedEditorialPlaceId) {
-    const peek: BDiscoveryHistoryEntry = { ...city, level: "peek", editorialPlaceId: requestedEditorialPlaceId, focus: undefined }
+    const peek: BDiscoveryHistoryEntry = { ...placeContext, level: "peek", editorialPlaceId: requestedEditorialPlaceId, focus: undefined }
     pushEntry(peek)
     if (!wantsDetail) return peek
     const detail: BDiscoveryHistoryEntry = { ...peek, level: "detail" }
     pushEntry(detail)
     return detail
   }
-  if (!requestedVenueId || !resolvedVenueCity) return city
+  if (!requestedVenueId || !resolvedVenueCity) return placeContext
 
   const peek: BDiscoveryHistoryEntry = { ...city, level: "peek", venueId: requestedVenueId, focus: undefined }
   pushEntry(peek)
@@ -651,9 +720,13 @@ export function enterBDiscoveryCity(city: BDiscoveryCity) {
   return next
 }
 
-export function replaceBDiscoveryCityContext(input: Pick<BDiscoveryHistoryEntry, "city" | "view" | "query" | "category"> & Partial<Pick<BDiscoveryHistoryEntry, "editorialCategory" | "layer" | "listScroll" | "camera">> & { focus?: BDiscoveryFocus }) {
+export function replaceBDiscoveryCityContext(input: Pick<BDiscoveryHistoryEntry, "city" | "view" | "query" | "category"> & Partial<Pick<BDiscoveryHistoryEntry, "editorialCategory" | "layer" | "listScroll" | "camera">> & { focus?: BDiscoveryFocus; collection?: DiscoveryCollectionIdB | null; collectionSelection?: string | null }) {
   const current = readBDiscoveryHistory()
   if (current?.level !== "city" || !input.city) return current
+  const collection = collectionValue(input.collection === undefined && input.city === current.city ? current.collection : input.collection, input.city)
+  const collectionSelection = collection ? collectionSelectionValue(input.collectionSelection === undefined && collection === current.collection && input.city === current.city ? current.collectionSelection : input.collectionSelection, input.city) : undefined
+  const requestedFocus = input.focus ?? current.focus
+  const focus = requestedFocus?.kind === "discovery-place" && (!collection || !discoveryPlaceValue(requestedFocus.discoveryPlaceId, input.city)) ? undefined : requestedFocus
   const next: BDiscoveryHistoryEntry = {
     v: 4,
     documentId: documentId(),
@@ -667,10 +740,46 @@ export function replaceBDiscoveryCityContext(input: Pick<BDiscoveryHistoryEntry,
     sheetSnap: "closed",
     listScroll: listScrollValue(input.listScroll ?? current.listScroll),
     ...((input.camera ?? current.camera) ? { camera: cameraValue(input.camera ?? current.camera) } : {}),
-    focus: input.focus ?? current.focus,
+    focus,
+    ...(collection ? { collection } : {}),
+    ...(collectionSelection ? { collectionSelection } : {}),
   }
   replaceEntry(next)
   return next
+}
+
+/** Add one result scope above the exact city context; never silently switch cities. */
+export function openBDiscoveryCollection(id: DiscoveryCollectionIdB): BDiscoveryHistoryEntry | null {
+  const current = readBDiscoveryHistory()
+  const collection = collectionValue(id, current?.city)
+  if (current?.level !== "city" || !collection) return null
+  if (current.collection === collection) return current
+  const mood = collection === "hot" || collection === "cool"
+  // The new result scope will frame its own places; the parent retains the
+  // exact previous camera. Never reload a new collection at its parent's fit.
+  const { camera: _parentCamera, ...context } = withoutCollection(current)
+  const next: BDiscoveryHistoryEntry = {
+    ...context,
+    collection,
+    query: mood ? collection : "",
+    category: mood ? current.category : "all",
+    editorialCategory: mood ? current.editorialCategory : "all",
+    listScroll: 0,
+    focus: { kind: "search" },
+  }
+  pushEntry(next)
+  return next
+}
+
+/** Research/market details have a single peek; Jeju sights retain editorial navigation. */
+export function openBDiscoveryCollectionPlace(id: string) {
+  const current = readBDiscoveryHistory()
+  const discoveryPlaceId = discoveryPlaceValue(id, current?.city)
+  if (current?.level !== "city" || !current.collection || !discoveryPlaceId) return false
+  const selected: BDiscoveryHistoryEntry = { ...current, collectionSelection: discoveryPlaceId }
+  replaceEntry({ ...selected, focus: { kind: "discovery-place", discoveryPlaceId } })
+  pushEntry({ ...selected, level: "peek", discoveryPlaceId, focus: undefined })
+  return true
 }
 
 export function openBDiscoveryVenue(venueId: string) {
@@ -678,7 +787,7 @@ export function openBDiscoveryVenue(venueId: string) {
   const safeVenueId = venueValue(venueId)
   if (current?.level !== "city" || !current.city || !safeVenueId) return false
   replaceEntry({ ...current, focus: { kind: "venue", venueId: safeVenueId } })
-  pushEntry({ ...current, level: "peek", venueId: safeVenueId, focus: undefined })
+  pushEntry({ ...withoutCollection(current), level: "peek", venueId: safeVenueId, focus: undefined })
   return true
 }
 
@@ -691,7 +800,7 @@ export function openBDiscoveryAlternativeVenue(currentVenueId: string, alternati
     || current.venueId !== safeCurrentVenueId
     || !safeAlternativeVenueId
     || safeAlternativeVenueId === safeCurrentVenueId) return false
-  replaceEntry({ ...current, level: "peek", venueId: safeAlternativeVenueId, focus: undefined })
+  replaceEntry({ ...withoutCollection(current), level: "peek", venueId: safeAlternativeVenueId, focus: undefined })
   return true
 }
 
@@ -699,13 +808,14 @@ export function openBDiscoveryEditorialPlace(editorialPlaceId: EditorialPlaceB["
   const current = readBDiscoveryHistory()
   const safeEditorialPlaceId = editorialPlaceValue(editorialPlaceId)
   if (!safeEditorialPlaceId || current?.city !== "jeju") return false
+  const selected = current.collection ? { ...current, collectionSelection: collectionSelectionValue(safeEditorialPlaceId, current.city) } : current
   if (current.level === "peek") {
-    replaceEntry({ ...current, editorialPlaceId: safeEditorialPlaceId, focus: undefined })
+    replaceEntry({ ...selected, venueId: undefined, discoveryPlaceId: undefined, editorialPlaceId: safeEditorialPlaceId, focus: undefined })
     return true
   }
   if (current.level !== "city") return false
-  replaceEntry({ ...current, focus: { kind: "editorial-place", editorialPlaceId: safeEditorialPlaceId } })
-  pushEntry({ ...current, level: "peek", editorialPlaceId: safeEditorialPlaceId, focus: undefined })
+  replaceEntry({ ...selected, focus: { kind: "editorial-place", editorialPlaceId: safeEditorialPlaceId } })
+  pushEntry({ ...selected, level: "peek", editorialPlaceId: safeEditorialPlaceId, focus: undefined })
   return true
 }
 
@@ -739,9 +849,14 @@ function discoveryEntryFromCurrentUrl(): BDiscoveryHistoryEntry | null {
   const url = new URL(window.location.href)
   const requestedVenueId = venueValue(url.searchParams.get("venueId"))
   const requestedEditorialPlaceId = editorialPlaceValue(url.searchParams.get("editorialPlaceId"))
-  if (requestedVenueId && requestedEditorialPlaceId) return null
+  const rawDiscoveryPlace = discoveryPlaceByIdB(url.searchParams.get("discoveryPlaceId") ?? "")
+  const rawDiscoveryPlaceId = rawDiscoveryPlace && rawDiscoveryPlace.kind !== "sight" ? rawDiscoveryPlace.id : undefined
+  if ([requestedVenueId, requestedEditorialPlaceId, rawDiscoveryPlaceId].filter(Boolean).length > 1) return null
   const resolvedVenueCity = requestedVenueId ? canonicalMapVenueById(requestedVenueId)?.cityId : undefined
   const requestedCity = resolvedVenueCity ?? (requestedEditorialPlaceId ? "jeju" : cityValue(url.searchParams.get("city")))
+  const collection = requestedVenueId ? undefined : collectionValue(url.searchParams.get("collection"), requestedCity)
+  const discoveryPlaceId = collection ? discoveryPlaceValue(rawDiscoveryPlaceId, requestedCity) : undefined
+  const collectionSelection = collection ? collectionSelectionValue(url.searchParams.get("collectionSelection"), requestedCity) : undefined
   const nation: BDiscoveryHistoryEntry = {
     v: 4,
     documentId: documentId(),
@@ -763,7 +878,10 @@ function discoveryEntryFromCurrentUrl(): BDiscoveryHistoryEntry | null {
     query: queryValue(url.searchParams.get("q")),
     category: categoryValue(url.searchParams.get("category")),
     editorialCategory: requestedCity === "jeju" ? editorialCategoryValue(url.searchParams.get("editorialCategory")) : "all",
+    ...(collection ? { collection } : {}),
+    ...(collectionSelection ? { collectionSelection } : {}),
   }
+  if (discoveryPlaceId) return { ...city, level: "peek", sheetSnap: "peek", discoveryPlaceId }
   const wantsDetail = url.searchParams.get("detail") === "1"
   if (requestedEditorialPlaceId) return {
     ...city,
@@ -909,7 +1027,7 @@ export function openSavedBDiscoveryVenue(venueId: string, venueCity: BDiscoveryC
     replaceEntry({ v: 4, documentId: documentId(), level: "nation", view: "map", query: "", category: "all", editorialCategory: "all", layer: "standard", sheetSnap: "closed", listScroll: 0, focus: { kind: "city", city: safeVenueCity } })
     pushEntry(city)
   }
-  pushEntry({ ...city, level: "peek", venueId: safeVenueId, focus: undefined })
+  pushEntry({ ...withoutCollection(city), level: "peek", venueId: safeVenueId, focus: undefined })
   return true
 }
 
@@ -989,8 +1107,14 @@ export function focusBDiscoveryTarget(entry: BDiscoveryHistoryEntry) {
       ?? document.querySelector<HTMLElement>("[data-testid='ondo-b-view-toggle']")
   }
   if (focus.kind === "editorial-place") {
+    const collectionCard = entry.collection ? document.querySelector<HTMLElement>(`[data-discovery-place-opener='${CSS.escape(focus.editorialPlaceId)}']`) : null
+    if (collectionCard) return collectionCard
     return document.querySelector<HTMLElement>(`[data-editorial-place-opener='${CSS.escape(focus.editorialPlaceId)}']`)
       ?? document.querySelector<HTMLElement>("[data-testid='ondo-b-japan-first-discovery'] > summary")
+  }
+  if (focus.kind === "discovery-place") {
+    return document.querySelector<HTMLElement>(`[data-discovery-place-opener='${CSS.escape(focus.discoveryPlaceId)}']`)
+      ?? document.querySelector<HTMLElement>("[data-testid='ondo-b-search']")
   }
   if (focus.kind === "search") return document.querySelector<HTMLElement>("[data-testid='ondo-b-search']")
   if (focus.kind === "editorial") return document.querySelector<HTMLElement>("[data-testid='ondo-b-japan-first-discovery'] > summary")

@@ -76,7 +76,10 @@ test("JP-MAP-FIRST-002 city entry defaults to map without measuring or short-lan
   expect(history).toContain('export type BDiscoveryCity = "seoul" | "busan" | "jeju"')
   expect(history).toContain('value === "jeju"')
   expect(history).toContain("view: requestedView")
-  expect(history).toContain("query: requestedQuery")
+  // COLLECTION-HISTORY-001/005 exercise both ordinary-query preservation and
+  // the empty city parent beneath a directly linked collection at runtime.
+  expect(history).toContain('const requestedQuery = queryValue(url.searchParams.get("q"))')
+  expect(history).toContain('query: requestedCollection ? "" : requestedQuery')
   expect(history).toContain("category: requestedCategory")
   expect(history).toContain('editorialCategory: requestedCity === "jeju" ? requestedEditorialCategory : "all"')
   expect(map).toContain('mapLayoutMode === "ultra-short" ? "list" : view')

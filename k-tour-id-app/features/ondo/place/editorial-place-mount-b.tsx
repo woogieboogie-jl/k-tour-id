@@ -109,10 +109,11 @@ export function EditorialPlaceMountB() {
     restoreAfterExitRef.current = false
     restorationSerialRef.current += 1
     const escapedId = CSS.escape(desiredSubject.editorialPlaceId)
+    const collectionSelector = `[data-discovery-place-opener='${escapedId}']`
     const mapSelector = `[data-editorial-place-opener='${escapedId}']`
     const savedSelector = `[${MY_KOREA_SAVED_EDITORIAL_OPENER_ATTRIBUTE}='${escapedId}']`
     const storySelector = `[data-editorial-story-opener='${escapedId}']`
-    const selectors = [mapSelector, savedSelector, storySelector, ...FALLBACK_DESTINATIONS]
+    const selectors = [collectionSelector, mapSelector, savedSelector, storySelector, ...FALLBACK_DESTINATIONS]
     const active = activeAtSelection ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
     const activeSelector = selectors.find((selector) => active?.matches(selector) || active?.closest(selector)) ?? null
     exactOpenerRef.current = activeSelector

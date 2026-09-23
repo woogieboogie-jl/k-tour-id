@@ -114,15 +114,17 @@ function SourceLinks({ item, copy, locale }: { item: JapanFirstLaunchContentB; c
   )
 }
 
-function Story({ item, copy, locale, compact = false, visualRole = compact ? "compact" : "supporting", onSelectEditorialPlace }: {
+function Story({ item, copy, locale, compact = false, visualRole = compact ? "compact" : "supporting", onSelectEditorialPlace, onSelectCollection }: {
   item: JapanFirstLaunchContentB
   copy: Copy
   locale: OndoBLocale
   compact?: boolean
   visualRole?: "lead" | "supporting" | "compact"
   onSelectEditorialPlace?(place: EditorialPlaceB): void
+  onSelectCollection?(id: "sesame" | "screen"): void
 }) {
   const mappedPlace = editorialPlacesForStory(item.id)[0]
+  const collection = item.id === "C01" ? "sesame" : item.id === "C18" ? "screen" : null
   return (
     <article className={compact ? styles.compactStory : undefined} data-content-id={item.id} data-editorial-role={visualRole} data-verification={item.sourceVerification} data-place-edge={item.placeEdgeVerification}>
       {item.editorialMedia && !compact ? (
@@ -139,15 +141,15 @@ function Story({ item, copy, locale, compact = false, visualRole = compact ? "co
       <div className={styles.storyCopy}>
         <strong>{item.title[locale]}</strong>
         {locale === "ja" ? null : <p lang="ja">{item.jaHook}</p>}
-        <em>{mappedPlace ? <MapPin aria-hidden="true" size={14} /> : <CircleDashed aria-hidden="true" size={14} />}{mappedPlace ? copy.verified : copy.pending}</em>
+        <em>{mappedPlace || (collection && onSelectCollection) ? <MapPin aria-hidden="true" size={14} /> : <CircleDashed aria-hidden="true" size={14} />}{mappedPlace || (collection && onSelectCollection) ? copy.verified : copy.pending}</em>
       </div>
-      {mappedPlace && onSelectEditorialPlace ? <button type="button" className={styles.mapCta} data-testid={`ondo-b-story-map-${item.id}`} data-editorial-story-opener={mappedPlace.id} onClick={() => onSelectEditorialPlace(mappedPlace)}><MapPin aria-hidden="true" size={16} /><span>{copy.viewOnMap}</span><ChevronRight aria-hidden="true" size={15} /></button> : null}
+      {collection && onSelectCollection ? <button type="button" className={styles.mapCta} data-testid={`ondo-b-story-collection-${item.id}`} onClick={() => onSelectCollection(collection)}><MapPin aria-hidden="true" size={16} /><span>{copy.viewOnMap}</span><ChevronRight aria-hidden="true" size={15} /></button> : mappedPlace && onSelectEditorialPlace ? <button type="button" className={styles.mapCta} data-testid={`ondo-b-story-map-${item.id}`} data-editorial-story-opener={mappedPlace.id} onClick={() => onSelectEditorialPlace(mappedPlace)}><MapPin aria-hidden="true" size={16} /><span>{copy.viewOnMap}</span><ChevronRight aria-hidden="true" size={15} /></button> : null}
       <SourceLinks item={item} copy={copy} locale={locale} />
     </article>
   )
 }
 
-export function JapanFirstDiscoveryB({ locale, city, presentation = "map", open, compactTrigger = false, returnFocusSelector, onOpenChange, onSelectEditorialPlace }: { locale: OndoBLocale; city: "seoul" | "jeju"; presentation?: "map" | "list"; open?: boolean; compactTrigger?: boolean; returnFocusSelector?: string; onOpenChange?(open: boolean): void; onSelectEditorialPlace?(place: EditorialPlaceB): void }) {
+export function JapanFirstDiscoveryB({ locale, city, presentation = "map", open, compactTrigger = false, returnFocusSelector, onOpenChange, onSelectEditorialPlace, onSelectCollection }: { locale: OndoBLocale; city: "seoul" | "jeju"; presentation?: "map" | "list"; open?: boolean; compactTrigger?: boolean; returnFocusSelector?: string; onOpenChange?(open: boolean): void; onSelectEditorialPlace?(place: EditorialPlaceB): void; onSelectCollection?(id: "sesame" | "screen"): void }) {
   const rootRef = useRef<HTMLDetailsElement>(null)
   const summaryRef = useRef<HTMLElement>(null)
   const copy = COPY[locale]
@@ -208,7 +210,7 @@ export function JapanFirstDiscoveryB({ locale, city, presentation = "map", open,
           </details>
         </header>
         <div className={styles.contentRail} data-testid="ondo-b-editorial-guide-grid">
-          {featured.map((item, index) => <Story key={item.id} item={item} copy={copy} locale={locale} visualRole={index === 0 ? "lead" : "supporting"} onSelectEditorialPlace={city === "jeju" ? (place) => { if (rootRef.current) rootRef.current.open = false; onOpenChange?.(false); onSelectEditorialPlace?.(place) } : undefined} />)}
+          {featured.map((item, index) => <Story key={item.id} item={item} copy={copy} locale={locale} visualRole={index === 0 ? "lead" : "supporting"} onSelectEditorialPlace={city === "jeju" ? (place) => { if (rootRef.current) rootRef.current.open = false; onOpenChange?.(false); onSelectEditorialPlace?.(place) } : undefined} onSelectCollection={onSelectCollection ? id => { if (rootRef.current) rootRef.current.open = false; onOpenChange?.(false); onSelectCollection(id) } : undefined} />)}
         </div>
         {remaining.length ? (
           <details className={styles.moreStories} data-testid="ondo-b-japan-more-stories">

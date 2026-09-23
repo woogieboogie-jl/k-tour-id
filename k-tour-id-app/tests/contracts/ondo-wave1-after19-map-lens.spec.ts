@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { expect, test } from "@playwright/test"
+import { discoveryCollectionPlacesB } from "../../features/ondo/map/discovery-collection-model-b"
 
 const mapSource = readFileSync("features/ondo/map/map-entry-b.tsx", "utf8")
 
@@ -33,7 +34,11 @@ test("W1-AFTER19-MAP-002 approved eligibility and the current query define night
   expect(mapSource).not.toContain("toFeatureCollection(personalizedVenues")
   expect(mapSource).toContain("void directorySource.setData(venueFeatures)")
   expect(mapSource).toContain("if (after19LensSource) void after19LensSource.setData(venueFeatures)")
-  expect(mapSource).toContain('data-result-count={(city === "jeju" ? editorialPlaces.length : venues.length) + researchedFoods.length}')
+  expect(mapSource).toContain('data-result-count={visibleResultCount ?? (city === "jeju" ? editorialPlaces.length : venues.length) + researchedFoods.length}')
+  // The collection count must not bypass the existing night-eligibility lens.
+  const collectionContext = { city: "seoul", category: "all", editorialCategory: "all", after19: true, balanceOnly: false }
+  for (const collection of ["hot", "cool", "sesame"] as const) expect(discoveryCollectionPlacesB(collection, collectionContext)).toEqual([])
+  expect(discoveryCollectionPlacesB("screen", { ...collectionContext, city: "jeju" }).map(place => place.kind)).toEqual(["sight", "sight"])
   expect(mapSource).toContain('if (place.city !== city || !researchFoodMatchesB(place, query)) return false')
   expect(mapSource).toContain('if (after19ThemeActive && !balancePlacesActive) return place.kind === "bar"')
   expect(mapSource).toContain('if (balancePlacesActive && !resolveCommercePlaceB(place.id)?.commerce) return false')

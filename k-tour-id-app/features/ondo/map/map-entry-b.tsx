@@ -30,6 +30,8 @@ import { SampleInfoButtonB, SAMPLE_INFO_EVENT, sampleInfoCopyB } from "../shared
 import { readQaRuntime } from "../shared/ui/use-qa-controls"
 import { useReviewSampleSession } from "../shared/ui/use-qa-controls"
 import { JapanFirstDiscoveryB } from "./japan-first-discovery-b"
+import { DiscoveryCollectionPinsB, DiscoveryCollectionResultsB, DiscoveryMarketDetailB, DiscoveryMoodSuggestionsB, DiscoveryStoryHintB } from "./discovery-collection-b"
+import { discoveryCollectionPlacesB, discoveryMoodFromQueryB, discoveryPlaceByIdB, type DiscoveryCollectionIdB } from "./discovery-collection-model-b"
 import { MapOptionsB } from "./map-options-b"
 import { TemperatureTimelineB } from "./temperature-timeline-b"
 import { TravelerActivityMapB } from "./traveler-activity-map-b"
@@ -56,6 +58,8 @@ import {
   installBDiscoveryTraversalGuard,
   normalizeBDiscoveryHistoryForActiveDocument,
   openBDiscoveryEditorialPlace,
+  openBDiscoveryCollection,
+  openBDiscoveryCollectionPlace,
   openBDiscoveryVenue,
   readBDiscoveryHistory,
   readBDiscoveryTraversal,
@@ -81,6 +85,7 @@ type ServiceMapSnapshotB = {
   editorialCategory: EditorialCategory; listScroll: number; camera?: BDiscoveryCamera
   balancePlacesOnly: boolean; history: BDiscoveryHistoryEntry | null; detailScroll: number
   expandedDisclosures: string[]
+  collection: DiscoveryCollectionIdB | null; collectionSelection: string | null
 }
 const BALANCE_MAP_COPY = {
   ko: { places: "사용할 곳", clear: "사용할 곳 필터 해제", filter: "사용할 곳 보기" },
@@ -1048,6 +1053,39 @@ function koreaLandFeatureCollection(): GeoJSON.FeatureCollection<GeoJSON.Polygon
   }
 }
 
+function collectionFilterSignature(city: string | undefined | null, query: string, category: string, editorialCategory: string, balance: boolean, collection: DiscoveryCollectionIdB | null, after19: boolean) {
+  const base = `${city ?? "nation"}:${query.trim()}:${city === "jeju" ? editorialCategory : category}:${balance}`
+  return collection ? `${base}:${collection}:${after19}` : base
+}
+
+function focusCollectionPlaces(map: MapLibreMap, places: readonly { longitude: number; latitude: number }[]) {
+  if (!places.length) return
+  // Collections frame several selectable photo pins on a flat map. The city
+  // overview may retain asymmetric padding and tilt; both distort a bounds fit.
+  map.stop()
+  map.jumpTo({ pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } })
+  const node = map.getContainer()
+  const bounds = node.getBoundingClientRect()
+  const shell = node.parentElement
+  const header = shell?.querySelector('[data-testid="ondo-b-city-header"]')?.getBoundingClientRect()
+  const tray = shell?.querySelector('[data-testid="map-discovery-results"]')?.getBoundingClientRect()
+  const sidePanel = tray && tray.width < bounds.width * .55 && bounds.width >= 600
+  const chrome = shell?.querySelector('[data-testid="ondo-b-map-chrome"]')?.getBoundingClientRect()
+  const top = Math.max(80, (header?.bottom ?? bounds.top + 120) - bounds.top + 35)
+  const bottom = sidePanel ? Math.max(76, bounds.bottom - (chrome?.top ?? bounds.bottom - 76) + 35) : tray ? Math.max(90, bounds.bottom - tray.top + 35) : 120
+  const camera = map.cameraForBounds([
+    [Math.min(...places.map(p => p.longitude)), Math.min(...places.map(p => p.latitude))],
+    [Math.max(...places.map(p => p.longitude)), Math.max(...places.map(p => p.latitude))],
+  ], { padding: { top, bottom: Math.min(bottom, Math.max(60, bounds.height - top - 24)), left: sidePanel ? tray.right - bounds.left + 45 : 54, right: 54 }, maxZoom: places.length === 1 ? 14.2 : 13 })
+  // cameraForBounds incorporates the panel inset into the center. Keep runtime
+  // padding zero so the app's existing camera history restores exact pixels.
+  if (camera) {
+    map.jumpTo({ ...camera, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } })
+    const entry = readBDiscoveryHistory()
+    if (entry?.level === "city" && entry.collection) replaceBDiscoveryCityContext({ ...entry, camera: cameraSnapshot(map) })
+  }
+}
+
 function focusFilteredVenues(map: MapLibreMap, venues: readonly { longitude: number; latitude: number }[]) {
   if (venues.length === 0) return
   if (venues.length === 1) {
@@ -1286,6 +1324,11 @@ export function MapEntryB() {
   const [city, setCity] = useState<CityId | null>(null)
   const [view, setView] = useState<ViewMode>("map")
   const [query, setQuery] = useState("")
+  const [collection, setCollection] = useState<DiscoveryCollectionIdB | null>(null)
+  const [collectionSelection, setCollectionSelection] = useState<string | null>(null)
+  const [collectionDetailId, setCollectionDetailId] = useState<string | null>(null)
+  const [discoverySearchOpen, setDiscoverySearchOpen] = useState(false)
+  const searchOriginRef = useRef<BDiscoveryHistoryEntry | null>(null)
   const [category, setCategory] = useState<BDiscoveryCategory>("all")
   const [editorialCategory, setEditorialCategory] = useState<EditorialCategory>("all")
   const [mapState, setMapState] = useState<"idle" | "loading" | "ready" | "error">("idle")
@@ -1314,11 +1357,13 @@ export function MapEntryB() {
   const [draftPersonalization, setDraftPersonalization] = useState<BDiscoveryFocusRequest["personalization"] | null>(null)
   const [balancePlacesOnly, setBalancePlacesOnly] = useState(false)
   const balancePlacesActive = sampleEnvironment && balancePlacesOnly
+  const balancePlacesActiveRef = useRef(balancePlacesActive)
+  balancePlacesActiveRef.current = balancePlacesActive
   const serviceMapSnapshotsRef = useRef(new Map<string, ServiceMapSnapshotB>())
   const serviceCaptureRef = useRef<(placeId: string) => boolean>(() => false)
   const serviceReturnRef = useRef<(event: Event) => void>(() => {})
   const balancePlacesRequestRef = useRef<(event: Event) => void>(() => {})
-  const balanceFilterReturnRef = useRef<Pick<ServiceMapSnapshotB, "city" | "view" | "query" | "category" | "editorialCategory" | "listScroll" | "camera"> | null>(null)
+  const balanceFilterReturnRef = useRef<Pick<ServiceMapSnapshotB, "city" | "view" | "query" | "category" | "editorialCategory" | "listScroll" | "camera" | "collection" | "collectionSelection"> | null>(null)
   useEffect(() => {
     const unregister = registerPlaceServiceMapCaptureB(placeId => serviceCaptureRef.current(placeId))
     const restore = (event: Event) => serviceReturnRef.current(event)
@@ -1439,7 +1484,7 @@ export function MapEntryB() {
   // A commerce handoff hides this sheet without losing its exact research id.
   useEffect(() => { setSelectedResearchId(current => researchedFoodByIdB(current ?? "")?.city === city ? current : null) }, [city])
   useEffect(() => {
-    const close = () => setSelectedResearchId(null)
+    const close = () => { if (!readBDiscoveryHistory()?.discoveryPlaceId) setSelectedResearchId(null) }
     window.addEventListener("popstate", close)
     return () => window.removeEventListener("popstate", close)
   }, [])
@@ -1450,6 +1495,10 @@ export function MapEntryB() {
   const categoryOptions = Object.keys(CATEGORY) as BDiscoveryCategory[]
   const categoryRailItems: readonly BDiscoveryCategory[] = categoryOptions
   const effectiveCategory: BDiscoveryCategory = after19NightSubsetActive ? "night" : category
+  const collectionPlaces = useMemo(() => collection && city ? discoveryCollectionPlacesB(collection, { city, category, editorialCategory, after19: after19ThemeActive, balanceOnly: balancePlacesActive }) : [], [collection, city, category, editorialCategory, after19ThemeActive, balancePlacesActive])
+  const collectionSelected = collectionPlaces.some(place => place.id === collectionSelection) ? collectionSelection : collectionPlaces[0]?.id ?? null
+  const collectionMarket = collectionDetailId && !researchedFoodByIdB(collectionDetailId) ? discoveryPlaceByIdB(collectionDetailId) : null
+  const visibleResultCount = collection ? collectionPlaces.length : null
 
   useEffect(() => setEditorialOpen(false), [city])
 
@@ -1609,7 +1658,7 @@ export function MapEntryB() {
     const applyLayout = (width: number, height: number) => {
       const usesUltraShortList = height < 260
         || (width < 480 && height < 360)
-      setCompactChrome(width < 600 && height >= 360 && !usesUltraShortList)
+      setCompactChrome((width < 600 && height >= 360 || Boolean(collection) && width < 900 && height >= 300) && !usesUltraShortList)
       const nextMode: MapLayoutMode = usesUltraShortList
         ? "ultra-short"
         : width <= 430 || (width > height && height <= 568)
@@ -1639,7 +1688,7 @@ export function MapEntryB() {
     const bounds = root.getBoundingClientRect()
     applyLayout(bounds.width, bounds.height)
     return () => observer.disconnect()
-  }, [city])
+  }, [city, Boolean(collection)])
 
   useLayoutEffect(() => {
     if (!state.hydrated) return
@@ -1668,6 +1717,13 @@ export function MapEntryB() {
       setQuery(entry.query)
       setCategory(entry.category)
       setEditorialCategory(entry.editorialCategory)
+      setCollection(entry.collection ?? null)
+      setCollectionSelection(entry.collectionSelection ?? null)
+      setCollectionDetailId(entry.discoveryPlaceId ?? null)
+      setSelectedResearchId(entry.discoveryPlaceId && researchedFoodByIdB(entry.discoveryPlaceId) ? entry.discoveryPlaceId : null)
+      setDiscoverySearchOpen(false)
+      searchOriginRef.current = null
+      if (entry.camera) filterCameraSignatureRef.current = collectionFilterSignature(entry.city, entry.query, entry.category, entry.editorialCategory, balancePlacesActiveRef.current, entry.collection ?? null, after19LensActiveRef.current)
       pendingHistoryCameraRef.current = entry.city && entry.camera ? { city: entry.city, camera: entry.camera } : null
       pendingListScrollRef.current = entry.listScroll
       setHistoryRestoreVersion((version) => version + 1)
@@ -1761,6 +1817,7 @@ export function MapEntryB() {
   }, [])
 
   const venues = useMemo(() => MAP_VENUES.filter((venue) => {
+    if (collection) return false
     if (!city || venue.cityId !== city) return false
     if (balancePlacesActive && !resolveCommercePlaceB(venue.id)?.commerce) return false
     if (effectiveCategory !== "all" && venue.primaryCategory !== effectiveCategory) return false
@@ -1768,7 +1825,7 @@ export function MapEntryB() {
     const categoryCopy = CATEGORY[venue.primaryCategory]
     const haystack = `${venue.name.ko} ${venue.name.en} ${venueDisplayName(venue.name.ko, "en")} ${categoryCopy.ko} ${categoryCopy.en} ${venue.districtId} ${venueDistrictLabel(venue.cityId, venue.districtId, "en")} ${mapFoodIntentAliases(venue.name.ko).join(" ")}`.toLowerCase()
     return !query.trim() || haystack.includes(query.trim().toLowerCase())
-  }), [after19NightSubsetActive, balancePlacesActive, city, effectiveCategory, query])
+  }), [after19NightSubsetActive, balancePlacesActive, city, collection, effectiveCategory, query])
   const activePersonalization = state.onboarding === "ONB-IN-PROGRESS" && draftPersonalization
     ? draftPersonalization
     : { intent: state.persona, preferences: state.discoveryPreferences }
@@ -1786,24 +1843,26 @@ export function MapEntryB() {
     personalizedVenueRows.map(({ venue, dietaryUnknown }) => [venue.id, dietaryUnknown]),
   ), [personalizedVenueRows])
   const editorialPlaces = useMemo(() => JEJU_EDITORIAL_PLACES.filter((place) => {
+    if (collection) return collectionPlaces.some(item => item.id === place.id)
     if (balancePlacesActive && !resolveCommercePlaceB(place.id)?.commerce) return false
     if (editorialCategory !== "all" && place.category !== editorialCategory) return false
     const haystack = `${place.name.en} ${place.name.ko} ${place.name.ja} ${place.address.en} ${place.address.ko} ${place.sourceCollection.en} ${place.sourceCollection.ko} ${place.sourceCollection.ja}`.toLowerCase()
     return !query.trim() || haystack.includes(query.trim().toLowerCase())
-  }), [balancePlacesActive, editorialCategory, query])
-  const filteredMap = balancePlacesActive || query.trim().length > 0 || (city === "jeju" ? editorialCategory !== "all" : category !== "all")
+  }), [balancePlacesActive, collection, collectionPlaces, editorialCategory, query])
+  const filteredMap = Boolean(collection) || balancePlacesActive || query.trim().length > 0 || (city === "jeju" ? editorialCategory !== "all" : category !== "all")
   const curatedPulseVenues = useMemo(() => venues.flatMap((venue) => {
     const pulse = pulseForVenue(venue.id, state.localPulseEvidenceByVenue[venue.id] ?? null)
     return pulse.score == null ? [] : [{ venue, pulse }]
   }).sort((left, right) => (right.pulse.score ?? 0) - (left.pulse.score ?? 0)), [state.localPulseEvidenceByVenue, venues])
   const researchedFoods = useMemo(() => RESEARCHED_FOOD_B.filter(place => {
+    if (collection) return collectionPlaces.some(item => item.id === place.id)
     if (place.city !== city || !researchFoodMatchesB(place, query)) return false
     if (balancePlacesActive && !resolveCommercePlaceB(place.id)?.commerce) return false
     if (after19ThemeActive && !balancePlacesActive) return place.kind === "bar"
     if (city === "jeju") return editorialCategory === "all" || editorialCategory === "food"
     if (category === "all") return true
     return category === "night" ? place.kind === "bar" || place.kind === "cafe" : category === "korean" && place.kind === "food"
-  }), [balancePlacesActive, city, query, after19ThemeActive, editorialCategory, category])
+  }), [balancePlacesActive, city, collection, collectionPlaces, query, after19ThemeActive, editorialCategory, category])
   const temperatureSamplePoints = useMemo(() => [...(city === "jeju"
     ? editorialPlaces.map((place) => ({ id: place.id, longitude: place.location.longitude, latitude: place.location.latitude }))
     : curatedPulseVenues.map(({ venue }) => ({ id: venue.id, longitude: venue.longitude, latitude: venue.latitude }))),
@@ -2741,11 +2800,16 @@ export function MapEntryB() {
       const venueFeatures = toFeatureCollection(venues, state.localPulseEvidenceByVenue, selectedVenueId, personalMatchCountByVenue)
       void directorySource.setData(venueFeatures)
       if (after19LensSource) void after19LensSource.setData(venueFeatures)
-      if (pulseSource) void pulseSource.setData(toTemperatureFeatureCollection(city, venues, state.localPulseEvidenceByVenue, locale, selectedVenueId, selectedEditorialPlaceId, editorialPlaces))
-      const filterSignature = `${city ?? "nation"}:${query.trim()}:${city === "jeju" ? editorialCategory : category}:${balancePlacesActive}`
+      if (pulseSource) void pulseSource.setData(collection ? { type: "FeatureCollection", features: [] } : toTemperatureFeatureCollection(city, venues, state.localPulseEvidenceByVenue, locale, selectedVenueId, selectedEditorialPlaceId, editorialPlaces))
+      const filterSignature = collectionFilterSignature(city, query, category, editorialCategory, balancePlacesActive, collection, after19ThemeActive)
       const filterChanged = filterCameraSignatureRef.current !== filterSignature
       filterCameraSignatureRef.current = filterSignature
-      if (filteredMap && filterChanged && !selectedVenueId) focusFilteredVenues(mapRef.current!, [
+      if (collection && filterChanged) window.requestAnimationFrame(() => {
+        // Let the responsive header/tray finish the same React commit before
+        // reading their bounds, especially when entering a short landscape.
+        if (mapRef.current && readBDiscoveryHistory()?.collection === collection) focusCollectionPlaces(mapRef.current, collectionPlaces)
+      })
+      else if (filteredMap && filterChanged && !selectedVenueId) focusFilteredVenues(mapRef.current!, [
         ...venues, ...researchedFoods,
         ...(city === "jeju" ? editorialPlaces.map(place => place.location) : []),
       ])
@@ -2759,7 +2823,7 @@ export function MapEntryB() {
   // source does not exist yet and this effect returns early. Re-run once the
   // map reaches `ready` so the source and camera always receive the current
   // filtered collection instead of the load callback's initial closure.
-  }, [balancePlacesActive, category, city, editorialCategory, editorialPlaces, filteredMap, locale, mapState, personalMatchCountByVenue, query, selectedEditorialPlaceId, selectedVenueId, state.localPulseEvidenceByVenue, venues, researchedFoods])
+  }, [after19ThemeActive, balancePlacesActive, category, city, collection, collectionPlaces, editorialCategory, editorialPlaces, filteredMap, locale, mapState, personalMatchCountByVenue, query, selectedEditorialPlaceId, selectedVenueId, state.localPulseEvidenceByVenue, venues, researchedFoods])
 
   useLayoutEffect(() => {
     const map = mapRef.current
@@ -2881,11 +2945,11 @@ export function MapEntryB() {
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapState !== "ready") return
-    const visible = Boolean(city && !sampleEnvironment && entryTransitionCity !== city)
+    const visible = Boolean(city && !collection && !sampleEnvironment && entryTransitionCity !== city)
     for (const layer of SNAPSHOT_SIGNAL_LAYERS) {
       if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", visible ? "visible" : "none")
     }
-  }, [city, entryTransitionCity, mapState, sampleEnvironment])
+  }, [city, collection, entryTransitionCity, mapState, sampleEnvironment])
 
   useLayoutEffect(() => {
     const pending = pendingHistoryCameraRef.current
@@ -2923,6 +2987,25 @@ export function MapEntryB() {
     return () => window.cancelAnimationFrame(frame)
   }, [effectiveView])
 
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !collection || effectiveView !== "map") return
+    // Only viewport changes reframe an open collection. Ordinary renders,
+    // pin selection and Back retain the user's pan/zoom exactly.
+    const container = map.getContainer()
+    let previous = { width: container.clientWidth, height: container.clientHeight }
+    let frame = 0
+    const observer = new ResizeObserver(() => {
+      const next = { width: container.clientWidth, height: container.clientHeight }
+      if (next.width === previous.width && next.height === previous.height) return
+      previous = next
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => { map.resize(); focusCollectionPlaces(map, collectionPlaces) })
+    })
+    observer.observe(container)
+    return () => { observer.disconnect(); window.cancelAnimationFrame(frame) }
+  }, [collection, collectionPlaces, effectiveView, mapState])
+
   useLayoutEffect(() => {
     if (effectiveView !== "list" || !listPanelRef.current) return
     const list = listPanelRef.current
@@ -2959,16 +3042,22 @@ export function MapEntryB() {
     pendingCityFocusRef.current = next
     pendingCityKeyboardFocusRef.current = intent.keyboardModality
     if (intent.historyMode === "replace" && currentCityRef.current) {
-      replaceBDiscoveryCityContext({ city: next, view: "map", query: "", category: nextCategory, editorialCategory: "all", layer: after19ThemeActive ? "after19" : "standard", listScroll: 0 })
+      replaceBDiscoveryCityContext({ city: next, view: "map", query: "", category: nextCategory, editorialCategory: "all", layer: after19ThemeActive ? "after19" : "standard", listScroll: 0, collection: null, collectionSelection: null })
     } else {
       enterBDiscoveryCity(next)
     }
     setCity(next)
     setView("map")
     setQuery("")
+    setCollection(null)
+    setCollectionSelection(null)
+    setCollectionDetailId(null)
+    setSelectedResearchId(null)
+    setDiscoverySearchOpen(false)
+    searchOriginRef.current = null
     setCategory(nextCategory)
     setEditorialCategory("all")
-    replaceBDiscoveryCityContext({ city: next, view: "map", query: "", category: nextCategory, editorialCategory: "all", layer: after19ThemeActive ? "after19" : "standard", listScroll: 0 })
+    replaceBDiscoveryCityContext({ city: next, view: "map", query: "", category: nextCategory, editorialCategory: "all", layer: after19ThemeActive ? "after19" : "standard", listScroll: 0, collection: null, collectionSelection: null })
     return true
   }
 
@@ -3071,7 +3160,68 @@ export function MapEntryB() {
   }
   openEditorialPlaceDetailRef.current = openEditorialPlaceDetail
 
-  function updateCityContext(next: { view?: ViewMode; query?: string; category?: BDiscoveryCategory; editorialCategory?: BDiscoveryEditorialCategory; listScroll?: number; camera?: BDiscoveryCamera }) {
+  function adoptCollectionEntry(entry: BDiscoveryHistoryEntry) {
+    setCollection(entry.collection ?? null)
+    setCollectionSelection(entry.collectionSelection ?? null)
+    setCollectionDetailId(null)
+    setSelectedResearchId(null)
+    setSelectedEditorialPlaceId(null)
+    setQuery(entry.query)
+    setCategory(entry.category)
+    setEditorialCategory(entry.editorialCategory)
+    setView(entry.view)
+    setEditorialOpen(false)
+    setMapOptionsOpen(false)
+    setDiscoverySearchOpen(false)
+    searchOriginRef.current = null
+    actions.setSurface({ kind: "map" })
+    if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur()
+  }
+
+  function openDiscoveryCollection(id: DiscoveryCollectionIdB) {
+    if (!city) return
+    // Typing 'hot' must not make Back return to a half-entered 'ho' search.
+    // Keep the pre-search context in the app's existing history, not a second router.
+    const origin = searchOriginRef.current
+    if ((id === "hot" || id === "cool") && origin?.city === city && origin.level === "city") replaceBDiscoveryHistoryForActiveDocument(origin)
+    else updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined })
+    const entry = openBDiscoveryCollection(id)
+    if (entry) adoptCollectionEntry(entry)
+  }
+
+  function selectCollectionPin(id: string) {
+    if (!collectionPlaces.some(place => place.id === id)) return
+    setCollectionSelection(id)
+    updateCityContext({ collectionSelection: id })
+  }
+
+  function openCollectionPlace(id: string) {
+    if (!collectionPlaces.some(place => place.id === id)) return
+    selectCollectionPin(id)
+    updateCityContext({ collectionSelection: id, camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined })
+    const editorial = editorialPlaceById(id)
+    if (editorial) { openEditorialPlaceDetail(editorial); return }
+    if (!openBDiscoveryCollectionPlace(id)) return
+    setCollectionDetailId(id)
+    setSelectedResearchId(researchedFoodByIdB(id) ? id : null)
+  }
+
+  function closeCollectionPlace() {
+    if (readBDiscoveryHistory()?.discoveryPlaceId && goBackFromBDiscovery("peek")) return
+    setCollectionDetailId(null)
+    setSelectedResearchId(null)
+    setResearchReturnFocus(null)
+  }
+
+  function editDiscoveryQuery(nextQuery: string) {
+    setQuery(nextQuery)
+    setCollection(null)
+    setCollectionSelection(null)
+    setCollectionDetailId(null)
+    updateCityContext({ query: nextQuery, collection: null, collectionSelection: null })
+  }
+
+  function updateCityContext(next: { view?: ViewMode; query?: string; category?: BDiscoveryCategory; editorialCategory?: BDiscoveryEditorialCategory; listScroll?: number; camera?: BDiscoveryCamera; collection?: DiscoveryCollectionIdB | null; collectionSelection?: string | null }) {
     if (!city) return
     replaceBDiscoveryCityContext({
       city,
@@ -3082,6 +3232,8 @@ export function MapEntryB() {
       layer: after19ThemeActive ? "after19" : "standard",
       listScroll: next.listScroll ?? listPanelRef.current?.scrollTop ?? pendingListScrollRef.current,
       ...(next.camera ? { camera: next.camera } : {}),
+      ...(next.collection !== undefined ? { collection: next.collection } : {}),
+      ...(next.collectionSelection !== undefined ? { collectionSelection: next.collectionSelection } : {}),
     })
   }
 
@@ -3095,7 +3247,7 @@ export function MapEntryB() {
     const listScroll = listPanelRef.current?.scrollTop ?? pendingListScrollRef.current
     const history = readBDiscoveryHistory()
     serviceMapSnapshotsRef.current.set(placeId, {
-      placeId, city, view, query, category, editorialCategory, balancePlacesOnly,
+      placeId, city, view, query, category, editorialCategory, balancePlacesOnly, collection, collectionSelection,
       listScroll, camera,
       history: history ? { ...history, listScroll, ...(camera ? { camera } : {}) } : null,
       detailScroll: detail?.scrollTop ?? 0,
@@ -3118,9 +3270,12 @@ export function MapEntryB() {
       setCategory(snapshot.category)
       setEditorialCategory(snapshot.editorialCategory)
       setBalancePlacesOnly(snapshot.balancePlacesOnly)
+      setCollection(snapshot.collection)
+      setCollectionSelection(snapshot.collectionSelection)
+      setCollectionDetailId(snapshot.history?.discoveryPlaceId ?? null)
       pendingListScrollRef.current = snapshot.listScroll
       pendingHistoryCameraRef.current = snapshot.camera ? { city: snapshot.city, camera: snapshot.camera } : null
-      filterCameraSignatureRef.current = `${snapshot.city}:${snapshot.query.trim()}:${snapshot.city === "jeju" ? snapshot.editorialCategory : snapshot.category}:${snapshot.balancePlacesOnly}`
+      filterCameraSignatureRef.current = collectionFilterSignature(snapshot.city, snapshot.query, snapshot.category, snapshot.editorialCategory, snapshot.balancePlacesOnly, snapshot.collection, after19ThemeActive)
       if (snapshot.history) replaceBDiscoveryHistoryForActiveDocument(snapshot.history)
       setHistoryRestoreVersion(version => version + 1)
     } else if (city !== place.cityId) {
@@ -3171,9 +3326,11 @@ export function MapEntryB() {
     setQuery(previous.query)
     setCategory(previous.category)
     setEditorialCategory(previous.editorialCategory)
+    setCollection(previous.collection)
+    setCollectionSelection(previous.collectionSelection)
     pendingListScrollRef.current = previous.listScroll
     pendingHistoryCameraRef.current = previous.camera ? { city: previous.city, camera: previous.camera } : null
-    filterCameraSignatureRef.current = `${previous.city}:${previous.query.trim()}:${previous.city === "jeju" ? previous.editorialCategory : previous.category}:false`
+    filterCameraSignatureRef.current = collectionFilterSignature(previous.city, previous.query, previous.category, previous.editorialCategory, false, previous.collection, after19ThemeActive)
     updateCityContext(previous)
     setHistoryRestoreVersion(version => version + 1)
   }
@@ -3184,7 +3341,7 @@ export function MapEntryB() {
     const requested = detail && typeof detail === "object" && "cityId" in detail ? detail.cityId : null
     const nextCity = requested === "seoul" || requested === "busan" || requested === "jeju" ? requested : city ?? "seoul"
     if (city && !balancePlacesActive) balanceFilterReturnRef.current = {
-      city, view, query, category, editorialCategory,
+      city, view, query, category, editorialCategory, collection, collectionSelection,
       listScroll: listPanelRef.current?.scrollTop ?? pendingListScrollRef.current,
       camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined,
     }
@@ -3192,6 +3349,9 @@ export function MapEntryB() {
     actions.setSurface({ kind: "map" })
     setSelectedResearchId(null)
     setSelectedEditorialPlaceId(null)
+    setCollection(null)
+    setCollectionSelection(null)
+    setCollectionDetailId(null)
     if (city !== nextCity) chooseCity(nextCity)
     setBalancePlacesOnly(true)
     setQuery("")
@@ -3199,7 +3359,7 @@ export function MapEntryB() {
     setEditorialCategory("all")
     setView("map")
     setMapOptionsOpen(false)
-    replaceBDiscoveryCityContext({ city: nextCity, view: "map", query: "", category: "all", editorialCategory: "all", listScroll: 0 })
+    replaceBDiscoveryCityContext({ city: nextCity, view: "map", query: "", category: "all", editorialCategory: "all", listScroll: 0, collection: null, collectionSelection: null })
   }
 
   function rememberListScroll(scrollTop: number) {
@@ -3432,6 +3592,7 @@ export function MapEntryB() {
         data-testid="ondo-b-map-entry"
         data-hydrated={state.hydrated ? "true" : "false"}
         data-city={city}
+        data-discovery-collection={collection ?? "none"}
         data-entry-transition={entryTransitionCity === city ? "active" : "settled"}
         data-entry-origin={entryTransitionCity === city ? city : undefined}
         data-temperature-shell="city-map"
@@ -3444,7 +3605,7 @@ export function MapEntryB() {
         data-editorial-point-count={city === "jeju" ? JEJU_EDITORIAL_PLACES.length : undefined}
         data-editorial-temperature-mode={city === "jeju" ? JEJU_EDITORIAL_TEMPERATURE.mode : undefined}
         data-editorial-temperature-score={city === "jeju" ? "none" : undefined}
-        data-result-count={(city === "jeju" ? editorialPlaces.length : venues.length) + researchedFoods.length}
+        data-result-count={visibleResultCount ?? (city === "jeju" ? editorialPlaces.length : venues.length) + researchedFoods.length}
         data-research-result-count={researchedFoods.length}
         data-balance-places-filter={balancePlacesActive ? "on" : "off"}
         data-map-state={mapState}
@@ -3482,19 +3643,41 @@ export function MapEntryB() {
         data-personalized-match-count={personalizedVenueRows.filter(({ matchCount }) => matchCount > 0).length}
       >
         <p id="ondo-b-map-instruction" className={styles.srOnly} aria-hidden={editorialOpen ? true : undefined}>{city === "jeju" ? copy.editorialMapA11y : copy.mapA11y}</p>
-        <header className={styles.cityHeader} data-testid="ondo-b-city-header">
+        <header className={styles.cityHeader} data-testid="ondo-b-city-header" onBlur={event => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) { setDiscoverySearchOpen(false); searchOriginRef.current = null }
+        }}>
           <div className={styles.topline}>
-            <button type="button" className={styles.back} data-testid="ondo-b-city-back" aria-label={copy.back} onClick={() => {
+            <button type="button" className={styles.back} data-testid="ondo-b-city-back" aria-label={collection ? locale === "ko" ? "뒤로" : locale === "ja" ? "戻る" : "Back" : copy.back} onClick={() => {
               pendingNationFocusRef.current = city
               if (!goBackFromBDiscovery("city")) {
                 setEntryTransitionCity(null)
                 setCity(null)
               }
-            }}><ArrowLeft size={18} /><span>{copy.back}</span></button>
+            }}><ArrowLeft size={18} /><span>{collection ? locale === "ko" ? "뒤로" : locale === "ja" ? "戻る" : "Back" : copy.back}</span></button>
             <div className={styles.cityTitle}><h1>{CITY[city].label[locale]}</h1>{compactChrome && sampleEnvironment ? <small className={styles.compactDemo}>{sampleInfoCopyB(locale).label}</small> : null}<small className={styles.srOnly} data-testid="ondo-b-pulse-city-status" data-pulse-city-status={city === "jeju" ? "editorial-limited" : PULSE_CITY_STATUS[city]}>{cityPulseStatus(city, locale)}</small></div>
             {compactChrome ? <button type="button" className={styles.mapOptionsButton} data-testid="ondo-b-map-options-open" aria-label={MOBILE_CHROME_COPY[locale].optionsLabel} aria-haspopup="dialog" aria-expanded={mapOptionsOpen} onClick={openMapOptions}><SlidersHorizontal size={17} aria-hidden="true" /><span>{MOBILE_CHROME_COPY[locale].options}</span>{(city === "jeju" ? editorialCategory : category) !== "all" ? <i className={styles.filterDot} aria-hidden="true" /> : null}</button> : <div className={styles.headerActions}><SampleInfoButtonB /><button type="button" className={styles.language} data-testid="ondo-b-language" aria-label={NEXT_LOCALE_ACCESSIBLE_LABEL[locale]} title={NEXT_LOCALE_ACCESSIBLE_LABEL[locale]} data-language-target={NEXT_LOCALE[locale]} onClick={() => actions.setLocale(NEXT_LOCALE[locale])}><Languages size={16} aria-hidden="true" />{NEXT_LOCALE_LABEL[locale]}</button></div>}
           </div>
-          <div className={styles.search} role="search" data-testid="ondo-b-search-shell"><Search size={20} aria-hidden="true" /><input data-testid="ondo-b-search" aria-label={copy.search} value={query} maxLength={SEARCH_MAX_LENGTH} onChange={(event) => { const nextQuery = event.target.value.slice(0, SEARCH_MAX_LENGTH); setQuery(nextQuery); updateCityContext({ query: nextQuery }) }} placeholder={compactChrome ? MOBILE_CHROME_COPY[locale].search : copy.search} />{query ? <button type="button" onClick={() => { setQuery(""); updateCityContext({ query: "" }) }} aria-label={MAP_UI[locale].clearSearch}><X size={16} /></button> : null}{sampleEnvironment ? <MapBalanceEntryB onOpen={() => { updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined }); actions.setTab("id") }} /> : null}</div>
+          <div className={styles.search} role="search" data-testid="ondo-b-search-shell"><Search size={20} aria-hidden="true" /><input data-testid="ondo-b-search" aria-label={copy.search} value={query} maxLength={SEARCH_MAX_LENGTH}
+            onFocus={event => {
+              if (event.currentTarget.dataset.discoveryRestoringFocus) return
+              updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined }); searchOriginRef.current = readBDiscoveryHistory(); setDiscoverySearchOpen(true)
+            }}
+            onClick={() => {
+              if (!searchOriginRef.current) { updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined }); searchOriginRef.current = readBDiscoveryHistory() }
+              setDiscoverySearchOpen(true)
+            }}
+            onChange={event => editDiscoveryQuery(event.target.value.slice(0, SEARCH_MAX_LENGTH))}
+            onKeyDown={event => {
+              if (event.nativeEvent.isComposing) return
+              if (event.key === "Escape") { searchOriginRef.current = null; setDiscoverySearchOpen(false); event.currentTarget.blur() }
+              if (event.key !== "Enter") return
+              event.preventDefault()
+              const mood = discoveryMoodFromQueryB(query)
+              if (mood) openDiscoveryCollection(mood)
+              else { searchOriginRef.current = null; setDiscoverySearchOpen(false); event.currentTarget.blur() }
+            }}
+            placeholder={compactChrome ? MOBILE_CHROME_COPY[locale].search : copy.search} />{query ? <button type="button" onClick={() => editDiscoveryQuery("")} aria-label={MAP_UI[locale].clearSearch}><X size={16} /></button> : null}{sampleEnvironment ? <MapBalanceEntryB onOpen={() => { updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined }); actions.setTab("id") }} /> : null}</div>
+          {discoverySearchOpen ? <DiscoveryMoodSuggestionsB locale={locale} onSelect={openDiscoveryCollection} /> : null}
           {compactChrome ? null : after19NightSubsetActive ? <div className={styles.after19Context} data-testid="ondo-b-after19-context">
             <MoonStar className={styles.after19ContextIcon} size={15} aria-hidden="true" />
             <span>After 19 · {AFTER19_NIGHT_CATEGORY[locale]}</span>
@@ -3579,7 +3762,7 @@ export function MapEntryB() {
             onActiveChange={setAfter19Active}
             noticeTarget={mapFeedbackTarget}
           />
-          {city === "seoul" || city === "jeju" ? <JapanFirstDiscoveryB locale={locale} city={city} open={editorialOpen} compactTrigger={compactChrome} returnFocusSelector={compactChrome ? "[data-testid='ondo-b-map-options-open']" : undefined} presentation={effectiveView === "list" || mapState === "error" ? "list" : "map"} onOpenChange={setEditorialOpen} onSelectEditorialPlace={city === "jeju" ? focusEditorialPlace : undefined} /> : null}
+          {city === "seoul" || city === "jeju" ? <JapanFirstDiscoveryB locale={locale} city={city} open={editorialOpen} compactTrigger={compactChrome} returnFocusSelector={compactChrome ? "[data-testid='ondo-b-map-options-open']" : undefined} presentation={effectiveView === "list" || mapState === "error" ? "list" : "map"} onOpenChange={setEditorialOpen} onSelectEditorialPlace={city === "jeju" ? focusEditorialPlace : undefined} onSelectCollection={openDiscoveryCollection} /> : null}
         </div>
         <div ref={mapFeedbackRootRef} className={styles.mapFeedbackStack} data-testid="ondo-b-map-feedback" hidden={editorialOpen}>
           <div className={styles.mapFeedbackSlot}>{locationNeedsRecovery ? locationDisclosure : null}</div>
@@ -3598,11 +3781,11 @@ export function MapEntryB() {
             data-testid="ondo-b-result-bar"
             data-chrome-role="view-action"
             data-effective-view={effectiveView}
-            data-result-count={(city === "jeju" ? editorialPlaces.length : venues.length) + researchedFoods.length}
+            data-result-count={visibleResultCount ?? (city === "jeju" ? editorialPlaces.length : venues.length) + researchedFoods.length}
             data-result-source={researchedFoods.length ? "directory-and-editorial-research" : city === "jeju" ? "editorial" : SOURCE_ID}
           >
             <span id="ondo-b-result-truth" className={styles.resultTruth} data-testid="ondo-b-result-truth" role="status" aria-live="polite" aria-atomic="true">
-              <b>{mapPartialFailure && effectiveView === "map" ? copy.mapLimited : resultCount((city === "jeju" ? editorialPlaces.length : venues.length) + researchedFoods.length, locale)}</b>
+              <b>{mapPartialFailure && effectiveView === "map" ? copy.mapLimited : resultCount(visibleResultCount ?? (city === "jeju" ? editorialPlaces.length : venues.length) + researchedFoods.length, locale)}</b>
               {mapPartialFailure && effectiveView === "map" ? <small>{copy.offlineSource}</small> : null}
             </span>
             {mapState === "error" || mapLayoutMode === "ultra-short" ? (
@@ -3629,7 +3812,7 @@ export function MapEntryB() {
             )}
           </div>
 
-          {effectiveView === "map" && mapState !== "error" ? (
+          {effectiveView === "map" && mapState !== "error" && !collection ? (
             <aside
               className={`${styles.mapKey} ${sampleEnvironment ? styles.sampleTemperatureKey : ""}`}
               data-testid="ondo-b-map-key"
@@ -3721,10 +3904,10 @@ export function MapEntryB() {
         {effectiveView === "list" || mapState === "error" ? (
           <div ref={listPanelRef} className={styles.listPanel} data-testid="ondo-b-list-panel" onScroll={(event) => rememberListScroll(event.currentTarget.scrollTop)}>
             {balancePlacesActive ? <button type="button" className={styles.balanceFilter} data-testid="map-balance-places-filter" aria-label={BALANCE_MAP_COPY[locale].clear} aria-pressed="true" onClick={clearBalancePlaces}>{BALANCE_MAP_COPY[locale].places}<X size={13} aria-hidden="true" /></button> : null}
-            <ResearchedFoodListB places={researchedFoods} locale={locale} onSelect={place => setSelectedResearchId(place.id)} />
+            {collection ? <DiscoveryCollectionResultsB id={collection} locale={locale} places={collectionPlaces} selected={collectionSelected} onSelect={selectCollectionPin} onOpen={openCollectionPlace} onClose={() => goBackFromBDiscovery("city")} layout="list" /> : <ResearchedFoodListB places={researchedFoods} locale={locale} onSelect={place => setSelectedResearchId(place.id)} />}
             {mapState === "error" ? <div className={styles.mapError} role="status" data-testid="ondo-b-map-fallback-status"><span>{city === "jeju" ? copy.editorialMapUnavailable : copy.mapUnavailable}</span><button type="button" onClick={retryMap}>{copy.retryMap}</button></div> : null}
             {retryListForeground && mapState === "loading" && mapProgressVisible ? <div className={styles.mapRetryStatus} role="status" data-testid="ondo-b-map-retry-status"><i aria-hidden="true" /><span>{city === "jeju" ? copy.editorialMapLoading : copy.mapLoading}</span></div> : null}
-            {researchedFoods.length > 0 && (city === "jeju" ? editorialPlaces.length === 0 : venues.length === 0) ? null : city === "jeju" ? (
+            {collection || researchedFoods.length > 0 && (city === "jeju" ? editorialPlaces.length === 0 : venues.length === 0) ? null : city === "jeju" ? (
               <EditorialPlaceList
                 places={editorialPlaces}
                 locale={locale}
@@ -3760,6 +3943,11 @@ export function MapEntryB() {
             )}
           </div>
         ) : null}
+        {effectiveView === "map" && !editorialOpen && !mapOptionsOpen && !discoverySearchOpen ? collection
+          ? <DiscoveryCollectionResultsB id={collection} locale={locale} places={collectionPlaces} selected={collectionSelected} onSelect={selectCollectionPin} onOpen={openCollectionPlace} onClose={() => goBackFromBDiscovery("city")} layout="map" />
+          : !query.trim() && !selectedVenueId && !selectedEditorialPlaceId && !selectedResearchId && !balancePlacesActive && !after19Active && !entryTransitionCity && state.surface.kind === "map"
+            ? <DiscoveryStoryHintB city={city} locale={locale} onOpen={openDiscoveryCollection} /> : null : null}
+        <DiscoveryCollectionPinsB map={mapState === "ready" ? mapRef.current : null} places={collectionPlaces} locale={locale} selected={collectionSelected} visible={Boolean(collection && effectiveView === "map" && !editorialOpen)} onSelect={selectCollectionPin} />
         {selectedVenue && selectedPulse ? <span className={styles.srOnly} role="status" data-testid="ondo-b-selected-marker-status">{`${venueDisplayName(selectedVenue.name.ko, locale)} · ${TEMPERATURE_NAME[locale]} · ${pulseLevelLabel(selectedPulse.level, locale)}`}</span> : null}
         {selectedEditorialPlace ? <span className={styles.srOnly} role="status" data-testid="ondo-b-selected-editorial-marker-status">{`${selectedEditorialPlace.name[locale]} · ${jejuEditorialCoverageSummary(selectedEditorialPlace, locale, TEMPERATURE_NAME[locale])}`}</span> : null}
         {userLocation ? <span className={styles.srOnly} data-testid="ondo-b-user-location-marker" data-longitude={userLocation.longitude} data-latitude={userLocation.latitude}>{copy.locationReady}</span> : null}
@@ -3772,7 +3960,7 @@ export function MapEntryB() {
             const venue = CANONICAL_MAP_VENUES_COMPACT.find(item => item.id === id)
             return venue ? venueDisplayName(venue.name.ko, locale) : ""
           }}
-          enabled={state.tab === "ondo" && effectiveView === "map" && !editorialOpen && !selectedVenueId && !selectedEditorialPlaceId && !selectedResearchId && !entryTransitionCity}
+          enabled={state.tab === "ondo" && !collection && effectiveView === "map" && !editorialOpen && !selectedVenueId && !selectedEditorialPlaceId && !selectedResearchId && !entryTransitionCity}
           onSelect={id => {
             if (researchedFoodByIdB(id)) { setSelectedResearchId(id); return }
             const editorial = editorialPlaceById(id)
@@ -3796,7 +3984,7 @@ export function MapEntryB() {
           }
         }}
         categoryLocked={after19NightSubsetActive}
-        resultLabel={resultCount((city === "jeju" ? editorialPlaces.length : venues.length) + researchedFoods.length, locale)}
+        resultLabel={resultCount(visibleResultCount ?? (city === "jeju" ? editorialPlaces.length : venues.length) + researchedFoods.length, locale)}
         canTilt={effectiveView === "map" && mapState === "ready" && entryTransitionCity !== city}
         tilted={mapTilted}
         onTogglePerspective={() => {
@@ -3814,7 +4002,9 @@ export function MapEntryB() {
         onDemo={sampleEnvironment ? () => { flushSync(() => setMapOptionsOpen(false)); window.dispatchEvent(new Event(SAMPLE_INFO_EVENT)) } : undefined}
         onClose={() => setMapOptionsOpen(false)}
       /> : null}
-      {selectedResearch && state.tab === "ondo" ? <ResearchedFoodPanelB place={selectedResearch} locale={locale} returnFocus={researchReturnFocus?.placeId === selectedResearch.id ? researchReturnFocus.focus : undefined} onClose={() => { setSelectedResearchId(null); setResearchReturnFocus(null) }} onMap={() => {
+      {collectionMarket && state.tab === "ondo" ? <DiscoveryMarketDetailB place={collectionMarket} locale={locale} onClose={closeCollectionPlace} /> : null}
+      {selectedResearch && state.tab === "ondo" ? <ResearchedFoodPanelB place={selectedResearch} locale={locale} returnFocus={researchReturnFocus?.placeId === selectedResearch.id ? researchReturnFocus.focus : undefined} onClose={closeCollectionPlace} onMap={() => {
+        if (readBDiscoveryHistory()?.discoveryPlaceId) { closeCollectionPlace(); return }
         setSelectedResearchId(null)
         setView("map")
         updateCityContext({ view: "map" })

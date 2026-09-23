@@ -160,6 +160,14 @@ test.describe("ONDO B standalone Sites packaging contract", () => {
     ])
 
     const files = filesBelow(STAGE_ROOT)
+    for (const file of [
+      "features/ondo/map/discovery-collection-model-b.ts",
+      "features/ondo/map/discovery-collection-b.tsx",
+      "features/ondo/map/discovery-collection-b.module.css",
+      "features/ondo/discovery-preview/fixtures.ts",
+    ]) expect(files, `${file} is required by the integrated discovery closure`).toContain(file)
+    expect(files).not.toContain("features/ondo/discovery-preview/discovery-preview.tsx")
+    expect(files).not.toContain("app/ondo-b/labs/discovery/page.tsx")
     expect(files).toContain("public/og-ktour-korea-v3.png")
     expect(files).toContain("features/ondo/onboarding/official-directory-onboarding.tsx")
     expect(files).toContain("features/ondo/onboarding/official-directory-onboarding.module.css")
@@ -547,6 +555,7 @@ test.describe("ONDO B standalone Sites packaging contract", () => {
     expect(worker).toContain('if (url.pathname === "/ondo-b") return legacyDiscoveryRedirect(url)')
     expect(worker).toContain("values.length === 1 && values[0].length <= 160")
     expect(worker).toContain(`const legacyDiscoveryQueryKeys = ${JSON.stringify(LEGACY_DISCOVERY_QUERY_KEYS)}`)
+    for (const key of ["collection", "collectionSelection", "discoveryPlaceId"]) expect(LEGACY_DISCOVERY_QUERY_KEYS).toContain(key)
     for (const blocked of ["qa", "private", "after19", "foo", "lang", "tab"]) {
       expect(LEGACY_DISCOVERY_QUERY_KEYS).not.toContain(blocked)
     }

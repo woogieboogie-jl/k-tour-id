@@ -17,7 +17,10 @@ export const PERSONAL_VERCEL_PROJECT_NAME = "ondo"
 export const LEGACY_DISCOVERY_QUERY_KEYS = Object.freeze([
   "category",
   "city",
+  "collection",
+  "collectionSelection",
   "detail",
+  "discoveryPlaceId",
   "editorialPlaceId",
   "q",
   "venueId",
@@ -174,6 +177,12 @@ export const SOURCE_FILES = Object.freeze([
   "features/ondo/map/b-discovery-history.ts",
   "features/ondo/map/b-discovery-focus.ts",
   "features/ondo/map/b-discovery-personalization.ts",
+  "features/ondo/map/discovery-collection-model-b.ts",
+  "features/ondo/map/discovery-collection-b.tsx",
+  "features/ondo/map/discovery-collection-b.module.css",
+  // Shared editorial data only; the development-only preview route, component,
+  // map and independent navigation state are deliberately not packaged.
+  "features/ondo/discovery-preview/fixtures.ts",
   "features/ondo/map/canonical-venue-capsule-b.module.css",
   "features/ondo/map/canonical-venue-capsule-b.tsx",
   "features/ondo/map/map-b.module.css",

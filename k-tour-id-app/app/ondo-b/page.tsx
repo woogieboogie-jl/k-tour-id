@@ -1,6 +1,6 @@
 import { permanentRedirect } from "next/navigation"
 
-const DISCOVERY_QUERY_KEYS = ["category", "city", "detail", "editorialPlaceId", "q", "venueId", "view"] as const
+const DISCOVERY_QUERY_KEYS = ["category", "city", "collection", "collectionSelection", "detail", "discoveryPlaceId", "editorialPlaceId", "q", "venueId", "view"] as const
 
 type LegacyOndoBPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>

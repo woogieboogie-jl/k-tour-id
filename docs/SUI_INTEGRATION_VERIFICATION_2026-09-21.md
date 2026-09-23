@@ -2,7 +2,17 @@
 
 검증 대상은 `integration/harvey-final-20260921`의 로컬 통합본이다. 이번 검증은 읽기 전용/격리 실행만 수행했으며, 신규 Sui 거래·서명·OAuth 실사용자·배포·환경변수 값 출력은 하지 않았다.
 
-## 실행 결과
+## 2026-09-23 재확인
+
+재확인 대상은 최종 통합본을 계승한 로컬 `preview/map-discovery-20260923`이다. 아래 9/21 기록과 구분한다.
+
+- `pnpm test:harvey:unit`: **69 passed, 0 failed**.
+- `node --import tsx scripts/hackathon-readonly-chain-audit.ts --read-only`: 이번 실행은 첫 digest `4pNNdcruJvmdWyYnSamrh7vxBRCCxWUAwG58uHBP1Wy3`에서 Sui Testnet gRPC `Transaction ... not found`로 중단되었다. 최종 성공 JSON이 없으므로 체인 검증 통과로 집계하지 않는다. 읽기 전용 조회만 했으며 신규 서명·거래·쓰기 시도는 0건이다.
+- 같은 공식 gRPC endpoint(`fullnode.testnet.sui.io:443`)에서 세 digest를 독립적으로 조회한 결과도 모두 개별 `Transaction ... not found`였다: `4pNN...1Wy3`, `EATb...M5W`, `CisR...gfB4D`. 별도 JSON-RPC client 시도는 public fullnode에서 세 건 모두 `Method not found` 응답이었다. 따라서 이번 조회 방식으로는 세 digest 모두 **현재 조회 불가**이며, reset·삭제·위조로 추론하지 않는다.
+- 위 네트워크 조회 실패와 별개로, 이전 실행에서 성공한 세 과거 digest의 historical 결과는 아래 기존 항목에 보존한다. 이번 재확인은 fresh full E2E가 아니다.
+- 9/23 프로덕션 격리 빌드의 실제 로컬 BFF 회귀 **4/4 통과**: sample pass→proposal→외부 체인 차단, decline, 재진입·holder acknowledgement 복구, 세션 쿠키 회전. 명령은 아래 기존 BFF 두 spec을 `http://127.0.0.1:3137`에 실행했다. 이는 실서비스 인증·zkLogin·새 거래 성공이 아니다.
+
+## 2026-09-21 실행 결과 (이전 기록)
 
 ### 실제 공개 체인 이력 (historical, read-only)
 

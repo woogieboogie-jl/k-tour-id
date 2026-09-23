@@ -6071,6 +6071,9 @@
 .balanceFilter:focus-visible { outline:3px solid var(--ondo-focus-ring, #2563eb); outline-offset:3px; }
 .balanceFilterFloating { position:absolute; z-index:8; top:calc(182px + env(safe-area-inset-top)); left:72px; box-shadow:0 4px 15px rgb(0 0 0 / 10%); }
 .compatRoot:has(.root[data-compact-chrome="true"]) > .balanceFilterFloating { top:calc(130px + env(safe-area-inset-top)); left:14px; }
+/* A recommendation scope is a discovery task, not the designated demo venue.
+   The existing perk shortcut returns unchanged when this scope is closed. */
+:global([data-testid="ondo-b-root"]):has(.root[data-discovery-collection]:not([data-discovery-collection="none"])) :global([data-testid="hackathon-demo-entry"]) { display:none; }
 @media (max-width:360px) {
   .root .cityHeader > .search:has(button[data-testid="map-wallet-balance"]) { gap:6px; padding-inline:9px; }
   .root .cityHeader > .search > button[data-testid="map-wallet-balance"] { min-width:76px; padding-inline:7px; }
