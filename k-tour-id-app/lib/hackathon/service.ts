@@ -514,39 +514,124 @@ export async function redeem(sessionId: string, operationId: string, input: { id
   return toResult(await loadOperation(sessionId, operationId))
 }
 
-/** OmniOne outbox worker step: submit if pending, confirm if submitted. Safe to re-run. */
+/** One durable owner may dispatch. Unknown submissions are read-only until resolved. */
 export async function processOutbox(outboxId: string) {
-  const row = await readStore((db) => db.outbox[outboxId])
+  let row = await readStore((db) => db.outbox[outboxId])
+  // Old workers could confirm solely from registry presence. Reconcile that
+  // evidence honestly without undoing the already-completed service benefit.
+  if (row?.status === "confirmed" && (!row.txHash || row.blockNumber == null)) {
+    await withStore((db) => {
+      const r = db.outbox[outboxId]
+      if (r?.status !== "confirmed" || (r.txHash && r.blockNumber != null)) return
+      r.status = r.txHash ? "submitted" : "unknown"; r.confirmedAt = null
+      r.lastError = "legacy_confirmation_missing_receipt"; r.updatedAt = nowIso(); mirror(db, r)
+    })
+    row = await readStore((db) => db.outbox[outboxId])
+  }
   if (!row || row.status === "confirmed" || row.status === "failed") return row
   if (!omnioneConfigured()) {
-    await withStore((db) => { const r = db.outbox[outboxId]; r.lastError = hkConfig().isolatedMock ? "isolated_mock_external_disabled" : "omnione_unconfigured"; r.updatedAt = nowIso(); mirror(db, r) })
+    await withStore((db) => {
+      const r = db.outbox[outboxId]
+      if (!r || r.processingClaim || r.status === "confirmed" || r.status === "failed") return
+      r.lastError = hkConfig().isolatedMock ? "isolated_mock_external_disabled" : "omnione_unconfigured"; r.updatedAt = nowIso(); mirror(db, r)
+    })
     return readStore((db) => db.outbox[outboxId])
   }
+  const claimId = randomId("obx_worker")
+  const claimed = await withStore((db) => {
+    const r = db.outbox[outboxId]
+    if (!r || r.status === "confirmed" || r.status === "failed") return null
+    if (r.processingClaim && Date.parse(r.processingClaim.expiresAt) > Date.now()) return null
+    r.processingClaim = { id: claimId, expiresAt: plusMs(90_000) }
+    return r
+  })
+  if (!claimed) return readStore((db) => db.outbox[outboxId])
+  // Keep provider I/O outside the store lock. A replaced worker cannot overwrite
+  // a newer result, even if its RPC returns after its lease expired.
+  const update = (fn: (r: OutboxRecord) => void) => withStore((db) => {
+    const r = db.outbox[outboxId]
+    if (!r || r.processingClaim?.id !== claimId) return null
+    fn(r); r.updatedAt = nowIso(); mirror(db, r)
+    return r
+  })
   try {
-    if (row.status === "pending" || row.status === "unknown") {
-      // recover by eventKey first (never resend blindly)
-      const existing = await getRedemption(row.eventKey)
+    if (!claimed.txHash) {
+      // Registry presence is useful recovery evidence, but not a tx receipt.
+      const existing = await getRedemption(claimed.eventKey)
       if (existing.exists) {
-        const matches = existing.payloadCommitment.toLowerCase() === row.payloadCommitment.toLowerCase()
-        await withStore((db) => { const r = db.outbox[outboxId]; r.status = matches ? "confirmed" : "failed"; r.lastError = matches ? null : "duplicate_eventKey_payload_mismatch"; r.confirmedAt = matches ? nowIso() : null; r.updatedAt = nowIso(); mirror(db, r) })
+        const matches = existing.payloadCommitment.toLowerCase() === claimed.payloadCommitment.toLowerCase()
+        await update((r) => {
+          r.status = matches ? "unknown" : "failed"
+          r.lastError = matches ? "registry_recorded_receipt_unavailable" : "duplicate_eventKey_payload_mismatch"
+          r.confirmedAt = null
+        })
         return await readStore((db) => db.outbox[outboxId])
       }
-      const submitted = await submitRedemption({ eventKeyHex: row.eventKey, payloadCommitmentHex: row.payloadCommitment })
-      await withStore((db) => { const r = db.outbox[outboxId]; r.attempts += 1; r.txHash = submitted.txHash; r.status = submitted.txHash ? "submitted" : "unknown"; r.updatedAt = nowIso(); mirror(db, r) })
+      // Missing registry state after an unknown RPC is not proof of no broadcast.
+      // Also treat legacy rows with attempts but no hash as unresolved.
+      if (claimed.status !== "pending" || claimed.attempts > 0) {
+        await update((r) => { r.status = "unknown"; r.lastError = "submission_unresolved_check_only" })
+        return await readStore((db) => db.outbox[outboxId])
+      }
+      const dispatch = await withStore((db) => {
+        const r = db.outbox[outboxId]
+        if (!r || r.processingClaim?.id !== claimId || !(Date.parse(r.processingClaim.expiresAt) > Date.now()) || r.status !== "pending" || r.txHash || r.attempts > 0) return null
+        // Persist before calling the signer: a crash/lease takeover cannot resend.
+        r.status = "unknown"; r.attempts += 1; r.lastError = "submission_in_progress"; r.updatedAt = nowIso(); mirror(db, r)
+        return r
+      })
+      if (!dispatch) return await readStore((db) => db.outbox[outboxId])
+      const submitted = await submitRedemption({
+        eventKeyHex: dispatch.eventKey, payloadCommitmentHex: dispatch.payloadCommitment,
+        onPrepared: async (txHash) => {
+          const saved = await withStore((db) => {
+            const r = db.outbox[outboxId]
+            if (!r || r.processingClaim?.id !== claimId || !(Date.parse(r.processingClaim.expiresAt) > Date.now()) || r.status !== "unknown" || r.txHash) return false
+            if (r.eventKey !== dispatch.eventKey || r.payloadCommitment !== dispatch.payloadCommitment) return false
+            r.txHash = txHash; r.status = "submitted"; r.lastError = null; r.updatedAt = nowIso(); mirror(db, r)
+            return true
+          })
+          assert(saved, "outbox_claim_lost", "Outbox ownership changed before broadcast", 409)
+        },
+      })
+      await update((r) => {
+        if (!submitted.matches) { r.status = "failed"; r.lastError = "duplicate_eventKey_payload_mismatch"; return }
+        r.txHash = submitted.txHash; r.status = submitted.txHash ? "submitted" : "unknown"
+        r.lastError = submitted.txHash ? null : submitted.alreadyRecorded ? "registry_recorded_receipt_unavailable" : "submission_unresolved_check_only"
+      })
     }
     const after = await readStore((db) => db.outbox[outboxId])
-    if (after.status === "submitted" && after.txHash) {
+    if (after?.processingClaim?.id === claimId && after.txHash && after.status !== "failed") {
       const rc = await receiptStatus(after.txHash)
       if (rc.status === "confirmed") {
         const onchain = await getRedemption(after.eventKey)
         const matches = onchain.exists && onchain.payloadCommitment.toLowerCase() === after.payloadCommitment.toLowerCase()
-        await withStore((db) => { const r = db.outbox[outboxId]; r.status = matches ? "confirmed" : "failed"; r.blockNumber = rc.blockNumber; r.confirmedAt = matches ? nowIso() : null; r.lastError = matches ? null : "receipt_ok_but_registry_mismatch"; r.updatedAt = nowIso(); mirror(db, r) })
+        await update((r) => {
+          r.status = matches && rc.blockNumber !== null ? "confirmed" : matches ? "submitted" : "failed"
+          r.blockNumber = rc.blockNumber; r.confirmedAt = r.status === "confirmed" ? nowIso() : null
+          r.lastError = !matches ? "receipt_ok_but_registry_mismatch" : rc.blockNumber === null ? "receipt_block_unavailable" : null
+        })
       } else if (rc.status === "failed") {
-        await withStore((db) => { const r = db.outbox[outboxId]; r.status = "failed"; r.blockNumber = rc.blockNumber; r.lastError = "receipt_status_0"; r.updatedAt = nowIso(); mirror(db, r) })
+        await update((r) => { r.status = "failed"; r.blockNumber = rc.blockNumber; r.confirmedAt = null; r.lastError = "receipt_status_0" })
+      } else {
+        await update((r) => { r.status = "submitted"; r.lastError = null })
       }
     }
   } catch (e) {
-    await withStore((db) => { const r = db.outbox[outboxId]; r.attempts += 1; r.status = r.txHash ? "submitted" : "unknown"; r.lastError = e instanceof Error ? e.message.slice(0, 200) : "unknown"; r.updatedAt = nowIso(); mirror(db, r) })
+    await update((r) => {
+      if (e instanceof HkError && e.code === "omnione_submission_not_started") {
+        r.status = "pending"; r.txHash = null; r.attempts = Math.max(0, r.attempts - 1)
+      }
+      // Read failures before dispatch leave a fresh pending item retryable.
+      r.status = r.txHash ? "submitted" : r.status
+      // SDK transport errors can embed an authenticated RPC URL or signed bytes.
+      r.lastError = e instanceof HkError ? e.message.slice(0, 200) : "omnione_request_failed"
+    })
+  } finally {
+    await withStore((db) => {
+      const r = db.outbox[outboxId]
+      if (r?.processingClaim?.id === claimId) delete r.processingClaim
+    })
   }
   return await readStore((db) => db.outbox[outboxId])
 }

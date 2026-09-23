@@ -18,6 +18,7 @@
     "start:harvey:local": "node scripts/hackathon-local.mjs start",
     "dev:harvey:local": "node scripts/hackathon-local.mjs dev",
     "test:harvey:unit": "node --import tsx --test tests/hackathon/*.test.ts",
+    "test:harvey:outbox": "node --experimental-test-module-mocks --import tsx --test tests/hackathon-verification/omnione-*.test.ts",
     "test:harvey:e2e": "playwright test --config=playwright.harvey-integration.config.ts",
     "test:harvey:bff": "PLAYWRIGHT_BASE_URL=http://127.0.0.1:3137 playwright test tests/e2e/ktour-harvey-bff-local.spec.ts tests/e2e/ktour-harvey-bff-recovery.spec.ts --project=mobile-chromium --workers=1 --output=artifacts/qa/harvey-bff-local",
     "scan:sites:ondo-b": "node scripts/ondo-b-standalone/scan-artifact.mjs",

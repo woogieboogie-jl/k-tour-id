@@ -1,4 +1,5 @@
 import { requestPlaceServiceReturnB } from "../commerce-b/place-service-registry-b"
+import { readBDiscoveryHistory, type BDiscoveryHistoryEntry } from "../map/b-discovery-history"
 
 /** Designated venue for the hackathon demo entitlement (one venue, one campaign).
  * The server is the authority (HK_CAMPAIGN_VENUE_ID); this constant only decides
@@ -13,14 +14,18 @@ export const HACKATHON_DEMO_ENTRY = HACKATHON_ENABLED && process.env.NEXT_PUBLIC
 export const HACKATHON_OPEN_EVENT_B = "ondo:b:hackathon-open"
 export const HACKATHON_PENDING_KEY = "ondo-b.hackathon.pending.v1"
 
-export type HackathonOpenDetail = { venueId: string; locale: "en" | "ko" | "ja"; resumeOperationId?: string }
+export type HackathonOpenDetail = { venueId: string; locale: "en" | "ko" | "ja"; resumeOperationId?: string; returnContext?: BDiscoveryHistoryEntry }
 
 /** URL, events and saved state may select a view, but never grant authority. */
 export function manualHackathonDetail(value: unknown): HackathonOpenDetail | null {
   if (!value || typeof value !== "object") return null
   const d = value as Record<string, unknown>
   if (!isHackathonVenue(d.venueId)) return null
-  return { venueId: d.venueId as string, locale: d.locale === "en" || d.locale === "ja" ? d.locale : "ko", ...(typeof d.resumeOperationId === "string" && d.resumeOperationId ? { resumeOperationId: d.resumeOperationId } : {}) }
+  // Reuse the discovery parser: only its bounded, non-authoritative UI fields
+  // survive a document return. Approval, signer and provider data cannot enter it.
+  const context = readBDiscoveryHistory({ __ondoBDiscovery: d.returnContext })
+  const returnContext = context && context.venueId === d.venueId && (context.level === "peek" || context.level === "detail") ? context : undefined
+  return { venueId: d.venueId as string, locale: d.locale === "en" || d.locale === "ja" ? d.locale : "ko", ...(typeof d.resumeOperationId === "string" && d.resumeOperationId ? { resumeOperationId: d.resumeOperationId } : {}), ...(returnContext ? { returnContext } : {}) }
 }
 
 export function isHackathonVenue(venueId: unknown) {
@@ -28,8 +33,9 @@ export function isHackathonVenue(venueId: unknown) {
 }
 
 export function requestHackathonOpenB(detail: HackathonOpenDetail) {
-  const manual = manualHackathonDetail(detail)
-  if (typeof window === "undefined" || !manual) return false
+  if (typeof window === "undefined") return false
+  const manual = manualHackathonDetail({ ...detail, returnContext: readBDiscoveryHistory() })
+  if (!manual) return false
   window.dispatchEvent(new CustomEvent<HackathonOpenDetail>(HACKATHON_OPEN_EVENT_B, { detail: manual }))
   return true
 }
@@ -65,7 +71,8 @@ export function readPendingHackathon(): HackathonOpenDetail | null {
     if (!raw) return null
     const parsed = JSON.parse(raw) as HackathonOpenDetail & { savedAt?: number }
     if (!parsed.venueId || !parsed.resumeOperationId) return null
-    if (parsed.savedAt && Date.now() - parsed.savedAt > 60 * 60 * 1000) { window.sessionStorage.removeItem(HACKATHON_PENDING_KEY); return null }
+    const age = typeof parsed.savedAt === "number" ? Date.now() - parsed.savedAt : Number.NaN
+    if (!Number.isFinite(age) || age < 0 || age >= 60 * 60 * 1000) { window.sessionStorage.removeItem(HACKATHON_PENDING_KEY); return null }
     return manualHackathonDetail(parsed)
   } catch { return null }
 }

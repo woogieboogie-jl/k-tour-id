@@ -4,7 +4,7 @@
 // sha256 over a de-identified manifest. Nothing personal reaches the chain.
 // Confirmation = receipt status 1 AND getRedemption(eventKey) returns the same
 // commitment. A tx hash alone is never "confirmed".
-import { Contract, JsonRpcProvider, Wallet, getBytes, hexlify, zeroPadValue } from "ethers"
+import { Contract, JsonRpcProvider, Wallet, getBytes, hexlify, keccak256, zeroPadValue } from "ethers"
 import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { HkError } from "../util"
 
@@ -44,14 +44,30 @@ export function omnioneConfigured() {
   return Boolean(c.rpcUrl && c.privateKey && c.registryAddress)
 }
 
-/** Submit recordRedemption. Returns the tx hash; confirmation is a separate read. */
-export async function submitRedemption(opts: { eventKeyHex: string; payloadCommitmentHex: string }) {
-  const c = hkConfig().omnione
-  const existing = await getRedemption(opts.eventKeyHex)
-  if (existing.exists) return { txHash: null as string | null, alreadyRecorded: true, matches: existing.payloadCommitment.toLowerCase() === opts.payloadCommitmentHex.toLowerCase() }
-  const contract = registry(true)
-  const tx = await contract.recordRedemption(b32(opts.eventKeyHex), b32(opts.payloadCommitmentHex), { type: 0, gasPrice: 0n, gasLimit: c.gasLimit })
-  return { txHash: tx.hash as string, alreadyRecorded: false, matches: true }
+/** Persist the signed transaction's identity BEFORE broadcasting. No raw signature is exposed. */
+export async function submitRedemption(opts: { eventKeyHex: string; payloadCommitmentHex: string; onPrepared?: (txHash: string) => Promise<void> }) {
+  // Preserve the isolation contract; a disabled lane is not a retryable RPC failure.
+  assertExternalServicesEnabled("OmniOne Chain submission")
+  let broadcastStarted = false
+  try {
+    const c = hkConfig().omnione
+    const existing = await getRedemption(opts.eventKeyHex)
+    if (existing.exists) return { txHash: null as string | null, alreadyRecorded: true, matches: existing.payloadCommitment.toLowerCase() === opts.payloadCommitmentHex.toLowerCase() }
+    const wallet = signer()
+    const request = await registry(false).recordRedemption.populateTransaction(b32(opts.eventKeyHex), b32(opts.payloadCommitmentHex), { type: 0, gasPrice: 0n, gasLimit: c.gasLimit })
+    const signed = await wallet.signTransaction(await wallet.populateTransaction(request))
+    const txHash = keccak256(signed)
+    await opts.onPrepared?.(txHash)
+    broadcastStarted = true
+    const tx = await provider().broadcastTransaction(signed)
+    if (tx.hash.toLowerCase() !== txHash.toLowerCase()) throw new HkError("omnione_transaction_mismatch", "Broadcast result does not match the prepared transaction", 502)
+    return { txHash, alreadyRecorded: false, matches: true }
+  } catch (error) {
+    // A failed read/sign/persistence step is known not to have broadcast. A
+    // transport error after broadcast starts is ambiguous and must be queried.
+    if (!broadcastStarted) throw new HkError("omnione_submission_not_started", "OmniOne preparation failed before broadcast; safe to retry preparation", 503)
+    throw error
+  }
 }
 
 export async function getRedemption(eventKeyHex: string) {

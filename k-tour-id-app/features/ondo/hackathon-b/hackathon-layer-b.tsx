@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Ticket, X } from "lucide-react"
 import type { OperationResult } from "@/lib/hackathon/types"
 import { requestPlaceServiceReturnB } from "../commerce-b/place-service-registry-b"
+import { B_DISCOVERY_TRAVERSAL_EVENT } from "../map/b-discovery-history"
 import { useOndoB } from "../shared/state/ondo-b-provider"
 import { ONDO_MODAL_PRIORITY } from "../shared/ui/modal-layer-priority"
 import { useDocumentScrollLock, useModalIsolation } from "../shared/ui/use-modal-isolation"
@@ -75,7 +76,7 @@ export function HackathonEntitlementLayerB() {
     else if (hk === "start" && HACKATHON_DEMO_ENTRY) openHackathonVenueB(300)
     // Legacy automatic-entry links are view-only shortcuts. They never open or approve a journey.
     else if ((hk === "auto" || hk === "auto-execute" || hk === "step") && HACKATHON_DEMO_ENTRY) openHackathonVenueB(300)
-    if (hk) { url.searchParams.delete("hk"); window.history.replaceState(null, "", url.toString()) }
+    if (hk) { url.searchParams.delete("hk"); window.history.replaceState(window.history.state, "", url.toString()) }
     return () => window.removeEventListener(HACKATHON_OPEN_EVENT_B, onOpen)
   }, [])
   if (!HACKATHON_ENABLED) return null
@@ -170,7 +171,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
     return () => { alive = false }
   }, [detail.venueId, detail.resumeOperationId, run])
 
-  useEffect(() => { if (op && op.status === "pending") writePendingHackathon({ venueId: detail.venueId, locale: detail.locale, resumeOperationId: op.operationId }) }, [op, detail.venueId, detail.locale])
+  useEffect(() => { if (op && op.status === "pending") writePendingHackathon({ ...detail, resumeOperationId: op.operationId }) }, [op, detail])
 
   const close = useCallback((returnToPlace: boolean) => {
     closedRef.current = true
@@ -178,6 +179,19 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
     onClose()
     if (returnToPlace) window.setTimeout(() => requestPlaceServiceReturnB(detail.venueId, "offer"), 30)
   }, [onClose, op, detail.venueId])
+
+  useEffect(() => {
+    // Native discovery Back/Forward already chooses its destination. Leave the
+    // approval UI immediately; do not restore an older place or cancel a server
+    // operation. closedRef also suppresses signing a late prepare response.
+    const leave = () => close(false)
+    window.addEventListener(B_DISCOVERY_TRAVERSAL_EVENT, leave)
+    window.addEventListener("popstate", leave)
+    return () => {
+      window.removeEventListener(B_DISCOVERY_TRAVERSAL_EVENT, leave)
+      window.removeEventListener("popstate", leave)
+    }
+  }, [close])
 
   // ── step actions ──────────────────────────────────────────────────
   const start = () => run("start", async () => { if (consent && info?.supported) setOp(await api.create(detail.venueId, info?.consentVersion ?? config?.consentVersion ?? "", locale)) })
@@ -219,7 +233,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
     if (jwt) { setSigner(await finishZkLogin(op.operationId, jwt)); sessionStorage.removeItem(`ondo-b.hackathon.jwt:${op.operationId}`); return }
     const params = await api.zkParams()
     if (!params.configured) throw new Error(tr("Google 연결이 준비되지 않았어요.", "Google sign-in is not configured.", "Google連携の準備ができていません。"))
-    writePendingHackathon({ venueId: detail.venueId, locale: detail.locale, resumeOperationId: op.operationId })
+    writePendingHackathon({ ...detail, resumeOperationId: op.operationId })
     window.location.assign(await beginZkLogin(op.operationId, params.googleClientId, params.maxEpoch))
   })
   const delegate = () => run("delegate", async () => {

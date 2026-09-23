@@ -35,7 +35,9 @@ export default function ZkLoginCallbackPage() {
       }
       const id = pending?.resumeOperationId
       const signer = id ? readSigner(id) : null
-      const target = id ? `/?hk=${encodeURIComponent(id)}` : "/"
+      // The venue is navigation context only. Keep it in the return URL so a
+      // cold document can restore the matching bounded discovery snapshot.
+      const target = id && pending ? `/?venueId=${encodeURIComponent(pending.venueId)}&detail=1&hk=${encodeURIComponent(id)}` : "/"
       setReturnTo(target)
       const result = readOAuthReturn(fragment, query, signer?.kind === "zklogin" && signer.jwtPending ? signer.oauthState : undefined)
       if (!id || !signer || signer.kind !== "zklogin" || result.status !== "accepted") { setFailed(true); return }

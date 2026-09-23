@@ -41,6 +41,8 @@ export type OutboxRecord = {
   outboxId: string; operationId: string; eventKey: string; payloadCommitment: string; payload: Record<string, unknown>
   status: "pending" | "submitted" | "confirmed" | "failed" | "unknown"; txHash: string | null; blockNumber: number | null
   attempts: number; lastError: string | null; createdAt: string; updatedAt: string; confirmedAt: string | null
+  // Durable worker ownership; never exposed in the public chain summary.
+  processingClaim?: { id: string; expiresAt: string }
 }
 export type IdempotencyRecord = { key: string; bodyDigest: string; responseDigest: string; createdAt: string }
 

@@ -1743,6 +1743,23 @@ export function MapEntryB() {
     }
     window.addEventListener(B_DISCOVERY_TRAVERSAL_EVENT, onTraversal)
     const removeTraversalGuard = installBDiscoveryTraversalGuard()
+    // External sign-in replaces the document, unlike an in-app place service.
+    // Restore UI context only for the same pending venue and a cold history;
+    // never override native Back/Forward or treat this snapshot as authority.
+    // Read the bounded DTO here without importing the full-stack hackathon
+    // client into the standalone map bundle.
+    if (process.env.NEXT_PUBLIC_HK_ENABLED === "1" && !readBDiscoveryHistory()) {
+      try {
+        const pending = JSON.parse(sessionStorage.getItem("ondo-b.hackathon.pending.v1") ?? "null")
+        const context = readBDiscoveryHistory({ __ondoBDiscovery: pending?.returnContext })
+        const requestedVenue = new URLSearchParams(window.location.search).get("venueId")
+        const venue = CANONICAL_MAP_VENUES_COMPACT.find(item => item.id === requestedVenue)
+        const age = typeof pending?.savedAt === "number" ? Date.now() - pending.savedAt : Number.NaN
+        if (pending?.resumeOperationId && Number.isFinite(age) && age >= 0 && age < 60 * 60 * 1000
+          && context?.venueId === pending.venueId && context?.venueId === requestedVenue && context?.city === venue?.cityId
+          && (context?.level === "peek" || context?.level === "detail")) replaceBDiscoveryHistoryForActiveDocument(context)
+      } catch { /* absent or invalid return data cannot change discovery */ }
+    }
     const initialState = window.history.state
     const initialized = initializeBDiscoveryHistory((venueId) => CANONICAL_MAP_VENUES_COMPACT.find((venue) => venue.id === venueId)?.cityId)
     const onboardingNation: BDiscoveryHistoryEntry = {
