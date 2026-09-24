@@ -2,11 +2,11 @@
 
 **현재 코드:** 하비 최종본 `f4526af3` 보존 통합. [9/24 통합·검수·실환경 한계](./HARVEY_PRESERVATION_INTEGRATION_2026-09-24.md)를 우선합니다. OpenDID 실연동은 native holder 단계로 보류합니다. 아래 가이드 저장 v2 기획과 Harvey 혜택 사용 v1은 별개입니다.
 
-**9/25 UX:** [헤더·검색·스펙트럼](./KTOUR_HEADER_INTEGRATION_2026-09-25.md) · [모바일 제목·여백](./KTOUR_MOBILE_TYPOGRAPHY_IMPLEMENTATION_2026-09-25.md). 로컬 검수 완료, GitHub 자동 배포 준비 중. API·SDK·체인 명세 변경 없음. 공개 UI 배포와 실제 연동 E2E는 별도입니다.
+**9/25 UX:** [헤더·검색·스펙트럼](./KTOUR_HEADER_INTEGRATION_2026-09-25.md) · [모바일 제목·여백](./KTOUR_MOBILE_TYPOGRAPHY_IMPLEMENTATION_2026-09-25.md) · [공개 배포 기록](./KTOUR_PUBLIC_UX_RELEASE_2026-09-25.md). API·SDK·체인 명세 변경 없음. 공개 standalone UI와 실제 연동 E2E는 별도입니다.
 
 **변경 이력:** [지도·결제·장소](./KTOUR_UX_REFINEMENT_2026-09-24.md) · [이야기·온도](./KTOUR_STORY_TEMPERATURE_REVIEW_2026-09-24.md) · [모바일 UX 보존](./KTOUR_MOBILE_REFINEMENT_LOCAL_2026-09-16.md).
 
-**실연동 인계:** [실환경 재현 조건](./HARVEY_RUNTIME_REPRODUCTION_2026-09-23.md) · [가이드 저장 계약](./EXPERIENCE_MOCK_HANDOFF_2026-09-15.md). 공개 가이드·결제·예약은 목업이며 실제 자격·금액 이동을 보장하지 않습니다.
+**실연동 인계:** [9/25 요건·가점·잔여 작업](./HACKATHON_LIVE_READINESS_2026-09-25.md) · [실환경 재현 조건](./HARVEY_RUNTIME_REPRODUCTION_2026-09-23.md) · [가이드 저장 계약](./EXPERIENCE_MOCK_HANDOFF_2026-09-15.md). 공개 가이드·결제·예약은 목업이며 실제 자격·금액 이동을 보장하지 않습니다.
 
 ## 1. 목표와 범위
 

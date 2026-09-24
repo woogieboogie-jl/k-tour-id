@@ -95,7 +95,10 @@ export async function probeStandaloneHttp(baseUrl) {
   const discoverySamples = {
     category: "korean",
     city: "seoul",
+    collection: "sesame",
+    collectionSelection: "lab-seoul-jungbu-market",
     detail: "1",
+    discoveryPlaceId: "lab-seoul-jungbu-market",
     editorialPlaceId: "ondo-jeju-haenyeo",
     q: "sesame oil",
     venueId: VENUE_ID,

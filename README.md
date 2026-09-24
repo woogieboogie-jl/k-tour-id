@@ -1,6 +1,10 @@
 # K-Tour ID
 
-**Current local integration (2026-09-24):** `integration/harvey-preservation-20260924` contains Harvey's final `f4526af3`, the preserved mobile UX and discovery mock, and independently reviewed navigation/outbox recovery fixes. It is not pushed or deployed. Start with [the integration status, local commands and remaining provider work](./docs/HARVEY_PRESERVATION_INTEGRATION_2026-09-24.md); the production links and original handoff instructions below are historical baselines. The integrated v1 perk journey is distinct from the v2 guide-saving mock. By user decision, real OpenDID is deferred to native-holder work; CX and the integrated chain path still require separate live-environment verification.
+**Current public UI release (2026-09-25):** [Release scope and deployment evidence](./docs/KTOUR_PUBLIC_UX_RELEASE_2026-09-25.md) cover the reviewed map/story/spectrum header and mobile typography update, released through the existing GitHub → Vercel pipeline. The public standalone build and Harvey's full-stack runtime are separate; shipping this UI does not enable or certify real provider/chain execution. The production records below describe earlier releases.
+
+**Integrated code:** this repository includes Harvey's final `f4526af3`, preserved mobile UX, discovery mock, and independently reviewed navigation/outbox recovery fixes. See [integration status and remaining provider work](./docs/HARVEY_PRESERVATION_INTEGRATION_2026-09-24.md). The integrated v1 perk journey is distinct from the v2 guide-saving mock. Real OpenDID remains deferred to native-holder work; CX and the integrated chain path need separate live-environment verification.
+
+**Next integration work:** [September 25 readiness audit](./docs/HACKATHON_LIVE_READINESS_2026-09-25.md) maps official requirements and bonuses to code, deployed modes, evidence gaps, acceptance checks, and the user inputs needed for real identity/signing tests.
 
 K-Tour ID is a map-first Korea food and travel product. It combines 400 official Seoul and Busan food-service records with a clearly separated Jeju editorial collection, then connects discovery to saved places, Tables and an optional privacy-preserving travel credential flow.
 
