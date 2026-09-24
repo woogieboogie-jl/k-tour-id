@@ -10,57 +10,23 @@
 .peekCopy p { margin: 0; overflow: hidden; color: #68686d; font-size: 12px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
 .peekCopy h2 { display: -webkit-box; margin: 0; overflow: hidden; font-size: clamp(21px, 6.2vw, 27px); line-height: 1.12; letter-spacing: -.045em; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .peekCopy small { overflow: hidden; color: #68686d; font-size: 12px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
-.temperature {
-  --coverage-position: 18%;
-  --coverage-color: #d9bf73;
-  display: grid;
-  min-height: 54px;
-  align-content: center;
-  gap: 8px;
+.editorialContext {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 7px;
   margin: 2px 0 10px;
-  padding: 11px 13px;
-  border: 1px solid color-mix(in srgb, var(--coverage-color) 44%, var(--ondo-line, #d6d9db));
-  border-radius: 16px;
-  background:
-    radial-gradient(circle at 2% 50%, color-mix(in srgb, var(--coverage-color) 16%, transparent), transparent 28%),
-    color-mix(in srgb, var(--coverage-color) 5%, var(--ondo-surface, #fff));
-  box-shadow: inset 4px 0 0 var(--coverage-color), var(--ondo-shadow, 0 8px 22px rgb(0 0 0 / 5%));
-}
-.temperature[data-coverage-intensity="clustered"] { --coverage-position: 50%; --coverage-color: #e57a3a; }
-.temperature[data-coverage-intensity="dense"] { --coverage-position: 82%; --coverage-color: #9a2c4f; }
-.temperature > span {
+  padding: 0 12px;
+  border: 1px solid var(--ondo-line, #dedede);
+  border-radius: 12px;
+  background: var(--ondo-surface-soft, #f3f3f1);
   color: var(--ondo-muted, #626267);
-  font-size: 12px;
-  font-weight: 820;
-  letter-spacing: .11em;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
 }
-.temperature > i {
-  position: relative;
-  display: block;
-  width: min(220px, 72vw);
-  height: 10px;
-  overflow: visible;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #ddd 0%, #d9bf73 35%, #e57a3a 61%, #c94832 80%, #7a2048 100%);
-  box-shadow: inset 0 0 0 1px rgb(23 23 23 / 8%);
-}
-.temperature > i b {
-  position: absolute;
-  top: 50%;
-  left: var(--coverage-position);
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--ondo-surface-raised, #fff);
-  border-radius: 50%;
-  background: var(--coverage-color);
-  box-shadow: 0 0 0 1px rgb(23 23 23 / 16%), 0 0 18px color-mix(in srgb, var(--coverage-color) 56%, transparent);
-  transform: translate(-50%, -50%);
-}
-.temperature[data-testid="ondo-b-editorial-place-temperature"] {
-  min-height: 72px;
-  margin: 0;
-}
-.temperature[data-testid="ondo-b-editorial-place-temperature"] > i { width: min(260px, 58vw); }
+.editorialContext > svg { flex: none; }
+.body > .editorialContext { margin: 0; }
 .recordSummary { margin: 0 0 7px; padding: 0; border-block: 1px solid rgb(23 23 23 / 10%); }
 .recordSummary > summary { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; list-style: none; }
 .recordSummary > summary::-webkit-details-marker { display: none; }
@@ -94,12 +60,13 @@
 .address { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 9px; margin: 0; padding: 12px; border: 1px solid rgb(23 23 23 / 9%); border-radius: 15px; background: #f7f7f8; }
 .address > span { display: grid; gap: 3px; color: #4d4d52; font-size: 13px; line-height: 1.45; }
 .address b { color: #171717; font-size: 12px; }
-.actions { display: grid; grid-template-columns: minmax(0, 1fr) 52px; gap: 8px; }
+.actions { display: grid; grid-template-columns: minmax(0, 1fr) 48px; gap: 8px; }
 .actions a, .actions button { box-sizing: border-box; display: flex; min-height: 50px; align-items: center; justify-content: center; gap: 7px; padding: 0 10px; border: 1px solid #171717; border-radius: 14px; font: inherit; font-size: 13px; font-weight: 780; text-decoration: none; }
-.actions a { background: #171717; color: #fff; }
-.actions button { width: 52px; min-width: 52px; padding: 0; background: #fff; color: #171717; }
+.actions a { min-width: 48px; background: #fff; color: #171717; }
+.actions button { min-width: 44px; background: #171717; color: #fff; }
+.actions svg { flex: none; }
 .actions button[aria-pressed="true"] { background: #f2f2f3; }
-.saveLabel { position: absolute !important; width: 1px !important; height: 1px !important; margin: -1px !important; padding: 0 !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; border: 0 !important; white-space: nowrap !important; }
+.saveLabel { min-width: 0; line-height: 1.4; overflow-wrap: anywhere; }
 .tableAction { box-sizing: border-box; display: grid; min-height: 58px; width: 100%; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 9px 14px; border: 1px solid #dedbd8; border-radius: 16px; background: #fff; color: #171717; font: inherit; text-align: left; }
 .tableAction span { display: grid; min-width: 0; gap: 2px; }
 .tableAction strong { font-size: 14px; line-height: 1.25; }
@@ -119,7 +86,7 @@
 .sources a span { display: grid; min-width: 0; gap: 2px; }
 .sources a b { font-size: 12px; }
 .sources a small { overflow: hidden; color: #66615c; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.layer :focus-visible { outline: 2px solid var(--ondo-focus); outline-offset: 2px; }
+.peek :focus-visible, .layer :focus-visible { outline: 2px solid var(--ondo-focus); outline-offset: 2px; }
 
 @media (min-width: 801px) {
   .peek { right: 16px; bottom: 16px; left: auto; width: min(460px, calc(100% - 32px)); max-height: min(520px, calc(100% - 32px)); }
@@ -135,8 +102,6 @@
   .peekActions { gap: 6px; }
   .peekActions a, .peekActions button { font-size: 12px; }
   .body { gap: 12px; padding-inline: 14px; }
-  .actions { grid-template-columns: minmax(0, 1fr) 50px; }
-  .actions button { width: 50px; min-width: 50px; }
 }
 
 @media (orientation: landscape) and (max-height: 500px) {
@@ -182,8 +147,8 @@
   .backdrop { backdrop-filter: none; }
 }
 
-/* Global appearance owns place chrome. Editorial coverage keeps its unscored
-   data distinction while using the shared warm temperature field language. */
+/* Global appearance owns place chrome. Unscored editorial places use neutral
+   content labels; the independent prepared-activity sample keeps its meter. */
 .layer { color: var(--ondo-ink, #171717); }
 
 .peek,
@@ -210,7 +175,7 @@
 
 .peekCopy p,
 .peekCopy small,
-.temperature > span,
+.editorialContext,
 .recordSummary small,
 .recordSummary p,
 .sheet > header > span,
@@ -227,7 +192,7 @@
 .sources a { border-color: var(--ondo-line, rgb(23 23 23 / 12%)); }
 
 .peekActions a,
-.actions button,
+.actions a,
 .tableAction,
 .sources a {
   border-color: var(--ondo-line, rgb(23 23 23 / 12%));
@@ -236,7 +201,7 @@
 }
 
 .peekActions button,
-.actions a {
+.actions button {
   border-color: var(--ondo-control, #171717);
   background: var(--ondo-control, #171717);
   color: var(--ondo-control-ink, #fff);
@@ -256,17 +221,13 @@
 .sources > summary,
 .mediaCredit b { color: var(--ondo-ink, #171717); }
 
-/* Jeju uses the same thermal meter language as Seoul and Busan.  Its marker
-   still represents editorial coverage rather than a fabricated score; that
-   distinction remains in the accessible label and data contract instead of
-   creating a visibly unrelated blue component. */
-
 @media (forced-colors: active) {
   .peek,
   .sheet,
   .close,
   .peekMedia,
   .hero,
+  .editorialContext,
   .address,
   .peekActions a,
   .peekActions button,

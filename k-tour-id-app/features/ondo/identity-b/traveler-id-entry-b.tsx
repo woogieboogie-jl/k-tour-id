@@ -435,9 +435,9 @@ export function TravelerIdEntryB() {
 
   return (
     <div className={styles.root}>
-      <div className={styles.screen} data-testid="ondo-b-traveler-id" data-visual-direction="apple-wallet-flow8">
-        <header className={styles.header}>
-          <h1>{copy.title}</h1>
+      <div className={styles.screen} data-testid="ondo-b-traveler-id" data-page-typography="root" data-visual-direction="apple-wallet-flow8">
+        <header className={styles.header} data-page-title-frame>
+          <h1 data-page-title>{copy.title}</h1>
           <SampleInfoButtonB />
         </header>
 

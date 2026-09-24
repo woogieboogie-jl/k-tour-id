@@ -134,8 +134,6 @@ test("COLLECTION-HISTORY-003 moods preserve category and layer; replacement, not
     expect(history.length).toBe(length)
     expect(openBDiscoveryCollection("cool")).toMatchObject({ collection: "cool", query: "cool", category: "korean" })
     history.back()
-    expect(entry().collection).toBe("hot")
-    history.back()
     expect(entry()).toMatchObject({ query: "rice", category: "korean", layer: "after19" })
     expect(entry()).not.toHaveProperty("collection")
   })
@@ -275,8 +273,51 @@ test("COLLECTION-HISTORY-011 normalization removes private fields and foreign se
   })
 })
 
+test("COLLECTION-HISTORY-013 temperature changes replace one scope and Back restores its original map", () => {
+  withHistory("/?city=seoul&category=korean", ({ history, entry }) => {
+    initialize()
+    replaceBDiscoveryCityContext({ ...entry(), camera: CAMERA })
+    const before = history.length
+    openBDiscoveryCollection("hot")
+    openBDiscoveryCollection("warm")
+    openBDiscoveryCollection("cool")
+    expect(history.length).toBe(before + 1)
+    expect(entry()).toMatchObject({ collection: "cool", category: "korean" })
+    history.back()
+    expect(entry()).toMatchObject({ city: "seoul", category: "korean", camera: CAMERA })
+    expect(entry().collection).toBeUndefined()
+  })
+})
+
+test("COLLECTION-HISTORY-015 the spectrum intersects a free-text query without changing keyword search", () => {
+  withHistory("/?city=seoul&q=coffee", ({ history, entry }) => {
+    initialize()
+    openBDiscoveryCollection("hot", { preserveQuery: true })
+    expect(entry()).toMatchObject({ collection: "hot", query: "coffee" })
+    openBDiscoveryCollection("warm", { preserveQuery: true })
+    expect(entry()).toMatchObject({ collection: "warm", query: "coffee" })
+    history.back()
+    expect(entry()).toMatchObject({ query: "coffee" })
+    expect(entry().collection).toBeUndefined()
+    openBDiscoveryCollection("cool")
+    expect(entry()).toMatchObject({ collection: "cool", query: "cool" })
+  })
+})
+
+test("COLLECTION-HISTORY-014 reset preserves filters changed inside a temperature scope", () => {
+  withHistory("/?city=seoul", ({ entry }) => {
+    initialize()
+    openBDiscoveryCollection("warm")
+    replaceBDiscoveryCityContext({ ...entry(), category: "korean" })
+    replaceBDiscoveryCityContext({ ...entry(), collection: null, collectionSelection: null, query: "" })
+    expect(entry()).toMatchObject({ city: "seoul", category: "korean", query: "" })
+    expect(entry().collection).toBeUndefined()
+  })
+})
+
 test("COLLECTION-HISTORY-012 direct cross-city and ambiguous targets never open a mixed place envelope", () => {
   for (const path of [
+    "/?city=jeju&collection=jeju-kpop&discoveryPlaceId=jeju-donsadon",
     `/?city=jeju&collection=screen&discoveryPlaceId=${FOOD}`,
     `/?city=seoul&collection=screen&discoveryPlaceId=${FOOD}`,
     `/?city=seoul&collection=hot&discoveryPlaceId=${FOOD}&venueId=${VENUE}`,

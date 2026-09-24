@@ -1,4 +1,14 @@
 .root { display: grid; gap: 20px; min-width: 0; padding: 8px 0; color: var(--ondo-ink, #171717); }
+.content { display: grid; gap: 20px; min-width: 0; }
+.root[data-credit-complete="true"], .root[data-credit-complete="true"] .content { gap: 12px; }
+.completedSummary { display: grid; gap: 6px; min-width: 0; }
+.completedSummary > strong { font-size: clamp(30px, 8vw, 38px); line-height: 1.15; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.completedSummary > p { color: var(--ondo-muted, #64646b); font-size: 13px; line-height: 1.45; }
+.completedSummary dl { margin: 6px 0 0; }
+.completedSummary dl > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; }
+.completedSummary dt { color: var(--ondo-muted, #64646b); font-size: 13px; line-height: 1.4; }
+.completedSummary dd { margin: 0; font-size: 18px; font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.completedReceipt { display: grid; gap: 14px; margin-block: 8px 16px; }
 .root *, .root *::before, .root *::after { box-sizing: border-box; }
 .root p, .root h3 { margin: 0; }
 .truth { display: flex; align-items: center; gap: 7px; color: var(--ondo-muted, #64646b); font-size: 15px; line-height: 1.5; }

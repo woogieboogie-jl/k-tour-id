@@ -186,8 +186,8 @@ export function SettingsEntryB() {
   }
 
   return (
-    <div className={styles.page} data-testid="ondo-b-settings-entry" data-visual-direction="quiet-mobile-settings">
-      <header className={styles.header}><h1 ref={headingRef} tabIndex={-1}>{copy.title}</h1><SampleInfoButtonB /></header>
+    <div className={styles.page} data-testid="ondo-b-settings-entry" data-page-typography="root" data-visual-direction="quiet-mobile-settings">
+      <header className={styles.header} data-page-title-frame><h1 data-page-title ref={headingRef} tabIndex={-1}>{copy.title}</h1><SampleInfoButtonB /></header>
       <div className={styles.rows}>
         <button type="button" className={styles.row} onClick={() => { setLanguageError(false); setSheet("language") }} data-testid="settings-language-row">
           <span className={styles.rowIcon} aria-hidden="true"><Languages size={21} /></span><span className={styles.rowCopy}><strong>{copy.language}</strong><span className={styles.rowValue}>{LOCALE_NAME[locale]}</span></span><ChevronRight className={styles.chevron} size={19} aria-hidden="true" />

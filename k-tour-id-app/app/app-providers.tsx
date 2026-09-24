@@ -9,8 +9,9 @@ import { AppProvider } from "@/lib/store/app-provider"
 export function AppProviders({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const isProductionDirectory = pathname === "/" || pathname === "/ondo-b" || pathname.startsWith("/ondo-b/")
+  const isIsolatedHeaderStudy = pathname === "/labs/header-preview"
 
-  if (isProductionDirectory) return children
+  if (isProductionDirectory || isIsolatedHeaderStudy) return children
 
   return (
     <LangProvider>

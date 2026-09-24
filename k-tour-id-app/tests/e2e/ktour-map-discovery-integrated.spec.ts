@@ -31,8 +31,22 @@ async function openMap(page: Page) {
   await nation.locator("[data-city='seoul']").click()
   const map = page.getByTestId("ondo-b-map-entry")
   await expect(map).toHaveAttribute("data-effective-view", "map")
+  await expect(map).toHaveAttribute("data-map-state", "ready", { timeout: 30_000 })
   observed.arm()
   return { map, forbidden: observed.forbidden }
+}
+
+async function selectTemperature(page: Page, band: "hot" | "warm" | "cool") {
+  const spectrum = page.getByTestId("map-temperature-spectrum")
+  await page.getByTestId(`map-temperature-${band}`).click()
+  await expect(spectrum).toHaveAttribute("data-selected", band)
+}
+
+async function openSearch(page: Page) {
+  const search = page.getByTestId("ondo-b-search")
+  if (!(await search.isVisible())) await page.getByTestId("ondo-b-map-search-toggle").click()
+  await expect(search).toBeVisible()
+  return search
 }
 
 test.describe("production map discovery integration", () => {
@@ -41,7 +55,7 @@ test.describe("production map discovery integration", () => {
   test("nation → Seoul → story map → native back returns to the city map", async ({ page }) => {
     const { map, forbidden } = await openMap(page)
     await expect(map).toHaveAttribute("data-discovery-collection", "none")
-    await page.getByTestId("map-discovery-story").click()
+    await page.getByTestId("map-discovery-story").first().click()
     await expect(map).toHaveAttribute("data-discovery-collection", "sesame")
     await expect(page.getByTestId("map-discovery-results")).toHaveAttribute("data-collection", "sesame")
     await page.goBack()
@@ -51,7 +65,7 @@ test.describe("production map discovery integration", () => {
 
   test("native forward restores the story collection after returning to Seoul", async ({ page }) => {
     const { map, forbidden } = await openMap(page)
-    await page.getByTestId("map-discovery-story").click()
+    await page.getByTestId("map-discovery-story").first().click()
     await expect(map).toHaveAttribute("data-discovery-collection", "sesame")
     await page.goBack()
     await expect(map).toHaveAttribute("data-discovery-collection", "none")
@@ -63,32 +77,33 @@ test.describe("production map discovery integration", () => {
 
   test("Hot and Cool are city-scoped collections and search Enter reaches the same modes", async ({ page }) => {
     const { map, forbidden } = await openMap(page)
-    await page.getByTestId("ondo-b-search").focus()
-    await page.getByTestId("map-discovery-mood-hot").click()
+    await selectTemperature(page, "hot")
     await expect(map).toHaveAttribute("data-discovery-collection", "hot")
     await expect(page.getByTestId("map-discovery-results")).toHaveAttribute("data-collection", "hot")
-    await page.getByTestId("ondo-b-search").fill("cool")
-    await page.getByTestId("ondo-b-search").press("Enter")
+    const search = await openSearch(page)
+    await search.fill("cool")
+    await search.press("Enter")
     await expect(map).toHaveAttribute("data-discovery-collection", "cool")
-    await page.getByTestId("ondo-b-search").fill("hot")
-    await page.getByTestId("ondo-b-search").press("Enter")
+    const nextSearch = await openSearch(page)
+    await nextSearch.fill("hot")
+    await nextSearch.press("Enter")
     await expect(map).toHaveAttribute("data-discovery-collection", "hot")
     expect(forbidden).toEqual([])
   })
 
   test("literal Hotdog query remains search and does not become the Hot mood", async ({ page }) => {
     const { map, forbidden } = await openMap(page)
-    await page.getByTestId("ondo-b-search").fill("Hotdog")
-    await page.getByTestId("ondo-b-search").press("Enter")
+    const search = await openSearch(page)
+    await search.fill("Hotdog")
+    await search.press("Enter")
     await expect(map).toHaveAttribute("data-discovery-collection", "none")
-    await expect(page.getByTestId("ondo-b-search")).toHaveValue("Hotdog")
+    await expect(await openSearch(page)).toHaveValue("Hotdog")
     expect(forbidden).toEqual([])
   })
 
   test("category filters preserve collection and expose result counts", async ({ page }) => {
     const { map, forbidden } = await openMap(page)
-    await page.getByTestId("ondo-b-search").focus()
-    await page.getByTestId("map-discovery-mood-hot").click()
+    await selectTemperature(page, "hot")
     const results = page.getByTestId("map-discovery-results")
     await expect(results).toHaveAttribute("data-collection", "hot")
     await page.getByTestId("ondo-b-map-options-open").click()
@@ -106,7 +121,7 @@ test.describe("production map discovery integration", () => {
 
   test("story market detail opens from card and closes back to the result tray", async ({ page }) => {
     const { map, forbidden } = await openMap(page)
-    await page.getByTestId("map-discovery-story").click()
+    await page.getByTestId("map-discovery-story").first().click()
     const card = page.locator("[data-discovery-place-opener]").first()
     await expect(card).toBeVisible()
     await card.click()
@@ -124,8 +139,7 @@ test.describe("production map discovery integration", () => {
 
   test("research detail keeps source and pin/card selection synchronized", async ({ page }) => {
     const { map, forbidden } = await openMap(page)
-    await page.getByTestId("ondo-b-search").focus()
-    await page.getByTestId("map-discovery-mood-hot").click()
+    await selectTemperature(page, "hot")
     const opener = page.locator("[data-discovery-place-opener]").first()
     const id = await opener.getAttribute("data-discovery-place-opener")
     expect(id).toBeTruthy()
@@ -164,8 +178,7 @@ test.describe("production map discovery integration", () => {
   test("small viewport keeps discovery tray and keyboard actions inside the map shell", async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 720 })
     const { map, forbidden } = await openMap(page)
-    await page.getByTestId("ondo-b-search").focus()
-    await page.getByTestId("map-discovery-mood-cool").click()
+    await selectTemperature(page, "cool")
     await expect(page.getByTestId("map-discovery-results")).toBeVisible()
     const geometry = await map.evaluate(node => ({
       right: node.getBoundingClientRect().right,
@@ -179,8 +192,7 @@ test.describe("production map discovery integration", () => {
 
   test("reload preserves the active city and discovery collection without a service call", async ({ page }) => {
     const { map, forbidden } = await openMap(page)
-    await page.getByTestId("ondo-b-search").focus()
-    await page.getByTestId("map-discovery-mood-cool").click()
+    await selectTemperature(page, "cool")
     await expect(map).toHaveAttribute("data-discovery-collection", "cool")
     await page.reload({ waitUntil: "domcontentloaded" })
     await expect(page.getByTestId("ondo-b-map-entry")).toHaveAttribute("data-discovery-collection", "cool")

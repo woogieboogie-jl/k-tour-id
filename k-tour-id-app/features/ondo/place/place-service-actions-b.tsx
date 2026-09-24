@@ -39,15 +39,16 @@ export function PlacePeekActionsB({ placeId, locale, className, details, directi
 
 /** Capabilities are an explicit walkthrough registry, never inferred from a
  * guide entry or directory record. Production hides these sample actions. */
-export function PlaceServiceActionsB({ placeId, locale, onOffer, offerTestId, offerInFooter = false, presentation = "default" }: {
+export function PlaceServiceActionsB({ placeId, locale, onOffer, offerTestId, offerInFooter = false, presentation = "default", includeGuide = true }: {
   placeId: string
   locale: "en" | "ko" | "ja"
   onOffer?: () => void
   offerTestId?: string
   /** One action owner: a research detail can place the offer in its footer. */
   offerInFooter?: boolean
-  /** Full detail leads with freely readable content, then compact service rows.
-   * Other entry points retain their existing action hierarchy. */
+  /** Canonical detail owns a separate freely readable guide group. */
+  includeGuide?: boolean
+  /** Compact service rows in full detail; other entry points retain tiles. */
   presentation?: "default" | "place-detail"
 }) {
   const { actions } = useOndoB()
@@ -55,7 +56,7 @@ export function PlaceServiceActionsB({ placeId, locale, onOffer, offerTestId, of
   const place = resolveCommercePlaceB(placeId)
   if (!sampleMode || !place || (!place.commerce && !place.reservation)) return null
   const copy = COPY[locale]
-  const guide = <ExperienceEntryB placeId={placeId} locale={locale} />
+  const guide = includeGuide ? <ExperienceEntryB placeId={placeId} locale={locale} /> : null
   return <>{presentation === "place-detail" ? guide : null}{(!offerInFooter && place.commerce) || place.reservation ? <section className={styles.actions} data-testid="place-service-actions" data-service-layout={presentation === "place-detail" ? "rows" : "tiles"} data-service-place-id={place.id} data-place-return-section="offer" data-capability-mode="sample">
     {place.commerce && !offerInFooter ? <button type="button" className={styles.primary} data-testid={offerTestId ?? "place-offer-open"} data-place-service="offer" data-offer-id={place.commerce.offerId} onClick={() => {
       capturePlaceServiceMapReturnB(place.id)

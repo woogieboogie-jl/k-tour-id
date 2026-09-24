@@ -21,17 +21,30 @@ test("map options presents the map owner's actions in the existing modal frame",
   expect(source).not.toContain("GlobalAfter19B")
 })
 
-test("the guide owns focus after its explicit non-modal handoff without delayed refocus", () => {
+test("guide and After19 handoffs retain their own focus without delayed sheet refocus", () => {
   const frame = readFileSync(resolve("features/ondo/shared/ui/sheet-b.tsx"), "utf8")
   const mapCss = readFileSync(resolve("features/ondo/map/map-b.module.css"), "utf8")
   expect(source).toContain("guideOwnsFocus.current = true")
-  expect(source).toContain("shouldRestoreFocus={() => !guideOwnsFocus.current}")
+  expect(source).toContain("after19OwnsFocus.current = true")
+  expect(source).toContain("onAfter19?.()")
+  expect(source).toContain("shouldRestoreFocus={() => !guideOwnsFocus.current && !after19OwnsFocus.current}")
   expect(frame).toContain("if (shouldRestoreFocusRef.current?.() === false) return")
   expect(source).not.toContain("setTimeout")
   const scopedGuide = mapCss.slice(mapCss.indexOf("The legacy disclosure owns important offsets."))
   expect(scopedGuide).toContain("top: 0 !important")
   expect(scopedGuide).toContain("bottom: 0 !important")
   expect(scopedGuide).toContain("width: 100% !important")
+})
+
+test("unified map header ships controlled components without importing the Lab", () => {
+  for (const stem of ["map-header-b", "map-header-spectrum-b"]) {
+    expect(policy).toContain(`"features/ondo/map/${stem}.tsx"`)
+    expect(policy).toContain(`"features/ondo/map/${stem}.module.css"`)
+    const component = readFileSync(resolve(`features/ondo/map/${stem}.tsx`), "utf8")
+    expect(component).not.toMatch(/(?:from|import).*app\/labs/)
+    expect(component).not.toContain("localStorage")
+    expect(component).not.toContain("fetch(")
+  }
 })
 
 test("After19 locks only category choices; localization, map/privacy controls and exit remain", () => {

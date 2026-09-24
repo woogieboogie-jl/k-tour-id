@@ -22,6 +22,7 @@ test("DISCOVERY-PREVIEW-002 feature source is local editorial state only", () =>
   expect(source).not.toMatch(/\b(fetch|XMLHttpRequest|WebSocket)\s*\(/)
   expect(source).not.toMatch(/\b(localStorage|sessionStorage|indexedDB|document\.cookie)\b/)
   expect(source).not.toMatch(/useBState|AppProviders|wallet|signTransaction|verifySignature|zkLogin|OpenDID|OmniOne|Sui|chain/i)
-  expect(source).toContain("Fixed editorial demo sets")
+  expect(source).toContain('source: "editorial-demo"')
+  expect(source).toContain("Unknown stays unknown")
   expect(source).toContain("Saves last only in this page")
 })

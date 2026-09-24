@@ -183,3 +183,5 @@
   .privacy > summary:focus-visible,
   .done:focus-visible { outline-color: Highlight; }
 }
+.credits { display:flex; flex-direction:column; gap:4px; }
+.credits a { display:flex; align-items:center; min-height:44px; width:fit-content; color:inherit; text-underline-offset:3px; }

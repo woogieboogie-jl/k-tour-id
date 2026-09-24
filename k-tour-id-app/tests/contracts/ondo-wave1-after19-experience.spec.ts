@@ -148,7 +148,20 @@ test("W1-AFTER19-006 review provenance is an explicit anchored disclosure with e
 
   expect(ui).toContain('reviewDetailsCloseRef.current?.focus({ preventScroll: true })')
   expect(ui).toContain('event.key !== "Escape" || !reviewDetailsRef.current?.contains(document.activeElement)')
-  expect(ui).toContain('window.requestAnimationFrame(() => reviewToggleRef.current?.focus({ preventScroll: true }))')
+  // Review-detail close restores the explicit review trigger when it still
+  // exists, then resolves the external opener only when this layer is trigger-
+  // hidden. Gate teardown uses the broader helper below, including the map
+  // options/view-toggle fallbacks when the original trigger was removed.
+  expect(ui).toContain('const target = reviewToggleRef.current ?? (returnFocusSelector ? resolveExternalOpener() : null)')
+  expect(ui).toContain('target?.focus({ preventScroll: true })')
+  expect(ui).toContain('window.requestAnimationFrame(() => {\n      const target = reviewToggleRef.current ?? (returnFocusSelector ? resolveExternalOpener() : null)')
+  expect(ui).toContain('plan.kind === "active-control" ? "[data-testid=\'global-after19-review-toggle\']" : null')
+  expect(ui).toContain('plan.kind === "active-control" ? "[data-testid=\'global-after19-banner\'] button" : null')
+  expect(ui).toContain('"[data-testid=\'global-after19-toggle\']"')
+  expect(ui).toContain('"[data-testid=\'ondo-b-view-toggle\']"')
+  expect(ui).toContain('.find(isVisibleDestination)')
+  expect(ui).toContain('focusVisibleDestination(destination)')
+  expect(ui).toContain('frame = window.requestAnimationFrame(restoreAfterRemoval)')
   expect(ui).toContain('reviewContextRef.current === nextContext')
   expect(ui).toContain('[context.cityId, context.venueId]')
   expect(ui).toContain('if (!reviewDetailsOpen || (session.mode === "on" && reviewResult)) return')

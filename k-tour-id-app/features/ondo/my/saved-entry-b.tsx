@@ -530,9 +530,9 @@ export function SavedEntryB() {
   )
 
   return (
-    <div className={styles.screen} data-testid="ondo-b-my-korea-entry" data-visual-direction="warm-living-atlas" data-empty-journey={isEmptyJourney ? "true" : "false"}>
-      <header className={styles.header}>
-        <h1>{copy.title}</h1>
+    <div className={styles.screen} data-testid="ondo-b-my-korea-entry" data-page-typography="root" data-visual-direction="warm-living-atlas" data-empty-journey={isEmptyJourney ? "true" : "false"}>
+      <header className={styles.header} data-page-title-frame>
+        <h1 data-page-title>{copy.title}</h1>
       </header>
 
       <div className={styles.memoryStage}>

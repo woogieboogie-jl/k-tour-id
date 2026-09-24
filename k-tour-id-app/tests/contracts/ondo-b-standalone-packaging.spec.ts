@@ -282,7 +282,7 @@ test.describe("ONDO B standalone Sites packaging contract", () => {
     expect(sourceFiles.some((file) => file.startsWith("lib/hackathon/"))).toBe(false)
     expect(sourceFiles.some((file) => file.startsWith("app/api/hackathon/"))).toBe(false)
     expect(readFileSync(resolve(STAGE_ROOT, "features/ondo/hackathon-b/hackathon-layer-b.tsx"), "utf8"))
-      .toBe("export function HackathonEntitlementLayerB() { return null }\n")
+      .toBe("export function HackathonEntitlementLayerB() { return null }\nexport function HackathonDemoEntryB() { return null }\n")
     expect(readFileSync(resolve(STAGE_ROOT, "features/ondo/hackathon-b/hackathon-cta-b.tsx"), "utf8"))
       .toContain("{ return null }")
     expect(source).not.toContain("@mysten/sui")

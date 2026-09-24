@@ -68,7 +68,7 @@ test.describe("premium Pulse map and responsive shell lane", () => {
         page.getByTestId("ondo-b-locate"),
         page.getByTestId("ondo-b-view-toggle"),
         page.getByTestId("ondo-b-map-key-details").locator(":scope > summary"),
-        page.getByTestId("ondo-b-map-credit-details").locator("summary"),
+        page.getByTestId("ondo-b-attribution").getByRole("link").first(),
       ]
       for (const target of touchTargets) {
         const bounds = await requiredBox(target)

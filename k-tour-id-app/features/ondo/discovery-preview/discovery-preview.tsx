@@ -10,7 +10,7 @@ const COPY = {
   search: words("장소, Hot 또는 Cool", "Places, Hot or Cool", "場所、Hot、Cool"),
   next: words("다음은 어디로?", "Where to next?", "次は、どこへ？"),
   hot: words("주목할 곳", "In the spotlight", "注目の場所"),
-  cool: words("새로운 발견", "A different discovery", "新しい発見"),
+  cool: words("차분한 무드", "A laid-back mood", "ゆったり気分"),
   saved: words("저장한 장소", "Saved places", "保存した場所"),
   all: words("전체", "All", "すべて"),
   cafe: words("카페", "Cafés", "カフェ"),
@@ -26,7 +26,7 @@ const COPY = {
   empty: words("아직 맞는 장소가 없어요", "No matching places yet", "一致する場所はまだありません"),
   reset: words("조건 지우기", "Clear filters", "条件を解除"),
   prototype: words("로컬 목업", "Local prototype", "ローカル試作"),
-  truth: words("추천은 고정된 편집 예시예요. 실시간 인기·혼잡 정보가 아니며, Cool은 한적함이 아닌 새로운 발견을 뜻해요. 저장은 이 화면에서만 유지돼요. 계정·인증·예약·결제는 연결하지 않았어요.", "Recommendations are fixed editorial examples, not live popularity or crowd data. Cool means discovery, not quietness. Saves last only in this page. No account, identity, booking or payment services are connected.", "固定の編集例で、リアルタイムの人気・混雑情報ではありません。Coolは静けさではなく新しい発見です。保存はこの画面内のみ。アカウント・本人確認・予約・決済には接続していません。"),
+  truth: words("관심·활기를 표현한 고정 추천 예시예요. 실시간 인기·혼잡 정보가 아니며, Cool도 조용함을 보장하지 않아요. 저장은 이 화면에서만 유지돼요. 계정·인증·예약·결제는 연결하지 않았어요.", "Fixed attention/activity examples, not live popularity or crowd data. Cool suggests a laid-back mood, not guaranteed quiet. Saves last only in this page. No account, identity, booking or payment services are connected.", "関心・活気を表す固定の例です。リアルタイムの人気・混雑情報ではなく、Coolも静かさを保証しません。保存はこの画面内のみ。アカウント・本人確認・予約・決済には接続していません。"),
 }
 type Snapshot = { scope: Scope; kind: Kind; query: string; selected: string | null; camera: Camera | null; detail?: string | null; info?: boolean }
 
@@ -85,7 +85,7 @@ export function DiscoveryPreview() {
   const focusedPlace = PLACES.find(p => p.id === detail)
   const isExplore = scope.mode === "explore"
   const count = (n: number) => locale === "ko" ? `${n}곳` : locale === "ja" ? `${n}か所` : `${n} ${n === 1 ? "place" : "places"}`
-  const title = story ? story.title[locale] : scope.mode === "hot" ? "Hot" : scope.mode === "cool" ? "Cool"
+  const title = story ? story.title[locale] : scope.mode === "hot" ? "Hot" : scope.mode === "warm" ? "Warm" : scope.mode === "cool" ? "Cool"
     : scope.mode === "saved" ? COPY.saved[locale] : scope.mode === "search" ? scope.query : COPY.next[locale]
 
   useEffect(() => { setDark(window.matchMedia("(prefers-color-scheme: dark)").matches); setHydrated(true) }, [])

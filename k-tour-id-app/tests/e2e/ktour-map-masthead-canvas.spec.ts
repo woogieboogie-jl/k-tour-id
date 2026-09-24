@@ -146,10 +146,10 @@ test("MAP-CANVAS city/list controls retain dock clearance and saved/pass retain 
   await expect(page.getByTestId("ondo-b-city-header")).toBeVisible()
   await expect(page.getByTestId("maplibre-map")).toHaveAttribute("data-map-mode", "city")
   await expect(page.getByTestId("ondo-b-map-entry")).toHaveAttribute("data-entry-transition", "settled")
-  await expect(page.getByTestId("ondo-b-result-bar")).toHaveAttribute("data-effective-view", "map")
+  await expect(page.getByTestId("ondo-b-map-entry")).toHaveAttribute("data-effective-view", "map")
   await fullBleedMap(page)
   const nav = await box(page.getByTestId("ondo-main-nav"))
-  for (const action of [page.getByTestId("ondo-b-view-toggle"), page.getByTestId("ondo-b-map-key-details").locator(":scope > summary"), page.getByTestId("ondo-b-map-credit-details").locator(":scope > summary")]) {
+  for (const action of [page.getByTestId("ondo-b-view-toggle"), page.getByTestId("ondo-b-map-key-details").locator(":scope > summary"), page.getByTestId("ondo-b-attribution").getByRole("link").first()]) {
     await hit(action)
     const bounds = await box(action)
     expect(bounds.y + bounds.height).toBeLessThanOrEqual(nav.y - 7)
@@ -184,6 +184,6 @@ test("MAP-CANVAS city/list controls retain dock clearance and saved/pass retain 
   await page.getByTestId("nav-ondo").click()
   await expect(page.getByTestId("ondo-b-list-panel")).toBeVisible()
   await page.getByTestId("ondo-b-view-toggle").click()
-  await expect(page.getByTestId("ondo-b-result-bar")).toHaveAttribute("data-effective-view", "map")
+  await expect(page.getByTestId("ondo-b-map-entry")).toHaveAttribute("data-effective-view", "map")
   await fullBleedMap(page)
 })

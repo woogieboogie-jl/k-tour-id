@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { ArrowLeft, ArrowUpRight, Bookmark, ChevronRight, Database, MapPin, Navigation, UsersRound, X } from "lucide-react"
 import { B_DISCOVERY_TRAVERSAL_EVENT, closeBDiscoveryPlace, goBackFromBDiscovery, openBDiscoveryEditorialDetail, readBDiscoveryHistory, readBDiscoveryTraversal, readMyKoreaPlaceReturnNavigation } from "../map/b-discovery-history"
 import { SampleActivityMeterB } from "../map/sample-activity-meter-b"
-import { editorialPlaceById, JAPAN_FIRST_LAUNCH_CONTENT, JEJU_EDITORIAL_TEMPERATURE, jejuEditorialCoverageIntensity, jejuEditorialCoverageSummary } from "../pulse-b/japan-first-pulse-model-b"
+import { editorialPlaceById, JAPAN_FIRST_LAUNCH_CONTENT, JEJU_EDITORIAL_TEMPERATURE, jejuEditorialCoverageIntensity } from "../pulse-b/japan-first-pulse-model-b"
 import { useOndoB } from "../shared/state/ondo-b-provider"
 import type { OndoBLocale } from "../shared/state/ondo-b-preferences"
 import { isRenderedFocusable } from "../shared/ui/is-rendered-focusable"
@@ -46,7 +46,9 @@ const COPY = {
     sourceDetails: "Source details",
     details: "Place details",
     back: "Back to place summary",
-    temperature: "Place temperature",
+    screenPlace: "Filming location",
+    editorialPlace: "Editorial pick",
+    noScore: "An editorial travel recommendation, not a popularity or crowding score.",
     imageSource: "Hero image",
     collection: "Story source",
     checked: "Place page and embedded map checked Aug 28, 2026",
@@ -68,7 +70,9 @@ const COPY = {
     sourceDetails: "출처 정보",
     details: "장소 상세",
     back: "장소 요약으로",
-    temperature: "장소 온도",
+    screenPlace: "촬영지",
+    editorialPlace: "편집 추천",
+    noScore: "여행 콘텐츠에 소개된 장소이며, 인기·혼잡 점수를 제공하지 않아요.",
     imageSource: "대표 이미지",
     collection: "이야기 출처",
     checked: "장소 페이지와 내장 지도를 2026년 8월 28일 확인",
@@ -90,7 +94,9 @@ const COPY = {
     sourceDetails: "情報源の詳細",
     details: "スポット詳細",
     back: "スポット概要に戻る",
-    temperature: "スポットのにぎわい",
+    screenPlace: "ロケ地",
+    editorialPlace: "編集部のおすすめ",
+    noScore: "旅行コンテンツのおすすめです。人気度や混雑度のスコアではありません。",
     imageSource: "メイン画像",
     collection: "ストーリー情報源",
     checked: "スポットページと埋め込み地図を2026年8月28日に確認",
@@ -191,7 +197,8 @@ export function EditorialPlaceOverlayB({ editorialPlaceId, locale: mountedLocale
   if (!place) return null
   const activePlace = place
   const coverageIntensity = jejuEditorialCoverageIntensity(activePlace)
-  const temperatureSummary = jejuEditorialCoverageSummary(activePlace, locale, copy.temperature)
+  const editorialLabel = activePlace.category === "screen-location" ? copy.screenPlace : copy.editorialPlace
+  const editorialSummary = `${editorialLabel} · ${copy.noScore}`
   const address = locale === "ko" ? activePlace.address.ko : activePlace.address.en
   const stories = activePlace.storyIds.flatMap((storyId) => {
     const story = JAPAN_FIRST_LAUNCH_CONTENT.find((item) => item.id === storyId)
@@ -287,16 +294,17 @@ export function EditorialPlaceOverlayB({ editorialPlaceId, locale: mountedLocale
           <small>{locale === "en" ? activePlace.name.ko : activePlace.name.en}</small>
         </div>
       </section>
-      <SampleActivityMeterB city="jeju" venueId={activePlace.id} locale={locale} fallback={<section className={styles.temperature} role="group" aria-label={temperatureSummary} data-pulse-level={JEJU_EDITORIAL_TEMPERATURE.level} data-coverage-intensity={coverageIntensity} data-temperature-model={JEJU_EDITORIAL_TEMPERATURE.model} data-editorial-temperature-mode={JEJU_EDITORIAL_TEMPERATURE.mode} data-temperature-score="none" data-temperature-visual-grammar="shared-meter-card" data-pulse-numeric="hidden">
-        <span aria-hidden="true">{copy.temperature}</span><i aria-hidden="true"><b /></i>
+      <SampleActivityMeterB city="jeju" venueId={activePlace.id} locale={locale} fallback={<section className={styles.editorialContext} role="group" aria-label={editorialSummary} data-coverage-intensity={coverageIntensity} data-temperature-model={JEJU_EDITORIAL_TEMPERATURE.model} data-editorial-temperature-mode={JEJU_EDITORIAL_TEMPERATURE.mode} data-temperature-score="none" data-temperature-visual-grammar="editorial-label" data-pulse-numeric="hidden">
+        <MapPin size={16} aria-hidden="true" /><span>{editorialLabel}</span>
       </section>} />
       <details className={styles.recordSummary} data-testid="editorial-place-source-summary">
         <summary><span><strong>{copy.source}</strong><small>VISITKOREA</small></span><ChevronRight size={16} aria-hidden="true" /></summary>
         <p>{copy.checked}</p>
+        <p>{copy.noScore}</p>
       </details>
-      <PlacePeekActionsB placeId={activePlace.id} locale={locale} className={styles.peekActions} directionsFirst
+      <PlacePeekActionsB placeId={activePlace.id} locale={locale} className={styles.peekActions}
         details={hasService => <button ref={openRef} type="button" onClick={openDetails} data-testid="ondo-b-editorial-place-details" data-visual-priority={hasService ? "secondary" : "primary"}>{copy.details}<ChevronRight size={17} aria-hidden="true" /></button>}
-        directions={<a href={directions} target="_blank" rel="noreferrer" data-testid="ondo-b-editorial-place-directions"><Navigation size={17} aria-hidden="true" />{copy.directions}</a>} />
+        directions={<a href={directions} target="_blank" rel="noreferrer" data-testid="ondo-b-editorial-place-directions" data-visual-priority="secondary"><Navigation size={17} aria-hidden="true" />{copy.directions}</a>} />
     </div>
   )
 
@@ -320,13 +328,13 @@ export function EditorialPlaceOverlayB({ editorialPlaceId, locale: mountedLocale
             <h2 id="editorial-place-title">{place.name[locale]}</h2>
           </section>
           <PlaceServiceActionsB placeId={activePlace.id} locale={locale} />
-          <section className={styles.temperature} role="group" aria-label={temperatureSummary} data-testid="ondo-b-editorial-place-temperature" data-pulse-level={JEJU_EDITORIAL_TEMPERATURE.level} data-coverage-intensity={coverageIntensity} data-temperature-model={JEJU_EDITORIAL_TEMPERATURE.model} data-editorial-temperature-mode={JEJU_EDITORIAL_TEMPERATURE.mode} data-temperature-score="none" data-temperature-visual-grammar="shared-meter-card" data-pulse-numeric="hidden">
-            <span aria-hidden="true">{copy.temperature}</span><i aria-hidden="true"><b /></i>
+          <section className={styles.editorialContext} role="group" aria-label={editorialSummary} data-testid="ondo-b-editorial-place-temperature" data-coverage-intensity={coverageIntensity} data-temperature-model={JEJU_EDITORIAL_TEMPERATURE.model} data-editorial-temperature-mode={JEJU_EDITORIAL_TEMPERATURE.mode} data-temperature-score="none" data-temperature-visual-grammar="editorial-label" data-pulse-numeric="hidden">
+            <MapPin size={16} aria-hidden="true" /><span>{editorialLabel}</span>
           </section>
           <p className={styles.address}><MapPin size={17} aria-hidden="true" /><span><b>{copy.address}</b><span lang={locale === "ko" ? "ko" : "en"}>{address}</span></span></p>
           <div className={styles.actions}>
-            <a href={directions} target="_blank" rel="noreferrer" data-testid="ondo-b-editorial-place-directions"><Navigation size={18} aria-hidden="true" />{copy.directions}</a>
             <button type="button" onClick={toggleSaved} aria-label={saved ? copy.remove : copy.save} aria-pressed={saved} data-testid="ondo-b-editorial-place-save"><Bookmark size={18} aria-hidden="true" /><span className={styles.saveLabel}>{saved ? copy.remove : copy.save}</span></button>
+            <a href={directions} target="_blank" rel="noreferrer" aria-label={copy.directions} title={copy.directions} data-testid="ondo-b-editorial-place-directions" data-visual-priority="secondary"><Navigation size={18} aria-hidden="true" /></a>
           </div>
           {activePlace.category === "food" ? <button type="button" className={styles.tableAction} onClick={openTable} data-place-service={table ? "table" : undefined} data-testid={table ? "ondo-b-editorial-place-table" : "ondo-b-editorial-place-browse-tables"}>
             <UsersRound size={19} aria-hidden="true" />
@@ -338,6 +346,7 @@ export function EditorialPlaceOverlayB({ editorialPlaceId, locale: mountedLocale
             <summary aria-label={copy.sourceDetails}><span><Database size={17} aria-hidden="true" /><b>VISITKOREA</b></span><ChevronRight size={17} aria-hidden="true" /></summary>
             <div className={styles.sourceBody}>
               <p>{copy.checked}</p>
+              <p>{copy.noScore}</p>
               {heroMedia ? <p className={styles.mediaCredit}><b>{copy.imageSource}</b><span>{heroMedia.credit[locale]}</span></p> : null}
               <a href={place.placeSourceUrl} target="_blank" rel="noreferrer"><span><b>{copy.source}</b><small>VISITKOREA · {place.location.coordinateSource}</small></span><ArrowUpRight size={17} aria-hidden="true" /></a>
               {stories.map((story) => <a key={story.id} href={story.sourceReferences[0].url} target="_blank" rel="noreferrer"><span><b>{copy.collection}</b><small>{story.title[locale]}</small></span><ArrowUpRight size={17} aria-hidden="true" /></a>)}

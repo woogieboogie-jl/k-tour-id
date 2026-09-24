@@ -144,7 +144,7 @@ test("MW-02 shortage top-up preserves the exact place and needs a fresh payment 
   await expect(page.getByTestId("map-wallet-balance")).toHaveAttribute("data-balance-krw", "4000")
   await offer(page, "research-seoul-okdongsik")
   await expect(page.getByTestId("commerce-balance-shortage")).toContainText("18,000")
-  await page.getByTestId("commerce-shortage-fund").click()
+  await page.getByTestId("payment-confirm").click()
   await expect(page.getByTestId("funding-source-sheet")).toHaveAttribute("data-funding-purpose", "topup")
   await expect(page.getByTestId("funding-source-sheet")).toHaveAttribute("data-funding-subject", "offer:research-seoul-okdongsik")
   await expect(page.getByTestId("funding-source-sheet").locator("input[value='travel_balance']")).toHaveCount(0)

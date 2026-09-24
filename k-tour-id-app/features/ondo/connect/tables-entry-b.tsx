@@ -1413,9 +1413,9 @@ export function PulseTablesEntryB() {
   const activePlanValues = tablePlanValues(activeTable, locale, t)
 
   return (
-    <section className={styles.entry} data-testid="tables-entry" data-visual-direction="timeleft-warm-atlas">
-      <header className={styles.entryHeader}>
-        <p>{isUpcoming ? t.eyebrow : t.pastEyebrow}</p><h1>{t.title}</h1><span>{t.intro}</span>
+    <section className={styles.entry} data-testid="tables-entry" data-page-typography="root" data-visual-direction="timeleft-warm-atlas">
+      <header className={styles.entryHeader} data-page-title-frame>
+        <p>{isUpcoming ? t.eyebrow : t.pastEyebrow}</p><h1 data-page-title>{t.title}</h1><span>{t.intro}</span>
       </header>
 
       {publicSample && <button type="button" className={styles.reservationEntry} data-testid="tables-reservation-open" onClick={() => requestReservationSampleB()}><CalendarClock size={20} aria-hidden="true" /><span><strong>{locale === "ko" ? "매장 예약" : locale === "ja" ? "席を予約" : "Book a restaurant"}</strong><small>{locale === "ko" ? "서울 · 부산 · 제주 · 샘플" : locale === "ja" ? "ソウル・釜山・済州・サンプル" : "Seoul · Busan · Jeju · Sample"}</small></span><ChevronRight size={18} aria-hidden="true" /></button>}

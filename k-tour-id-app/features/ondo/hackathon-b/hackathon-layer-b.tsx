@@ -80,7 +80,7 @@ export function HackathonEntitlementLayerB() {
     return () => window.removeEventListener(HACKATHON_OPEN_EVENT_B, onOpen)
   }, [])
   if (!HACKATHON_ENABLED) return null
-  if (!open) return HACKATHON_DEMO_ENTRY ? <DemoEntryButton /> : null
+  if (!open) return null
   return <Journey key={open.resumeOperationId ?? open.venueId} detail={open} onClose={() => {
     setOpen(null)
     window.setTimeout(() => {
@@ -91,17 +91,15 @@ export function HackathonEntitlementLayerB() {
   }} />
 }
 
-/** Floating map shortcut (demo builds only): opens the designated venue's place sheet. */
-function DemoEntryButton() {
+/** Optional demo-menu slot. Never competes with the first map experience. */
+export function HackathonDemoEntryB() {
   const { state } = useOndoB()
-  if (state.tab !== "ondo" || state.surface.kind !== "map") return null
+  if (!HACKATHON_DEMO_ENTRY) return null
   const label = state.locale === "en" ? "Start perk journey" : state.locale === "ja" ? "体験特典を始める" : "체험 혜택 여정 시작"
   return (
-    <div className={styles.entryGroup}>
-      <button type="button" className={styles.entry} data-testid="hackathon-demo-entry" onClick={() => openHackathonVenueB()}>
+      <button type="button" data-testid="hackathon-demo-entry" onClick={() => openHackathonVenueB()}>
         <Ticket size={16} aria-hidden="true" /><span>{label}</span>
       </button>
-    </div>
   )
 }
 

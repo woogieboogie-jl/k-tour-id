@@ -175,6 +175,7 @@ test("PROD-B-003 QA and Labs session seams stay allow-listed, session-only, and 
       "features/ondo/identity-b/traveler-id-entry-b.tsx",
       "features/ondo/labs/labs-entry.tsx",
       "features/ondo/local-signal-b/local-signal-layer-b.tsx",
+      "features/ondo/map/discovery-collection-b.tsx",
       "features/ondo/map/map-entry-b.tsx",
       "features/ondo/place/canonical-place-overlay.tsx",
       "features/ondo/reservation-b/reservation-b.tsx",
@@ -223,6 +224,10 @@ test("PROD-B-004 sample disclosures are explicit without false provider-success 
       .filter((pattern) => {
         if (isExplicitStablecoinDisclosure(file, literal, pattern)) return false
         if (isJourneyVisitLabel(file, literal, pattern)) return false
+        // Type-only fixture import and the temperature demo's exact disclosure
+        // labels do not assert a provider success or expose developer controls.
+        if (file === "features/ondo/map/discovery-collection-b.tsx"
+          && ["../discovery-preview/fixtures", "데모 온도", "Demo bands"].includes(literal)) return false
         // This selector is not consumer copy. The option's visible label uses
         // the existing shared sample disclosure and remains sample-session gated.
         if (file === "features/ondo/map/map-options-b.tsx" && literal === "ondo-b-map-options-demo") return false
@@ -279,6 +284,9 @@ test("PROD-B-004 sample disclosures are explicit without false provider-success 
         if (String(pattern) === String(/\bOOKRW\b/i) && myKoreaFile && literal === "${copy.refunded} ${state.commerceSession.chargedDebit} OOKRW") return false
         if (String(pattern) === String(/\bOOKRW\b/i) && settingsFile && /OOKRW Test(?: receipts| 영수증|のレシート)/.test(literal)) return false
         if (String(pattern) === String(/\bcheckout\b/i) && commerceFile && literal === "ondo-b-stable-checkout") return false
+        // Internal nonvisual context selector, never consumer copy or a
+        // provider-success claim.
+        if (String(pattern) === String(/\bcheckout\b/i) && commerceFile && literal === "commerce-checkout-context") return false
         // Internal operation discriminant, never a user-visible success claim.
         if (String(pattern) === String(/\bcheckout\b/i) && literal === "checkout"
           && (commerceFile || file === "features/ondo/commerce-b/commerce-refunds-b.tsx")) return false

@@ -1,0 +1,28 @@
+.header { position:absolute; z-index:8; top:calc(12px + env(safe-area-inset-top)); left:12px; right:12px; display:grid; gap:8px; min-width:0; pointer-events:auto; color:var(--ondo-ink); }
+.shell { padding:7px 8px; border:1px solid var(--ondo-line); border-radius:24px; background:var(--ondo-surface-raised); box-shadow:0 5px 22px rgb(0 0 0 / 7%); }
+.navigation { display:flex; align-items:center; min-height:44px; gap:2px; }
+.header .iconButton, .header .closeSearch { position:relative; display:grid; place-items:center; flex:0 0 44px; width:44px; height:44px; min-width:44px; min-height:44px; padding:0; border:0; border-radius:14px; background:transparent; color:var(--ondo-ink); cursor:pointer; }
+.header .city { display:flex; flex:1 1 auto; min-width:0; min-height:44px; align-items:center; justify-content:flex-start; gap:6px; padding:0 4px; border:0; border-radius:12px; background:transparent; color:var(--ondo-ink); font:inherit; cursor:pointer; }
+.city h1 { margin:0; overflow:hidden; font-size:19px; font-weight:750; line-height:1.35; letter-spacing:-.04em; text-overflow:ellipsis; white-space:nowrap; }
+.city svg { flex:0 0 auto; }
+.wallet { display:flex; flex:0 0 auto; }
+.wallet > button { display:grid; place-items:center; width:44px; min-width:44px; height:44px; min-height:44px; padding:0; border:0; border-radius:14px; background:transparent; color:var(--ondo-ink); box-shadow:none; }
+.wallet > button svg { width:21px; height:21px; }
+.wallet > button > span { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.discovery { display:flex; align-items:center; gap:8px; min-height:44px; padding-top:0; }
+.filterDot { position:absolute; top:7px; right:7px; width:5px; height:5px; border-radius:50%; background:var(--ondo-accent); }
+.ageIndicator { position:absolute; right:1px; bottom:0; padding:1px 3px; border-radius:4px; background:var(--ondo-surface-soft); color:var(--ondo-accent); font-size:9px; font-weight:750; line-height:12px; }
+.searchPanel { display:flex; align-items:center; gap:4px; min-height:52px; padding:3px 5px 3px 14px; border:1px solid var(--ondo-line); border-radius:18px; background:var(--ondo-surface-raised); box-shadow:0 5px 22px rgb(0 0 0 / 6%); }
+.searchPanel > svg { flex:0 0 auto; color:var(--ondo-muted); }
+.searchPanel input { width:0; min-width:0; flex:1 1 0; height:44px; border:0; outline:none; background:transparent; color:var(--ondo-ink); font:inherit; font-size:16px; }
+.searchPanel input::placeholder { color:var(--ondo-muted); }
+.header .searchPanel input:focus-visible { outline:none; box-shadow:none; }
+.header .closeSearch svg { transform:rotate(180deg); }
+.header button { touch-action:manipulation; }
+.header button:focus-visible { outline:3px solid var(--ondo-focus-ring, #3177da); outline-offset:-3px; }
+.searchPanel:focus-within { border-color:var(--ondo-focus-ring, #3177da); }
+.srOnly { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+@media (hover:hover) { .header .iconButton:hover, .header .closeSearch:hover, .header .city:hover, .wallet > button:hover { background:var(--ondo-surface-soft); } }
+@container ondo-map-root (min-width:600px) { .header { left:24px; right:auto; width:440px; max-width:calc(100% - 48px); } }
+@container ondo-map-root (max-width:340px) { .header { left:10px; right:10px; } .shell { padding-inline:6px; } .discovery { gap:4px; } }
+@media (forced-colors:active) { .shell, .searchPanel { border-color:CanvasText; } .filterDot { background:Highlight; forced-color-adjust:none; } }

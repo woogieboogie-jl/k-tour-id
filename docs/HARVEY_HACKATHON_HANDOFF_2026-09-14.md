@@ -1,12 +1,12 @@
 # K-Tour ID · 해커톤 연동 개발 요약
 
-**9/24 현재 작업 기준:** `integration/harvey-preservation-20260924`에서 하비 최종본 보존 통합과 독립 회귀 검증을 진행했습니다. 변경·검수·실환경 한계는 [최신 통합 보고서](./HARVEY_PRESERVATION_INTEGRATION_2026-09-24.md)를 우선합니다. OpenDID 실연동은 사용자 결정에 따라 native holder 단계로 미루며, 이번 작업에서 신규 구현하지 않습니다. 로컬, 미푸시·미배포입니다.
+**현재 코드:** 하비 최종본 `f4526af3` 보존 통합. [9/24 통합·검수·실환경 한계](./HARVEY_PRESERVATION_INTEGRATION_2026-09-24.md)를 우선합니다. OpenDID 실연동은 native holder 단계로 보류합니다. 아래 가이드 저장 v2 기획과 Harvey 혜택 사용 v1은 별개입니다.
 
-**9/23 로컬 UX 후속:** 기존 지도에 이야기→장소, 검색 Hot/Cool 추천 목업을 연결했습니다. 새 공급자/API·결제·체인 연동 요구는 없습니다. [변경 범위](./MAP_DISCOVERY_INTEGRATION_2026-09-23.md)와 [실환경 재현에 필요한 인계 정보](./HARVEY_RUNTIME_REPRODUCTION_2026-09-23.md)를 분리해서 확인하세요. 미푸시·미배포입니다.
+**9/25 UX:** [헤더·검색·스펙트럼](./KTOUR_HEADER_INTEGRATION_2026-09-25.md) · [모바일 제목·여백](./KTOUR_MOBILE_TYPOGRAPHY_IMPLEMENTATION_2026-09-25.md). 로컬 검수 완료, GitHub 자동 배포 준비 중. API·SDK·체인 명세 변경 없음. 공개 UI 배포와 실제 연동 E2E는 별도입니다.
 
-**이전 통합 이력:** [9/21 Harvey 최종본 `f4526af3` 통합](./HARVEY_FINAL_INTEGRATION_2026-09-21.md) · [9/17 격리 검수](./HARVEY_SYNC_LOCAL_2026-09-17.md). 아래 가이드 저장 v2 기획과 실제 Harvey 혜택 사용 v1은 별개입니다. 최신 판정은 위 9/24 보고서를 따릅니다.
+**변경 이력:** [지도·결제·장소](./KTOUR_UX_REFINEMENT_2026-09-24.md) · [이야기·온도](./KTOUR_STORY_TEMPERATURE_REVIEW_2026-09-24.md) · [모바일 UX 보존](./KTOUR_MOBILE_REFINEMENT_LOCAL_2026-09-16.md).
 
-9/16 배포한 **골목 가이드 무료 읽기 + 선택적 내 패스 저장**은 목업입니다. [배포 기록](./KTOUR_PUBLIC_GUIDE_RELEASE_2026-09-16.md) · [화면 연결 계약](./EXPERIENCE_MOCK_HANDOFF_2026-09-15.md). 후속 모바일 UX `d55a31f0`는 로컬 통합에 보존했고 미배포입니다. [변경·검수 기록](./KTOUR_MOBILE_REFINEMENT_LOCAL_2026-09-16.md).
+**실연동 인계:** [실환경 재현 조건](./HARVEY_RUNTIME_REPRODUCTION_2026-09-23.md) · [가이드 저장 계약](./EXPERIENCE_MOCK_HANDOFF_2026-09-15.md). 공개 가이드·결제·예약은 목업이며 실제 자격·금액 이동을 보장하지 않습니다.
 
 ## 1. 목표와 범위
 

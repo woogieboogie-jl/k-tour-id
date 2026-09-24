@@ -1,6 +1,15 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Locator } from "@playwright/test"
 
-test("TX16 order shortfall survives stablecoin funding; credit clears stale shortage without buying automatically", async ({ page, context }, info) => {
+async function expectUncoveredInViewport(target: Locator) {
+  await expect(target).toBeInViewport({ ratio: 1 })
+  await expect.poll(() => target.evaluate(element => {
+    const rect = element.getBoundingClientRect()
+    return element.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2))
+  })).toBe(true)
+}
+
+for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }]) {
+test(`TX16 ${viewport.width}px order shortfall survives stablecoin funding; same quote returns without buying automatically`, async ({ page, context }, info) => {
   test.setTimeout(120_000)
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -12,7 +21,7 @@ test("TX16 order shortfall survives stablecoin funding; credit clears stale shor
     }
     return route.continue()
   })
-  await page.setViewportSize({ width: 390, height: 844 })
+  await page.setViewportSize(viewport)
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await expect(page.getByTestId("ondo-b-root")).toHaveAttribute("data-hydrated", "true")
   await page.getByTestId("nav-id").click()
@@ -41,9 +50,33 @@ test("TX16 order shortfall survives stablecoin funding; credit clears stale shor
     await page.getByTestId("payment-new-order").click()
     await expect(page.getByTestId("payment-receipt")).toHaveCount(0)
   }
+  // The modal isolator temporarily removes the underlying dialog role while
+  // funding is open; its offer identity remains stable for read-only checks.
+  const checkout = page.locator('[data-testid="ondo-b-id-wallet-commerce"][data-flow8-object="offer"]')
+  const quote = checkout.locator('[data-flow8-object="quote"]')
+  const checkoutContext = page.getByTestId("commerce-checkout-context")
+  const orderId = await checkout.getAttribute("data-order-id")
+  const venueId = await checkout.getAttribute("data-transaction-venue-id")
+  const quoteText = await quote.innerText()
+  expect(orderId).toBeTruthy()
+  expect(venueId).toBe("research-seoul-zest")
+  await expect(checkoutContext).toContainText("Zest")
+  await expect(checkoutContext).toContainText("28,000")
+  await expectUncoveredInViewport(checkoutContext)
+  await expect(page.getByTestId("commerce-funding-source")).toContainText("Available ₩4,000")
+  await expect(page.getByTestId("commerce-funding-source")).not.toContainText("→")
   await expect(page.getByTestId("commerce-balance-shortage")).toContainText("24,000")
-  await page.getByTestId("commerce-shortage-fund").click()
+  await expectUncoveredInViewport(page.getByTestId("commerce-balance-shortage"))
+  await expect(page.getByTestId("commerce-shortage-fund")).toHaveCount(0)
+  await expect(page.getByTestId("payment-confirm")).toContainText("Top up for this payment")
+  await expectUncoveredInViewport(page.getByTestId("payment-confirm"))
+  await page.screenshot({ path: info.outputPath("00-shortfall-before-topup.png"), fullPage: true })
+  await page.getByTestId("payment-confirm").click()
   const funding = page.getByTestId("funding-source-sheet")
+  await expect(funding).toHaveAttribute("data-funding-purpose", "topup")
+  await expect(quote).toHaveAttribute("data-locked-quote", /.+/)
+  const lockedQuote = await quote.getAttribute("data-locked-quote")
+  expect(JSON.parse(lockedQuote!)).toMatchObject({ finalDebit: 28, fundingSource: "travel_balance" })
   const contextLine = funding.getByTestId("funding-return-context")
   await expect(contextLine).toContainText("Zest")
   await expect(contextLine).toContainText("Shortfall before top-up: ₩24,000")
@@ -52,6 +85,8 @@ test("TX16 order shortfall survives stablecoin funding; credit clears stale shor
   await funding.getByTestId("funding-method-save").click()
   await expect(funding.getByTestId("stablecoin-signer-zklogin")).toHaveText("Connect with a social account")
   await expect(funding.getByTestId("funding-amount-30000")).toHaveAttribute("aria-pressed", "true")
+  // The order needs 24,000; the selected funding quote remains 30,000.
+  await expect(contextLine).toContainText("24,000")
   await funding.getByTestId("stablecoin-technical-details").locator(":scope > summary").click()
   await expect(funding.getByTestId("stablecoin-technical-details")).toContainText("Sui zkLogin")
   await funding.getByTestId("stablecoin-technical-details").locator(":scope > summary").click()
@@ -68,8 +103,15 @@ test("TX16 order shortfall survives stablecoin funding; credit clears stale shor
   await expect(funding).toContainText("Balance arrival")
   await funding.getByTestId("stablecoin-check-source").click()
   await funding.getByTestId("stablecoin-check-destination").click()
-  await expect(funding.getByTestId("funding-sample-use")).toBeVisible()
+  await expect(funding.getByTestId("funding-rail-journey")).toHaveAttribute("data-credit-committed", "true")
+  await expect(funding.getByTestId("funding-credited-amount")).toHaveText("+₩30,000")
   await expect(funding.getByTestId("funding-receipt-balance")).toContainText("34,000")
+  await expect(funding.getByTestId("funding-sample-use")).toContainText("Zest")
+  // No scrolling to discover the result or return action on either viewport.
+  for (const id of ["funding-credited-amount", "funding-receipt-balance", "funding-sample-use"]) {
+    await expectUncoveredInViewport(funding.getByTestId(id))
+  }
+  await expect(funding.getByTestId("stablecoin-technical-details")).not.toHaveAttribute("open", "")
   await expect(contextLine).not.toContainText("24,000")
   await expect(contextLine).toContainText("Adding funds is separate from paying the place.")
   await page.screenshot({ path: info.outputPath("02-credit-complete-no-stale-shortage.png"), fullPage: true })
@@ -78,6 +120,22 @@ test("TX16 order shortfall survives stablecoin funding; credit clears stale shor
   await expect(page.getByTestId("payment-receipt")).toHaveCount(0)
   await expect(page.getByTestId("payment-minimum-consent").getByRole("checkbox")).not.toBeChecked()
   await expect(page.getByTestId("payment-confirm")).toContainText("28,000")
+  await expect(checkout).toHaveAttribute("data-order-id", orderId!)
+  await expect(checkout).toHaveAttribute("data-transaction-venue-id", venueId!)
+  await expect(quote).toHaveAttribute("data-locked-quote", lockedQuote!)
+  await expect(quote).toHaveText(quoteText, { useInnerText: true })
+  await expect(page.getByTestId("commerce-balance-shortage")).toHaveCount(0)
+  await expect(page.getByTestId("commerce-funding-source")).toContainText("34,000")
+  await expect(checkoutContext).toContainText("Zest")
+  await expect(checkoutContext).toContainText("28,000")
+  await expectUncoveredInViewport(checkoutContext)
+  await expectUncoveredInViewport(page.getByTestId("payment-confirm"))
+  await page.screenshot({ path: info.outputPath("03-same-order-return-unchecked.png"), fullPage: true })
+  // Returning does not inherit transfer consent, authorize, or pay this order.
+  await page.getByTestId("payment-confirm").click()
+  await expect(page.getByTestId("payment-receipt")).toHaveCount(0)
+  await expect(page.getByTestId("payment-minimum-consent").getByRole("checkbox")).not.toBeChecked()
+  await expect(page.getByTestId("payment-minimum-consent")).toHaveAttribute("data-prompted", "true")
   await page.getByTestId("payment-minimum-consent").getByRole("checkbox").check()
   await page.getByTestId("payment-confirm").click()
   await expect(page.getByTestId("payment-receipt")).toContainText("Zest")
@@ -86,3 +144,4 @@ test("TX16 order shortfall survives stablecoin funding; credit clears stale shor
   await expect(page.getByTestId("researched-food-detail")).toHaveAttribute("data-research-id", "research-seoul-zest")
   expect(errors).toEqual([])
 })
+}

@@ -16,7 +16,7 @@ const RETIRED_ASSET_REFERENCE = /\/brand\/(?:ondo-[\w.-]+|ktour-id-(?:mark|locku
 function hasRetiredBrand(value: string) {
   // Temperature is still part of the product. These phrases describe a place
   // or traveler signal; a service name such as "온도 테이블" is not exempt.
-  const withoutTemperature = value.replace(/(?:장소별|장소|샘플|공개|여행자들의)\s*온도/g, "")
+  const withoutTemperature = value.replace(/(?:장소별|장소|샘플|공개|여행자들의|탐색|데모)\s*온도|온도별 추천/g, "")
   return /\bONDO\b|溫圖|온도/.test(withoutTemperature)
 }
 
@@ -58,6 +58,8 @@ test("KTOUR-BRAND-001 the scanner distinguishes public copy from keys and true t
   expect(values).toEqual(["ONDO Tables", "溫圖", "ONDO"])
   expect(hasRetiredBrand("온도 테이블")).toBe(true)
   expect(hasRetiredBrand("장소 온도 · 장소 묶음")).toBe(false)
+  expect(hasRetiredBrand("탐색 온도 · 온도별 추천")).toBe(false)
+  expect(hasRetiredBrand("데모 온도")).toBe(false)
   expect(hasRetiredBrand("이 장소의 공개 온도는 바뀌지 않아요.")).toBe(false)
   expect(hasRetiredBrand("ohayo.global")).toBe(false)
   expect(jsonCopy({ ONDO: "K-Tour ID" })).toEqual(["K-Tour ID"])

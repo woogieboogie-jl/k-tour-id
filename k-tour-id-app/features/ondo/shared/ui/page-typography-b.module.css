@@ -1,0 +1,67 @@
+/* Root-page titles only. The map, modal chrome and short-landscape layouts
+   deliberately keep their own geometry. Data markers make this independent
+   of the legacy per-feature stylesheet loading order. */
+@media (max-width: 699px) and (orientation: portrait) {
+  .scope {
+    --ondo-page-title-size: clamp(30px, 8.2vw, 32px);
+    --ondo-page-title-leading: 1.08;
+    --ondo-page-title-top: 28px;
+    --ondo-page-title-inset: 20px;
+  }
+
+  .scope :global([data-page-typography="root"][data-testid]) {
+    padding-top: max(var(--ondo-page-title-top), env(safe-area-inset-top));
+    padding-left: max(var(--ondo-page-title-inset), env(safe-area-inset-left));
+    padding-right: max(var(--ondo-page-title-inset), env(safe-area-inset-right));
+  }
+
+  .scope :global([data-page-typography="root"] > [data-page-title-frame]) {
+    display: flex;
+    grid-area: title;
+    min-width: 0;
+    max-width: none;
+    min-height: 48px;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+  }
+
+  .scope :global([data-page-typography="root"] > [data-page-title-frame] > [data-page-title]) {
+    min-width: 0;
+    max-width: 100%;
+    flex: 0 1 auto;
+    margin: 0;
+    font-size: var(--ondo-page-title-size);
+    font-weight: 800;
+    line-height: var(--ondo-page-title-leading);
+    letter-spacing: -.04em;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .scope :global([data-page-typography="root"] > [data-page-title-frame] > button) {
+    flex: 0 0 auto;
+    max-width: 100%;
+    min-width: 44px;
+    min-height: 44px;
+    margin-inline-start: auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  /* Keep the visual objects' content rhythm separate from the title frame. */
+  .scope :global([data-page-typography="root"] [data-testid="travel-pass-card"]) {
+    margin-top: 16px;
+  }
+
+  .scope :global([data-page-typography="root"][data-testid="tables-entry"] > [data-page-title-frame]) {
+    margin-bottom: 14px;
+  }
+}
+
+@media (max-width: 360px) and (orientation: portrait) {
+  .scope { --ondo-page-title-inset: 16px; }
+}

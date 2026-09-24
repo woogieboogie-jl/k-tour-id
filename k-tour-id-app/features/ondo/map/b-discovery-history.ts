@@ -3,7 +3,7 @@ import { SAMPLE_ENVIRONMENT_ENABLED } from "../contracts/sample-environment"
 import { isEditorialPlaceId, type EditorialPlaceB } from "../pulse-b/japan-first-pulse-model-b"
 import { isCanonicalVenueId, type CanonicalVenueId } from "@/lib/ondo/venues/canonical-allowlist"
 import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
-import { discoveryCollectionCityB, discoveryPlaceByIdB, isDiscoveryCollectionIdB, type DiscoveryCollectionIdB } from "./discovery-collection-model-b"
+import { discoveryCollectionCityB, discoveryMoodFromQueryB, discoveryPlaceByIdB, isDiscoveryCollectionIdB, isDiscoveryMoodB, type DiscoveryCollectionIdB } from "./discovery-collection-model-b"
 import {
   MY_KOREA_PLACE_RETURN_HISTORY_KEY,
   createMyKoreaPlaceReturnJourneyId,
@@ -162,7 +162,9 @@ function collectionSelectionValue(value: unknown, city: BDiscoveryCity | undefin
 
 function discoveryPlaceValue(value: unknown, city: BDiscoveryCity | undefined): string | undefined {
   const id = collectionSelectionValue(value, city)
-  return id && discoveryPlaceByIdB(id)?.kind !== "sight" ? id : undefined
+  // Every editorial place (including Jeju food stops) keeps the editorial
+  // route. It must never fall through to the market/research detail alias.
+  return id && !isEditorialPlaceId(id) && discoveryPlaceByIdB(id)?.kind !== "sight" ? id : undefined
 }
 
 function withoutCollection(entry: BDiscoveryHistoryEntry): BDiscoveryHistoryEntry {
@@ -190,7 +192,7 @@ function focusValue(value: unknown): BDiscoveryFocus | undefined {
   }
   if (value.kind === "discovery-place" && typeof value.discoveryPlaceId === "string") {
     const place = discoveryPlaceByIdB(value.discoveryPlaceId)
-    return place && place.kind !== "sight" ? { kind: "discovery-place", discoveryPlaceId: place.id } : undefined
+    return place && !isEditorialPlaceId(place.id) && place.kind !== "sight" ? { kind: "discovery-place", discoveryPlaceId: place.id } : undefined
   }
   if (value.kind === "search" || value.kind === "editorial" || value.kind === "view-toggle") return { kind: value.kind }
   return undefined
@@ -749,25 +751,27 @@ export function replaceBDiscoveryCityContext(input: Pick<BDiscoveryHistoryEntry,
 }
 
 /** Add one result scope above the exact city context; never silently switch cities. */
-export function openBDiscoveryCollection(id: DiscoveryCollectionIdB): BDiscoveryHistoryEntry | null {
+export function openBDiscoveryCollection(id: DiscoveryCollectionIdB, options: { preserveQuery?: boolean } = {}): BDiscoveryHistoryEntry | null {
   const current = readBDiscoveryHistory()
   const collection = collectionValue(id, current?.city)
   if (current?.level !== "city" || !collection) return null
   if (current.collection === collection) return current
-  const mood = collection === "hot" || collection === "cool"
+  const mood = isDiscoveryMoodB(collection)
   // The new result scope will frame its own places; the parent retains the
   // exact previous camera. Never reload a new collection at its parent's fit.
   const { camera: _parentCamera, ...context } = withoutCollection(current)
   const next: BDiscoveryHistoryEntry = {
     ...context,
     collection,
-    query: mood ? collection : "",
+    query: mood ? options.preserveQuery && !discoveryMoodFromQueryB(current.query) ? current.query : collection : "",
     category: mood ? current.category : "all",
     editorialCategory: mood ? current.editorialCategory : "all",
     listScroll: 0,
     focus: { kind: "search" },
   }
-  pushEntry(next)
+  // Temperature bands are one filter, not separate steps in the Back stack.
+  if (mood && isDiscoveryMoodB(current.collection)) replaceEntry(next)
+  else pushEntry(next)
   return next
 }
 

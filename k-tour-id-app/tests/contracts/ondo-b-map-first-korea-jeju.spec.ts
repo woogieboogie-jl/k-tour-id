@@ -152,11 +152,82 @@ test("JP-MAP-FIRST-004 only place-page-verified Jeju research becomes an editori
   expect(map).toContain('data-editorial-point-count={city === "jeju" ? JEJU_EDITORIAL_PLACES.length : undefined}')
 
   const detail = source("features/ondo/place/editorial-place-overlay-b.tsx")
-  expect(detail).toContain('data-pulse-level={JEJU_EDITORIAL_TEMPERATURE.level}')
   expect(detail).toContain('data-coverage-intensity={coverageIntensity}')
   expect(detail).toContain('data-temperature-model={JEJU_EDITORIAL_TEMPERATURE.model}')
   expect(detail).toContain('data-editorial-temperature-mode={JEJU_EDITORIAL_TEMPERATURE.mode}')
-  expect(detail).toContain('jejuEditorialCoverageSummary(activePlace, locale, copy.temperature)')
+  expect(detail).not.toContain('data-pulse-level={JEJU_EDITORIAL_TEMPERATURE.level}')
+  expect(detail).not.toContain('jejuEditorialCoverageSummary(activePlace, locale, copy.temperature)')
+  expect(detail).toContain('activePlace.category === "screen-location" ? copy.screenPlace : copy.editorialPlace')
+})
+
+test("JP-MAP-FIRST-004A unscored editorial peek and detail show content labels, never a heat or crowding meter", () => {
+  const detail = source("features/ondo/place/editorial-place-overlay-b.tsx")
+  const css = source("features/ondo/place/editorial-place-overlay-b.module.css")
+  const labels = detail.match(/<section className=\{styles\.editorialContext\}[\s\S]*?<\/section>/g) ?? []
+
+  // Check both render branches: fixing only the peek leaves the same false
+  // score implication in full details, and vice versa.
+  expect(labels).toHaveLength(2)
+  for (const label of labels) {
+    expect(label).toContain('data-temperature-score="none"')
+    expect(label).toContain('data-temperature-model={JEJU_EDITORIAL_TEMPERATURE.model}')
+    expect(label).toContain('data-editorial-temperature-mode={JEJU_EDITORIAL_TEMPERATURE.mode}')
+    expect(label).toContain('data-coverage-intensity={coverageIntensity}')
+    expect(label).toContain('data-temperature-visual-grammar="editorial-label"')
+    expect(label).toContain('aria-label={editorialSummary}')
+    expect(label).toContain('<span>{editorialLabel}</span>')
+    expect(label).not.toMatch(/<(?:i|b|meter|progress)(?:\s|>)/)
+    expect(label).not.toContain("copy.temperature")
+    expect(label).not.toContain("data-pulse-level")
+  }
+  for (const text of ["Filming location", "Editorial pick", "촬영지", "편집 추천", "ロケ地", "編集部のおすすめ"]) {
+    expect(detail).toContain(`"${text}"`)
+  }
+  expect(detail).not.toContain("スポットのにぎわい")
+  expect(detail).not.toContain('data-temperature-visual-grammar="shared-meter-card"')
+  expect(css).toContain(".editorialContext {")
+  expect(css).toContain("background: var(--ondo-surface-soft, #f3f3f1);")
+  expect(css).not.toContain("--coverage-position")
+  expect(css).not.toContain("--coverage-color")
+  expect(css).not.toContain(".temperature")
+
+  // The absence of a score stays available without a new permanent paragraph:
+  // accessible group description plus the existing source disclosures.
+  expect(detail).toContain('const editorialSummary = `${editorialLabel} · ${copy.noScore}`')
+  expect(detail).toMatch(/<details className=\{styles\.recordSummary\}[\s\S]*?<p>\{copy\.checked\}<\/p>[\s\S]*?<p>\{copy\.noScore\}<\/p>[\s\S]*?<\/details>/)
+  expect(detail).toMatch(/<details className=\{styles\.sources\}[\s\S]*?<p>\{copy\.checked\}<\/p>[\s\S]*?<p>\{copy\.noScore\}<\/p>[\s\S]*?<\/details>/)
+  expect(detail).toContain("href={place.placeSourceUrl}")
+  expect(detail).toContain("stories.map((story)")
+})
+
+test("JP-MAP-FIRST-004B prepared sample activity remains separate from editorial provenance and saved state", () => {
+  const detail = source("features/ondo/place/editorial-place-overlay-b.tsx")
+  const sample = source("features/ondo/map/sample-activity-meter-b.tsx")
+  const css = source("features/ondo/place/editorial-place-overlay-b.module.css")
+
+  expect(detail).toContain('<SampleActivityMeterB city="jeju" venueId={activePlace.id} locale={locale} fallback={<section className={styles.editorialContext}')
+  expect(sample).toContain('const feature = snapshot?.city === city ? snapshot.frame.features.find((candidate) => candidate.id === venueId) : null')
+  expect(sample).toContain("if (!snapshot || !feature) return fallback")
+  expect(sample).toContain('data-origin="PREPARED_ILLUSTRATION"')
+  expect(sample).toContain('data-temperature-model="prepared-activity"')
+  expect(sample).toContain('data-testid="canonical-place-temperature-meter"')
+  expect(sample).toContain('data-testid="sample-traveler-contributions"')
+
+  // Saving a content place must not grant a score or a service capability;
+  // retain the existing save handler, pressed state and history transitions.
+  expect(detail).toContain('data-official-record="false" data-pulse-eligible="false"')
+  expect(detail).toContain("actions.toggleSavedEditorialPlace(activePlace.id)")
+  expect(detail).toContain('onClick={toggleSaved} aria-label={saved ? copy.remove : copy.save} aria-pressed={saved}')
+  expect(detail).toContain("if (closeBDiscoveryPlace()) return")
+  expect(detail).toContain('if (goBackFromBDiscovery("detail")) return')
+  expect(detail).toContain("if (!openBDiscoveryEditorialDetail(activePlace.id)) return")
+  expect(detail).toContain('<PlaceServiceActionsB placeId={activePlace.id} locale={locale} />')
+  expect(detail).toContain('aria-label={copy.directions} title={copy.directions} data-testid="ondo-b-editorial-place-directions" data-visual-priority="secondary"')
+  expect(detail).not.toContain("className={styles.peekActions} directionsFirst")
+  expect(css).toMatch(/\.actions a, \.actions button\s*\{[^}]*min-height:\s*50px/)
+  expect(css).toContain("grid-template-columns: minmax(0, 1fr) 48px")
+  expect(css).toMatch(/\.saveLabel\s*\{[^}]*line-height:\s*1\.4/)
+  expect(css).not.toMatch(/\.saveLabel\s*\{[^}]*clip:/)
 })
 
 test("JP-MAP-FIRST-005 atlas hover never replaces geographic translation", () => {

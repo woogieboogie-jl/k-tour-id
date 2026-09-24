@@ -223,9 +223,7 @@ for (const appearance of ["light", "dark"] as const) {
         await evidence(page, info, `legend-${after19 ? "after19" : "standard"}`)
         await disclosure.locator(":scope > summary").click()
         await expect(disclosure).not.toHaveAttribute("open", "")
-        const credits = page.getByTestId("ondo-b-map-credit-details")
-        await credits.locator(":scope > summary").click()
-        const creditPanel = credits.locator(":scope > div")
+        const creditPanel = page.getByTestId("ondo-b-attribution")
         await expect(creditPanel).toBeVisible()
         for (const link of await creditPanel.getByRole("link").all()) {
           const result = await textContrast(link)
@@ -234,8 +232,6 @@ for (const appearance of ["light", "dark"] as const) {
         }
         expect(await creditPanel.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true)
         await evidence(page, info, `credits-${after19 ? "after19" : "standard"}`)
-        await credits.locator(":scope > summary").click()
-        await expect(credits).not.toHaveAttribute("open", "")
       }
     })
   }

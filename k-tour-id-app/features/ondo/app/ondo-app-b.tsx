@@ -27,6 +27,7 @@ import {
   type MyKoreaPlaceReturnReceiptB,
 } from "../my/my-korea-place-return-b"
 import styles from "./ondo-shell.module.css"
+import pageTypography from "../shared/ui/page-typography-b.module.css"
 
 export type OndoBAppSlots = {
   explore: ReactNode
@@ -35,6 +36,7 @@ export type OndoBAppSlots = {
   travelerId: ReactNode
   settings: ReactNode
   overlays?: ReactNode
+  demoEntry?: ReactNode
 }
 
 const B_NAV: Array<{ id: OndoBTab; icon: typeof MapPinned }> = [
@@ -310,7 +312,7 @@ function OndoBShell({ slots }: { slots: OndoBAppSlots }) {
 
   return (
     <main
-      className={styles.stage}
+      className={`${styles.stage} ${pageTypography.scope}`}
       data-ondo-locale={state.locale}
       data-testid="ondo-b-root"
       data-variant="B"
@@ -390,14 +392,15 @@ function OndoBShell({ slots }: { slots: OndoBAppSlots }) {
           ))}
         </nav>
         {slots.overlays}
-        {sampleInfoOpen ? <SheetB locale={state.locale} label={SHELL_COPY[state.locale].sample} variant="peek" onClose={() => setSampleInfoOpen(false)} header={<span>{SHELL_COPY[state.locale].sample}</span>}>
+        {sampleInfoOpen ? <SheetB locale={state.locale} label={SHELL_COPY[state.locale].sample} variant="decision" onClose={() => setSampleInfoOpen(false)} header={<span>{SHELL_COPY[state.locale].sample}</span>}>
           <div className={styles.sampleInfo}>
             <h2>{state.locale === "ko" ? "여행의 모든 흐름을 체험해 보세요" : state.locale === "ja" ? "旅の流れを体験しましょう" : "Try the whole journey"}</h2>
-            <p>{state.locale === "ko" ? "인증·잔액·결제는 샘플입니다. 실제 확인이나 결제는 발생하지 않아요." : state.locale === "ja" ? "認証・残高・決済はサンプルです。実際の確認や支払いは行われません。" : "Identity checks, balances and payments are samples. No real verification or charges occur."}</p>
+            <p>{state.locale === "ko" ? "지도 활동·여행 잔액·예약·결제는 샘플이에요. 체험 혜택은 별도 안내와 동의를 거쳐 진행돼요." : state.locale === "ja" ? "地図のアクティビティ・残高・予約・決済はサンプルです。体験特典は個別の案内と同意を経て進みます。" : "Map activity, travel balance, bookings and payments are samples. The experience perk has its own connection information and consent steps."}</p>
+            {slots.demoEntry ? <div onClick={() => setSampleInfoOpen(false)}>{slots.demoEntry}</div> : null}
             <button type="button" onClick={() => { setSampleInfoOpen(false); actions.setTab("id") }}>{state.locale === "ko" ? "내 자격으로 할 수 있는 일" : state.locale === "ja" ? "資格で利用できること" : "What your pass unlocks"}</button>
             <button type="button" data-testid="integration-demo-open" onClick={() => { setSampleInfoOpen(false); setIntegrationOpen(true) }}>{state.locale === "ko" ? "파트너 검증 · 정산 체험" : state.locale === "ja" ? "店舗の確認・精算を体験" : "Partner verification & settlement"}</button>
             <button type="button" data-testid="reservation-demo-open" onClick={() => { setSampleInfoOpen(false); requestReservationSampleB() }}>{state.locale === "ko" ? "매장 예약 체험" : state.locale === "ja" ? "席の予約を体験" : "Try a restaurant booking"}</button>
-            <details><summary>{state.locale === "ko" ? "연동 상태" : state.locale === "ja" ? "接続状況" : "Integration status"}</summary><p>{state.locale === "ko" ? "외부 인증·금융·체인은 연결 전입니다." : state.locale === "ja" ? "外部認証・決済・チェーンは未接続です。" : "External identity, financial and chain services are not connected."}</p><button type="button" onClick={exitReviewSample}>{SHELL_COPY[state.locale].exitSample}</button></details>
+            <details><summary>{state.locale === "ko" ? "연동 상태" : state.locale === "ja" ? "接続状況" : "Integration status"}</summary><p>{state.locale === "ko" ? "샘플 충전·예약·결제는 실제 주문이나 금액 이동을 만들지 않아요. 체험 혜택의 확인·기록 상태는 해당 여정에서 확인할 수 있어요." : state.locale === "ja" ? "サンプルの入金・予約・決済で実際の注文や資金移動は発生しません。体験特典の確認・記録状況は、その手順内で確認できます。" : "Sample top-ups, bookings and payments create no real order or money movement. Check the experience-perk journey for its verification and recording status."}</p><button type="button" onClick={exitReviewSample}>{SHELL_COPY[state.locale].exitSample}</button></details>
           </div>
         </SheetB> : null}
         {reviewSample ? <IntegrationDemoB open={integrationOpen} onClose={() => setIntegrationOpen(false)} /> : null}

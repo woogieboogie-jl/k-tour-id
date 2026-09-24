@@ -18,8 +18,12 @@ test("UX01 funding purpose separates adding funds from choosing a payment method
     expect(commerce.split("\n").find(line => line.includes(`data-testid="${id}"`))).toContain('purpose: "topup"')
   }
   expect(commerce.split("\n").find(line => line.includes('data-testid="wallet-funding-change"'))).toContain('purpose: "payment"')
-  expect(commerce.split("\n").find(line => line.includes('data-testid="commerce-shortage-fund"'))).toContain('openFundingForQuote(event.currentTarget, "topup")')
-  expect(commerce.split("\n").find(line => line.includes('data-testid="payment-shortage-funding"'))).toContain('openFundingForQuote(event.currentTarget, "topup")')
+  const paymentConfirmOffset = commerce.indexOf('data-testid="payment-confirm"')
+  const paymentConfirm = commerce.slice(commerce.lastIndexOf("<button", paymentConfirmOffset), commerce.indexOf("</button>", paymentConfirmOffset) + "</button>".length)
+  expect(paymentConfirm).toContain('shortageKrw > 0 ? (event) => openFundingForQuote(event.currentTarget, "topup")')
+  const pay = commerce.slice(commerce.indexOf("function pay("), commerce.indexOf("function retry("))
+  expect(pay).toContain('if (shortageKrw > 0 && event)')
+  expect(pay).toContain('openFundingForQuote(event.currentTarget, "topup")')
 })
 
 test("UX01 already-credited terminal presentation resets without recrediting or erasing the ledger", () => {

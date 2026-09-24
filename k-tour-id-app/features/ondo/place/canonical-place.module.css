@@ -1929,16 +1929,25 @@
 .peekActions a, .peekActions button { min-height: 52px; }
 @media (forced-colors: active) { .peekActions { background: Canvas; } }
 @media (min-width:900px) and (min-height:501px) {
-  .body { grid-template-areas:"identity pulse" "offer pulse" "table table" "decisions utility" "after19 after19" "save save" "before before"; }
-  .body > :global([data-testid="place-service-actions"]) { grid-area:offer; margin:12px 0 0; }
+  .body { grid-template-areas:"identity pulse" "offer trip" "table table" "decisions decisions" "before before" "after19 after19" "utility utility" "save save"; }
+  .body:has(> .placeActions:empty) { grid-template-areas:"identity pulse" "identity trip" "table table" "decisions decisions" "before before" "after19 after19" "utility utility" "save save"; }
+  .placeActions { grid-area:offer; align-self:start; }
+  .tripActions { grid-area:trip; align-self:start; }
   .utilityActions[data-utility-layout="standalone"] { grid-area:utility; }
 }
 
+/* Separate actions that spend or reserve from freely readable guides and
+   visit memories. The wrappers own layout only, never eligibility or return. */
+.placeActions, .tripActions { min-width:0; margin:20px 0; }
+.placeActions:empty { display:none; }
+.tripActions { padding:14px 16px 0; border:1px solid var(--ondo-line, #dedede); border-radius:20px; }
+.tripActions > h3 { margin:0 0 2px; color:var(--ondo-muted, #626262); font-size:13px; font-weight:650; line-height:1.5; letter-spacing:0; }
+
 /* Full-detail companions are quiet rows, not competing primary cards. Keep
    the commerce/reservation hierarchy and every peek/other entry untouched. */
-.body > :global([data-testid="experience-open"]),
-.body > :global([data-testid="canonical-journey-open"]),
-.body > :global([data-testid="hackathon-entitlement-open"]) {
+.tripActions > :global([data-testid="experience-open"]),
+.tripActions > :global([data-testid="canonical-journey-open"]),
+.placeActions > :global([data-testid="hackathon-entitlement-open"]) {
   min-height:64px;
   margin:0;
   padding:12px 0;
@@ -1949,13 +1958,15 @@
   color:var(--ondo-ink, #171717);
   box-shadow:none;
 }
-.body > :global([data-testid="hackathon-entitlement-open"]) { grid-template-columns:24px minmax(0,1fr) 18px; gap:12px; }
-.body > :global([data-testid="hackathon-entitlement-open"]) strong { font-size:15px; }
-.body > :global([data-testid="experience-open"]) strong { font-size:17px; }
-.body > :global([data-testid="experience-open"]) small,
-.body > :global([data-testid="canonical-journey-open"]) small,
-.body > :global([data-testid="hackathon-entitlement-open"]) small { font-size:13px; line-height:1.4; }
-.body > :global([data-testid="canonical-journey-open"]) > span:first-child {
+.placeActions > :global([data-testid="hackathon-entitlement-open"]) { grid-template-columns:24px minmax(0,1fr) 18px; gap:12px; }
+.placeActions > :global([data-testid="hackathon-entitlement-open"]) strong { font-size:15px; }
+.tripActions > :global([data-testid="experience-open"]) strong,
+.tripActions > :global([data-testid="canonical-journey-open"]) strong { font-size:15px; line-height:1.35; }
+.tripActions > :global([data-testid="canonical-journey-open"]) { border-bottom:0; }
+.tripActions > :global([data-testid="experience-open"]) small,
+.tripActions > :global([data-testid="canonical-journey-open"]) small,
+.placeActions > :global([data-testid="hackathon-entitlement-open"]) small { font-size:13px; line-height:1.4; }
+.tripActions > :global([data-testid="canonical-journey-open"]) > span:first-child {
   flex-basis:24px;
   width:24px;
   height:24px;
@@ -1983,9 +1994,11 @@
 .body > .tableActions .tablePrimary strong { font-size:15px; }
 .body > .tableActions .tablePrimary small { color:var(--ondo-muted, #626262); }
 @media (forced-colors:active) {
-  .body > :global([data-testid="experience-open"]),
-  .body > :global([data-testid="canonical-journey-open"]),
-  .body > :global([data-testid="hackathon-entitlement-open"]) { border-block-end-color:CanvasText; color:CanvasText; }
+  .tripActions { border-color:CanvasText; }
+  .tripActions > h3 { color:CanvasText; }
+  .tripActions > :global([data-testid="experience-open"]),
+  .tripActions > :global([data-testid="canonical-journey-open"]),
+  .placeActions > :global([data-testid="hackathon-entitlement-open"]) { border-block-end-color:CanvasText; color:CanvasText; }
   .body > .tableActions .tablePrimary { border-color:CanvasText; background:Canvas; color:CanvasText; }
   .body > .tableActions .tablePrimary small { color:CanvasText; }
 }

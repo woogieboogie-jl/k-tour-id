@@ -74,19 +74,17 @@ test.describe("ONDO B polished Pulse map", () => {
 
         const locationDetails = page.getByTestId("ondo-b-location-message")
         const keyDetails = page.getByTestId("ondo-b-map-key-details")
-        const creditDetails = page.getByTestId("ondo-b-map-credit-details")
+        const attribution = page.getByTestId("ondo-b-attribution")
         await expect(locationDetails).not.toHaveAttribute("open", "")
         await expect(keyDetails).not.toHaveAttribute("open", "")
-        await expect(creditDetails).not.toHaveAttribute("open", "")
+        await expect(attribution).toBeVisible()
         await locationDetails.locator("summary").click()
         await expect(locationDetails).toHaveAttribute("open", "")
         await expect(locationDetails).toContainText(locale === "ko" ? "OpenFreeMap" : "OpenFreeMap")
         await keyDetails.locator(":scope > summary").click()
         await expect(keyDetails).toHaveAttribute("open", "")
         await expect(keyDetails).toContainText(locale === "ko" ? "실시간 혼잡도" : "live crowding")
-        await creditDetails.locator("summary").click()
-        await expect(creditDetails).toHaveAttribute("open", "")
-        await expect(creditDetails.getByRole("link")).toHaveCount(3)
+        await expect(attribution.getByRole("link")).toHaveCount(3)
       })
     }
   }

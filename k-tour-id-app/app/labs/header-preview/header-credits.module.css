@@ -1,0 +1,27 @@
+.credits {
+  position: absolute;
+  z-index: 2;
+  right: 13px;
+  bottom: 136px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  max-width: calc(100% - 26px);
+  color: #45544b;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-shadow: 0 0 3px #fff, 0 0 6px #fff, 0 1px 2px #fff;
+}
+.credits a, .credits button {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+.credits a { text-decoration: underline; text-underline-offset: 2px; }
+.credits button { width: 44px; min-width: 44px; border: 0; padding: 0; background: none; border-radius: 50%; cursor: pointer; }
+.credits button svg { filter: drop-shadow(0 0 3px #fff); }
+.credits :is(a, button):focus-visible { outline: 2px solid #3177da; outline-offset: -2px; }
+@media (max-width: 350px) { .credits { right: 9px; gap: 2px; max-width: calc(100% - 18px); } }

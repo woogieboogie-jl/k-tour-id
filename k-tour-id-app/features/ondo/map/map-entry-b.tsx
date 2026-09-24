@@ -4,7 +4,7 @@ import type { CircleLayerSpecification, EaseToOptions, ExpressionSpecification, 
 import type { MutableRefObject, RefObject } from "react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { ArrowLeft, ChevronRight, Copyright, Info, Languages, Layers2, List, LocateFixed, LocateOff, Map as MapIcon, MapPin, MoonStar, Search, SlidersHorizontal, X } from "lucide-react"
+import { ArrowLeft, ChevronRight, Info, Languages, Layers2, List, LocateFixed, LocateOff, Map as MapIcon, MapPin, MoonStar, Search, SlidersHorizontal, X } from "lucide-react"
 import { KOREA_OUTLINE_COORDINATES } from "@/lib/map/korea-atlas-data"
 import { ondoBasemapLabel, ondoMapPalette, ondoMapStyle } from "@/lib/ondo/map/ondo-map-style"
 import type { CanonicalMapVenue, VenuePrimaryCategory } from "@/lib/ondo/venues/contracts"
@@ -30,9 +30,11 @@ import { SampleInfoButtonB, SAMPLE_INFO_EVENT, sampleInfoCopyB } from "../shared
 import { readQaRuntime } from "../shared/ui/use-qa-controls"
 import { useReviewSampleSession } from "../shared/ui/use-qa-controls"
 import { JapanFirstDiscoveryB } from "./japan-first-discovery-b"
-import { DiscoveryCollectionPinsB, DiscoveryCollectionResultsB, DiscoveryMarketDetailB, DiscoveryMoodSuggestionsB, DiscoveryStoryHintB } from "./discovery-collection-b"
-import { discoveryCollectionPlacesB, discoveryMoodFromQueryB, discoveryPlaceByIdB, type DiscoveryCollectionIdB } from "./discovery-collection-model-b"
+import { DiscoveryCollectionPinsB, DiscoveryCollectionResultsB, DiscoveryMarketDetailB, DiscoveryMoodSuggestionsB, DiscoveryStoryCarouselB } from "./discovery-collection-b"
+import { discoveryCollectionPlacesB, discoveryCollectionStoryB, discoveryMoodFromQueryB, discoveryPlaceByIdB, discoveryStoryForCityB, discoveryStoriesForCityB, isDiscoveryMoodB, type DiscoveryCollectionIdB } from "./discovery-collection-model-b"
 import { MapOptionsB } from "./map-options-b"
+import { MapHeaderB } from "./map-header-b"
+import { SheetB } from "../shared/ui/sheet-b"
 import { TemperatureTimelineB } from "./temperature-timeline-b"
 import { TravelerActivityMapB } from "./traveler-activity-map-b"
 import { RESEARCHED_FOOD_B, researchedFoodByIdB, researchFoodMatchesB } from "./researched-food-b"
@@ -1058,21 +1060,24 @@ function collectionFilterSignature(city: string | undefined | null, query: strin
   return collection ? `${base}:${collection}:${after19}` : base
 }
 
-function focusCollectionPlaces(map: MapLibreMap, places: readonly { longitude: number; latitude: number }[]) {
+function focusCollectionPlaces(map: MapLibreMap, places: readonly { longitude: number; latitude: number }[], animate = false) {
   if (!places.length) return
   // Collections frame several selectable photo pins on a flat map. The city
   // overview may retain asymmetric padding and tilt; both distort a bounds fit.
   map.stop()
-  map.jumpTo({ pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } })
+  // MapLibre includes existing transform padding in cameraForBounds. Normalize
+  // the asymmetric city overview before calculating the story's own insets.
+  map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 })
   const node = map.getContainer()
   const bounds = node.getBoundingClientRect()
   const shell = node.parentElement
   const header = shell?.querySelector('[data-testid="ondo-b-city-header"]')?.getBoundingClientRect()
-  const tray = shell?.querySelector('[data-testid="map-discovery-results"]')?.getBoundingClientRect()
+  const tray = shell?.querySelector('[data-testid="map-discovery-results"], [data-testid="map-discovery-dock"]')?.getBoundingClientRect()
   const sidePanel = tray && tray.width < bounds.width * .55 && bounds.width >= 600
   const chrome = shell?.querySelector('[data-testid="ondo-b-map-chrome"]')?.getBoundingClientRect()
-  const top = Math.max(80, (header?.bottom ?? bounds.top + 120) - bounds.top + 35)
-  const bottom = sidePanel ? Math.max(76, bounds.bottom - (chrome?.top ?? bounds.bottom - 76) + 35) : tray ? Math.max(90, bounds.bottom - tray.top + 35) : 120
+  const pinClearance = bounds.height < 640 ? 28 : 35
+  const top = Math.max(80, (header?.bottom ?? bounds.top + 120) - bounds.top + pinClearance)
+  const bottom = sidePanel ? Math.max(76, bounds.bottom - (chrome?.top ?? bounds.bottom - 76) + pinClearance) : tray ? Math.max(90, bounds.bottom - tray.top + pinClearance) : 120
   const camera = map.cameraForBounds([
     [Math.min(...places.map(p => p.longitude)), Math.min(...places.map(p => p.latitude))],
     [Math.max(...places.map(p => p.longitude)), Math.max(...places.map(p => p.latitude))],
@@ -1080,40 +1085,38 @@ function focusCollectionPlaces(map: MapLibreMap, places: readonly { longitude: n
   // cameraForBounds incorporates the panel inset into the center. Keep runtime
   // padding zero so the app's existing camera history restores exact pixels.
   if (camera) {
-    map.jumpTo({ ...camera, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } })
-    const entry = readBDiscoveryHistory()
-    if (entry?.level === "city" && entry.collection) replaceBDiscoveryCityContext({ ...entry, camera: cameraSnapshot(map) })
+    const target = { ...camera, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } }
+    map.getContainer().dataset.discoveryCamera = animate ? "travel" : "fit"
+    if (animate) moveMap(map, target)
+    else map.jumpTo(target)
   }
 }
 
 function focusFilteredVenues(map: MapLibreMap, venues: readonly { longitude: number; latitude: number }[]) {
   if (venues.length === 0) return
-  if (venues.length === 1) {
-    map.jumpTo({ center: [venues[0].longitude, venues[0].latitude], zoom: 15 })
-    return
-  }
   const mapContainer = map.getContainer()
   const bounds = mapContainer.getBoundingClientRect()
   const dockSpace = parseFloat(getComputedStyle(mapContainer).getPropertyValue("--ondo-map-dock-space")) || 0
   const container = { width: bounds.width, height: bounds.height - dockSpace }
   const shortLandscape = container.height <= 500 && container.width > container.height
   const horizontalPadding = Math.round(Math.max(24, Math.min(72, container.width * 0.08)))
-  const topPadding = shortLandscape
-    ? Math.round(Math.max(144, Math.min(168, container.height * 0.4)))
-    : Math.round(Math.max(150, Math.min(220, container.height * 0.3)))
+  const header = mapContainer.parentElement?.querySelector('[data-testid="ondo-b-city-header"]')?.getBoundingClientRect()
+  const topPadding = Math.max(80, (header?.bottom ?? bounds.top + 120) - bounds.top + 30)
   const bottomPadding = shortLandscape
     ? Math.round(Math.max(52, Math.min(76, container.height * 0.17)))
     : Math.round(Math.max(104, Math.min(160, container.height * 0.22)))
   const longitudes = venues.map((venue) => venue.longitude)
   const latitudes = venues.map((venue) => venue.latitude)
-  map.fitBounds([
+  map.stop()
+  map.setPadding({ top: 0, right: 0, bottom: 0, left: 0 })
+  const camera = map.cameraForBounds([
     [Math.min(...longitudes), Math.min(...latitudes)],
     [Math.max(...longitudes), Math.max(...latitudes)],
   ], {
-    duration: 0,
-    maxZoom: 14.5,
-    padding: { top: topPadding, right: horizontalPadding, bottom: bottomPadding + dockSpace, left: horizontalPadding },
+    maxZoom: venues.length === 1 ? 15 : 14.5,
+    padding: { top: topPadding, right: horizontalPadding, bottom: Math.min(bottomPadding + dockSpace, Math.max(32, bounds.height - topPadding - 32)), left: horizontalPadding },
   })
+  if (camera) map.jumpTo({ ...camera, padding: { top: 0, right: 0, bottom: 0, left: 0 } })
 }
 
 function cityOverviewBounds(
@@ -1144,9 +1147,15 @@ function cityOverviewBounds(
 function cityOverviewPadding(root: HTMLElement) {
   const rootBox = root.getBoundingClientRect()
   const dockSpace = parseFloat(getComputedStyle(root).getPropertyValue("--ondo-map-dock-space")) || 0
-  const headerBox = root.querySelector<HTMLElement>("[data-testid='ondo-b-city-header']")?.getBoundingClientRect()
-  const locationBox = root.querySelector<HTMLElement>("[data-testid='ondo-b-location-message']")?.getBoundingClientRect()
-  const keyBox = root.querySelector<HTMLElement>("[data-testid='ondo-b-map-key']")?.getBoundingClientRect()
+  const visibleBox = (selector: string) => {
+    const node = root.querySelector<HTMLElement>(selector)
+    return node?.getClientRects().length && getComputedStyle(node).visibility !== "hidden" ? node.getBoundingClientRect() : undefined
+  }
+  const headerBox = visibleBox("[data-testid='ondo-b-city-header']")
+  const locationBox = visibleBox("[data-testid='ondo-b-location-message']")
+  // The story dock hides the legacy key. Its zero rect is not a viewport-top
+  // obstruction: treating it as one requests more padding than the map height.
+  const keyBox = visibleBox("[data-testid='ondo-b-map-key']")
   const compactLandscape = rootBox.width >= 600 && rootBox.height <= 500
   // The largest temperature aura is 34px. A 52px horizontal inset keeps the
   // complete signal (and its tap target) inside narrow portrait viewports.
@@ -1325,6 +1334,8 @@ export function MapEntryB() {
   const [view, setView] = useState<ViewMode>("map")
   const [query, setQuery] = useState("")
   const [collection, setCollection] = useState<DiscoveryCollectionIdB | null>(null)
+  const [storyPreviews, setStoryPreviews] = useState<Partial<Record<CityId, DiscoveryCollectionIdB>>>({})
+  const collectionTravelRef = useRef<DiscoveryCollectionIdB | null>(null)
   const [collectionSelection, setCollectionSelection] = useState<string | null>(null)
   const [collectionDetailId, setCollectionDetailId] = useState<string | null>(null)
   const [discoverySearchOpen, setDiscoverySearchOpen] = useState(false)
@@ -1348,6 +1359,8 @@ export function MapEntryB() {
   const [mapRootBlockSize, setMapRootBlockSize] = useState(0)
   const [compactChrome, setCompactChrome] = useState(false)
   const [mapOptionsOpen, setMapOptionsOpen] = useState(false)
+  const [cityPickerOpen, setCityPickerOpen] = useState(false)
+  const [after19OpenRequest, setAfter19OpenRequest] = useState(0)
   const [editorialOpen, setEditorialOpen] = useState(false)
   const [after19Active, setAfter19Active] = useState(false)
   const [mapTilted, setMapTilted] = useState(false)
@@ -1495,7 +1508,9 @@ export function MapEntryB() {
   const categoryOptions = Object.keys(CATEGORY) as BDiscoveryCategory[]
   const categoryRailItems: readonly BDiscoveryCategory[] = categoryOptions
   const effectiveCategory: BDiscoveryCategory = after19NightSubsetActive ? "night" : category
-  const collectionPlaces = useMemo(() => collection && city ? discoveryCollectionPlacesB(collection, { city, category, editorialCategory, after19: after19ThemeActive, balanceOnly: balancePlacesActive }) : [], [collection, city, category, editorialCategory, after19ThemeActive, balancePlacesActive])
+  const collectionPlaces = useMemo(() => collection && city ? discoveryCollectionPlacesB(collection, { city, category, editorialCategory, after19: after19ThemeActive, balanceOnly: balancePlacesActive, query }) : [], [collection, city, category, editorialCategory, after19ThemeActive, balancePlacesActive, query])
+  const previewStoryId = city ? storyPreviews[city] ?? null : null
+  const previewPlaces = useMemo(() => previewStoryId && city ? discoveryCollectionPlacesB(previewStoryId, { city, category, editorialCategory, after19: after19ThemeActive, balanceOnly: balancePlacesActive }) : [], [previewStoryId, city, category, editorialCategory, after19ThemeActive, balancePlacesActive])
   const collectionSelected = collectionPlaces.some(place => place.id === collectionSelection) ? collectionSelection : collectionPlaces[0]?.id ?? null
   const collectionMarket = collectionDetailId && !researchedFoodByIdB(collectionDetailId) ? discoveryPlaceByIdB(collectionDetailId) : null
   const visibleResultCount = collection ? collectionPlaces.length : null
@@ -1658,7 +1673,7 @@ export function MapEntryB() {
     const applyLayout = (width: number, height: number) => {
       const usesUltraShortList = height < 260
         || (width < 480 && height < 360)
-      setCompactChrome((width < 600 && height >= 360 || Boolean(collection) && width < 900 && height >= 300) && !usesUltraShortList)
+      setCompactChrome(width < 900 && !usesUltraShortList)
       const nextMode: MapLayoutMode = usesUltraShortList
         ? "ultra-short"
         : width <= 430 || (width > height && height <= 568)
@@ -1667,6 +1682,16 @@ export function MapEntryB() {
       if (nextMode === previousMode) {
         setMapRootBlockSize(height)
         return
+      }
+      if (document.activeElement instanceof HTMLInputElement && document.activeElement.dataset.testid === "ondo-b-search") {
+        setDiscoverySearchOpen(true)
+        window.requestAnimationFrame(() => {
+          const input = root.querySelector<HTMLInputElement>("[data-testid='ondo-b-search']")
+          if (!input) return
+          input.dataset.discoveryRestoringFocus = "true"
+          input.focus({ preventScroll: true })
+          delete input.dataset.discoveryRestoringFocus
+        })
       }
       if (nextMode !== "spacious-map" && (zoomFocusOwnedRef.current || document.activeElement?.closest(".maplibregl-ctrl-group"))) {
         zoomFocusOwnedRef.current = false
@@ -1688,7 +1713,7 @@ export function MapEntryB() {
     const bounds = root.getBoundingClientRect()
     applyLayout(bounds.width, bounds.height)
     return () => observer.disconnect()
-  }, [city, Boolean(collection)])
+  }, [city])
 
   useLayoutEffect(() => {
     if (!state.hydrated) return
@@ -1941,6 +1966,8 @@ export function MapEntryB() {
       // Share one flow region below the actual controls. Notice text and an
       // expanded location explanation never require guessed vertical offsets.
       const top = Math.max(bottom(header), bottom(utilities)) + 8
+      root.style.setProperty("--city-list-start", `${bottom(header) + 12}px`)
+      root.style.setProperty("--city-header-bottom", `${bottom(header)}px`)
       const chromeTop = chrome?.getBoundingClientRect().top ?? bounds.bottom
       const limit = chromeTop > bounds.top + top ? Math.min(bounds.bottom, chromeTop) : bounds.bottom
       stack.style.setProperty("--map-feedback-top", `${top}px`)
@@ -2691,15 +2718,10 @@ export function MapEntryB() {
       const activeHistory = readBDiscoveryHistory()
       if (readMyKoreaPlaceReturnNavigation()?.receipt.phase === "origin"
         || activeHistory?.level !== "city"
-        || activeHistory.city !== city) return
+        || activeHistory.city !== city
+        || pendingHistoryCameraRef.current?.city === city) return
       replaceBDiscoveryCityContext({
-        city,
-        view,
-        query,
-        category,
-        editorialCategory,
-        layer: after19ThemeActive ? "after19" : "standard",
-        listScroll: listPanelRef.current?.scrollTop ?? pendingListScrollRef.current,
+        ...activeHistory,
         camera: cameraSnapshot(map),
       })
     }
@@ -2824,7 +2846,11 @@ export function MapEntryB() {
       if (collection && filterChanged) window.requestAnimationFrame(() => {
         // Let the responsive header/tray finish the same React commit before
         // reading their bounds, especially when entering a short landscape.
-        if (mapRef.current && readBDiscoveryHistory()?.collection === collection) focusCollectionPlaces(mapRef.current, collectionPlaces)
+        if (mapRef.current && readBDiscoveryHistory()?.collection === collection) {
+          const animate = collectionTravelRef.current === collection
+          collectionTravelRef.current = null
+          focusCollectionPlaces(mapRef.current, collectionPlaces, animate)
+        }
       })
       else if (filteredMap && filterChanged && !selectedVenueId) focusFilteredVenues(mapRef.current!, [
         ...venues, ...researchedFoods,
@@ -2972,7 +2998,6 @@ export function MapEntryB() {
     const pending = pendingHistoryCameraRef.current
     const map = mapRef.current
     if (!pending || pending.city !== city || !map || mapModeRef.current !== city) return
-    pendingHistoryCameraRef.current = null
     map.stop()
     map.jumpTo({
       center: [pending.camera.longitude, pending.camera.latitude],
@@ -2980,6 +3005,7 @@ export function MapEntryB() {
       bearing: pending.camera.bearing,
       pitch: pending.camera.pitch,
     })
+    pendingHistoryCameraRef.current = null
     map.getContainer().dataset.historyCamera = "restored"
   }, [city, historyRestoreVersion, mapState])
 
@@ -3195,21 +3221,59 @@ export function MapEntryB() {
     if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur()
   }
 
-  function openDiscoveryCollection(id: DiscoveryCollectionIdB) {
+  function openDiscoveryCollection(id: DiscoveryCollectionIdB, preserveQuery = false) {
     if (!city) return
     // Typing 'hot' must not make Back return to a half-entered 'ho' search.
     // Keep the pre-search context in the app's existing history, not a second router.
     const origin = searchOriginRef.current
-    if ((id === "hot" || id === "cool") && origin?.city === city && origin.level === "city") replaceBDiscoveryHistoryForActiveDocument(origin)
+    if (!preserveQuery && isDiscoveryMoodB(id) && origin?.city === city && origin.level === "city") replaceBDiscoveryHistoryForActiveDocument(origin)
     else updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined })
-    const entry = openBDiscoveryCollection(id)
+    collectionTravelRef.current = id
+    const entry = openBDiscoveryCollection(id, { preserveQuery })
     if (entry) adoptCollectionEntry(entry)
+  }
+
+  function previewDiscoveryStory(id: DiscoveryCollectionIdB) {
+    if (!city || discoveryCollectionStoryB(id)?.city !== city) return
+    setStoryPreviews(previous => ({ ...previous, [city]: id }))
+    const places = discoveryCollectionPlacesB(id, { city, category, editorialCategory, after19: after19ThemeActive, balanceOnly: balancePlacesActive })
+    if (mapRef.current) focusCollectionPlaces(mapRef.current, places, true)
+  }
+
+  function openDiscoveryStory(id: DiscoveryCollectionIdB) {
+    if (!city) return
+    setStoryPreviews(previous => ({ ...previous, [city]: id }))
+    openDiscoveryCollection(id)
+  }
+
+  function changeTemperature(id: "hot" | "warm" | "cool" | null) {
+    if (id) openDiscoveryCollection(id, true)
+    else if (city && isDiscoveryMoodB(collection)) {
+      // Reset just this filter; preserve category changes made inside its scope.
+      const entry = replaceBDiscoveryCityContext({
+        city, view, query: discoveryMoodFromQueryB(query) ? "" : query,
+        category, editorialCategory, layer: after19ThemeActive ? "after19" : "standard",
+        listScroll: 0, collection: null, collectionSelection: null,
+        ...(mapRef.current ? { camera: cameraSnapshot(mapRef.current) } : {}),
+      })
+      if (entry) adoptCollectionEntry(entry)
+    }
   }
 
   function selectCollectionPin(id: string) {
     if (!collectionPlaces.some(place => place.id === id)) return
     setCollectionSelection(id)
     updateCityContext({ collectionSelection: id })
+  }
+
+  function toggleDiscoveryView() {
+    const nextView = view === "map" ? "list" : "map"
+    setView(nextView)
+    if (nextView === "map" && navigator.onLine) {
+      setMapPartialFailure(false)
+      mapRef.current?.triggerRepaint()
+    }
+    updateCityContext({ view: nextView })
   }
 
   function openCollectionPlace(id: string) {
@@ -3231,11 +3295,27 @@ export function MapEntryB() {
   }
 
   function editDiscoveryQuery(nextQuery: string) {
+    // Ordinary text and the selected editorial mood intersect in either order.
+    // A story is a reading scope, not a second filter; typed mood commands still
+    // commit explicitly through openDiscoveryCollection on Enter.
+    const nextCollection = isDiscoveryMoodB(collection) ? collection : null
     setQuery(nextQuery)
-    setCollection(null)
+    setCollection(nextCollection)
     setCollectionSelection(null)
     setCollectionDetailId(null)
-    updateCityContext({ query: nextQuery, collection: null, collectionSelection: null })
+    updateCityContext({ query: nextQuery, collection: nextCollection, collectionSelection: null })
+  }
+
+  function closeHeaderSearch() {
+    setDiscoverySearchOpen(false)
+    searchOriginRef.current = null
+    window.requestAnimationFrame(() => cityRootNode.current?.querySelector<HTMLButtonElement>("[data-testid='ondo-b-map-search-toggle']")?.focus({ preventScroll: true }))
+  }
+
+  function rememberSearchOrigin() {
+    if (searchOriginRef.current) return
+    updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined })
+    searchOriginRef.current = readBDiscoveryHistory()
   }
 
   function updateCityContext(next: { view?: ViewMode; query?: string; category?: BDiscoveryCategory; editorialCategory?: BDiscoveryEditorialCategory; listScroll?: number; camera?: BDiscoveryCamera; collection?: DiscoveryCollectionIdB | null; collectionSelection?: string | null }) {
@@ -3401,6 +3481,8 @@ export function MapEntryB() {
   function openMapOptions() {
     // Keep one keyboard/close owner when the guide is already open.
     setEditorialOpen(false)
+    setDiscoverySearchOpen(false)
+    searchOriginRef.current = null
     // Filtering the transport fallback is explicit list intent as well. A late
     // tile response must not switch the surface behind the options sheet.
     if (mapState === "error" && view !== "list") {
@@ -3515,6 +3597,18 @@ export function MapEntryB() {
     }, { enableHighAccuracy: false, timeout: 10_000, maximumAge: 60_000 })
   }
 
+  const showDiscoveryDock = effectiveView === "map" && !editorialOpen && !mapOptionsOpen && !discoverySearchOpen && !collection && !query.trim() && !selectedVenueId && !selectedEditorialPlaceId && !selectedResearchId && !balancePlacesActive && !after19Active && !entryTransitionCity && state.surface.kind === "map"
+  const collectionStory = city ? discoveryStoryForCityB(city) : undefined
+  const collectionViewControl = mapState !== "error" && mapLayoutMode !== "ultra-short" ? <button type="button" data-testid="ondo-b-view-toggle" aria-pressed={effectiveView === "list"} onClick={toggleDiscoveryView}>
+    {effectiveView === "map" ? <List size={18} aria-hidden="true" /> : <MapIcon size={18} aria-hidden="true" />}
+    <span>{effectiveView === "list" ? copy.map : collection ? locale === "ko" ? `장소 ${collectionPlaces.length}곳` : locale === "ja" ? `${collectionPlaces.length}か所を見る` : `${collectionPlaces.length} ${collectionPlaces.length === 1 ? "place" : "places"}` : copy.list}</span>
+  </button> : null
+  const collectionRecovery = {
+    unsupportedCity: isDiscoveryMoodB(collection) && city !== "seoul",
+    onRecover: openMapOptions,
+    alternativeStory: collectionStory ? { onOpen: () => openDiscoveryCollection(collectionStory.id as DiscoveryCollectionIdB) } : undefined,
+  }
+
   const locationDisclosure = !compactChrome && effectiveView === "map" && mapState !== "error" ? (
     <details
       className={styles.locationMessage}
@@ -3613,6 +3707,7 @@ export function MapEntryB() {
         data-entry-transition={entryTransitionCity === city ? "active" : "settled"}
         data-entry-origin={entryTransitionCity === city ? city : undefined}
         data-temperature-shell="city-map"
+        data-header-version={mapLayoutMode === "ultra-short" ? "short-list" : "unified-a"}
         data-compact-chrome={compactChrome ? "true" : "false"}
         data-sample-temperature={sampleEnvironment ? "true" : "false"}
         data-map-perspective={mapTilted ? "tilted" : "flat"}
@@ -3648,6 +3743,7 @@ export function MapEntryB() {
         data-effective-view={effectiveView}
         data-map-root-block-size={mapRootBlockSize.toFixed(1)}
         data-selected-venue-id={selectedVenueId ?? "none"}
+        data-discovery-dock={showDiscoveryDock}
         data-selected-editorial-place-id={selectedEditorialPlaceId ?? "none"}
         data-after19-active={after19ThemeActive ? "true" : "false"}
         data-map-appearance={state.resolvedAppearance}
@@ -3660,7 +3756,40 @@ export function MapEntryB() {
         data-personalized-match-count={personalizedVenueRows.filter(({ matchCount }) => matchCount > 0).length}
       >
         <p id="ondo-b-map-instruction" className={styles.srOnly} aria-hidden={editorialOpen ? true : undefined}>{city === "jeju" ? copy.editorialMapA11y : copy.mapA11y}</p>
-        <header className={styles.cityHeader} data-testid="ondo-b-city-header" onBlur={event => {
+        {mapLayoutMode !== "ultra-short" ? <MapHeaderB
+          locale={locale}
+          cityLabel={CITY[city].label[locale]}
+          cityStatus={cityPulseStatus(city, locale)}
+          cityStatusCode={city === "jeju" ? "editorial-limited" : PULSE_CITY_STATUS[city]}
+          onBack={() => {
+            pendingNationFocusRef.current = city
+            if (!goBackFromBDiscovery("city")) { setEntryTransitionCity(null); setCity(null) }
+          }}
+          onChooseCity={() => { setDiscoverySearchOpen(false); searchOriginRef.current = null; setCityPickerOpen(true) }}
+          onOptions={openMapOptions}
+          optionsOpen={mapOptionsOpen}
+          after19Active={after19Active}
+          filtered={(city === "jeju" ? editorialCategory : category) !== "all" || balancePlacesActive}
+          wallet={sampleEnvironment ? <MapBalanceEntryB onOpen={() => { updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined }); actions.setTab("id") }} /> : null}
+          selectedMood={isDiscoveryMoodB(collection) ? collection : null}
+          spectrumDisabled={entryTransitionCity === city}
+          showSpectrum={!collection || isDiscoveryMoodB(collection)}
+          onMoodChange={changeTemperature}
+          searchOpen={discoverySearchOpen}
+          query={query}
+          maxLength={SEARCH_MAX_LENGTH}
+          onSearchOpen={() => { rememberSearchOrigin(); setDiscoverySearchOpen(true) }}
+          onSearchClose={closeHeaderSearch}
+          onSearchFocus={rememberSearchOrigin}
+          onQueryChange={editDiscoveryQuery}
+          onSubmitSearch={() => {
+            const mood = discoveryMoodFromQueryB(query)
+            if (mood) {
+              openDiscoveryCollection(mood)
+              window.requestAnimationFrame(() => cityRootNode.current?.querySelector<HTMLButtonElement>(`[data-testid='map-temperature-${mood}']`)?.focus({ preventScroll: true }))
+            } else closeHeaderSearch()
+          }}
+        /> : <header className={styles.cityHeader} data-testid="ondo-b-city-header" onBlur={event => {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) { setDiscoverySearchOpen(false); searchOriginRef.current = null }
         }}>
           <div className={styles.topline}>
@@ -3693,7 +3822,7 @@ export function MapEntryB() {
               if (mood) openDiscoveryCollection(mood)
               else { searchOriginRef.current = null; setDiscoverySearchOpen(false); event.currentTarget.blur() }
             }}
-            placeholder={compactChrome ? MOBILE_CHROME_COPY[locale].search : copy.search} />{query ? <button type="button" onClick={() => editDiscoveryQuery("")} aria-label={MAP_UI[locale].clearSearch}><X size={16} /></button> : null}{sampleEnvironment ? <MapBalanceEntryB onOpen={() => { updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined }); actions.setTab("id") }} /> : null}</div>
+            placeholder={compactChrome ? locale === "ko" ? "장소 검색" : locale === "ja" ? "検索" : "Search" : copy.search} />{query ? <button type="button" onClick={() => editDiscoveryQuery("")} aria-label={MAP_UI[locale].clearSearch}><X size={16} /></button> : null}{sampleEnvironment ? <MapBalanceEntryB onOpen={() => { updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined }); actions.setTab("id") }} /> : null}</div>
           {discoverySearchOpen ? <DiscoveryMoodSuggestionsB locale={locale} onSelect={openDiscoveryCollection} /> : null}
           {compactChrome ? null : after19NightSubsetActive ? <div className={styles.after19Context} data-testid="ondo-b-after19-context">
             <MoonStar className={styles.after19ContextIcon} size={15} aria-hidden="true" />
@@ -3716,9 +3845,9 @@ export function MapEntryB() {
               >{mapLayoutMode === "ultra-short" ? CATEGORY[item].compact[locale] : label}</button>
             })}
           </div>}
-        </header>
+        </header>}
 
-        {!compactChrome ? <PersonalizationLens
+        {mapLayoutMode === "ultra-short" ? <PersonalizationLens
           locale={locale}
           persona={state.persona}
           preferences={state.discoveryPreferences}
@@ -3746,7 +3875,7 @@ export function MapEntryB() {
         ) : null}
 
         <div className={styles.mapUtilityCluster} data-testid="ondo-b-map-utility-cluster" data-editorial-open={editorialOpen ? "true" : "false"}>
-          {!compactChrome && effectiveView === "map" && mapState === "ready" && !editorialOpen ? (
+          {mapLayoutMode === "ultra-short" && effectiveView === "map" && mapState === "ready" && !editorialOpen ? (
             <button
               type="button"
               className={styles.perspectiveToggle}
@@ -3765,8 +3894,7 @@ export function MapEntryB() {
               }}
             ><Layers2 size={19} aria-hidden="true" /></button>
           ) : null}
-          {!locationNeedsRecovery ? locationDisclosure : null}
-          {!compactChrome && effectiveView === "map" && mapState !== "error" ? <button type="button" className={styles.locate} data-testid="ondo-b-locate" data-location-state={locationState} data-online={online ? "true" : "false"} aria-describedby="ondo-b-location-message" aria-label={locationState === "denied" ? copy.retryLocation : copy.locate} onClick={locateUser}>{locationState === "denied" || locationState === "unsupported" ? <LocateOff size={19} aria-hidden="true" /> : <LocateFixed size={19} aria-hidden="true" />}</button> : null}
+          {mapLayoutMode === "ultra-short" && !locationNeedsRecovery ? locationDisclosure : null}
           <GlobalAfter19B
             locale={locale}
             accountActive={state.account === "ACC-ACTIVE"}
@@ -3778,8 +3906,11 @@ export function MapEntryB() {
             }}
             onActiveChange={setAfter19Active}
             noticeTarget={mapFeedbackTarget}
+            hideTrigger={mapLayoutMode !== "ultra-short"}
+            externalOpenRequest={after19OpenRequest}
+            returnFocusSelector={mapLayoutMode !== "ultra-short" ? "[data-testid='ondo-b-map-options-open']" : undefined}
           />
-          {city === "seoul" || city === "jeju" ? <JapanFirstDiscoveryB locale={locale} city={city} open={editorialOpen} compactTrigger={compactChrome} returnFocusSelector={compactChrome ? "[data-testid='ondo-b-map-options-open']" : undefined} presentation={effectiveView === "list" || mapState === "error" ? "list" : "map"} onOpenChange={setEditorialOpen} onSelectEditorialPlace={city === "jeju" ? focusEditorialPlace : undefined} onSelectCollection={openDiscoveryCollection} /> : null}
+          {city === "seoul" || city === "jeju" ? <JapanFirstDiscoveryB locale={locale} city={city} open={editorialOpen} compactTrigger={mapLayoutMode !== "ultra-short"} returnFocusSelector={mapLayoutMode !== "ultra-short" ? "[data-testid='ondo-b-map-options-open']" : undefined} presentation={effectiveView === "list" || mapState === "error" ? "list" : "map"} onOpenChange={setEditorialOpen} onSelectEditorialPlace={city === "jeju" ? focusEditorialPlace : undefined} onSelectCollection={openDiscoveryCollection} /> : null}
         </div>
         <div ref={mapFeedbackRootRef} className={styles.mapFeedbackStack} data-testid="ondo-b-map-feedback" hidden={editorialOpen}>
           <div className={styles.mapFeedbackSlot}>{locationNeedsRecovery ? locationDisclosure : null}</div>
@@ -3793,7 +3924,7 @@ export function MapEntryB() {
         ) : null}
 
         <div className={styles.mapChrome} data-testid="ondo-b-map-chrome">
-          <div
+          {!collection && !showDiscoveryDock ? <div
             className={styles.resultBar}
             data-testid="ondo-b-result-bar"
             data-chrome-role="view-action"
@@ -3827,7 +3958,7 @@ export function MapEntryB() {
                 <span className={styles.viewActionLabel}>{effectiveView === "map" ? copy.list : copy.map}</span>
               </button>
             )}
-          </div>
+          </div> : null}
 
           {effectiveView === "map" && mapState !== "error" && !collection ? (
             <aside
@@ -3904,24 +4035,12 @@ export function MapEntryB() {
               </details>
             </aside>
           ) : null}
-          {effectiveView === "map" && mapState !== "error" ? (
-            <footer className={styles.attribution} data-testid="ondo-b-attribution" data-attribution-presentation="compact-legal" aria-label={MAP_UI[locale].mapAttribution}>
-              <details className={styles.creditDetails} data-testid="ondo-b-map-credit-details" name="ondo-map-disclosure">
-                <summary aria-label={copy.mapCredits}><span>{copy.mapCredits}</span><Copyright size={16} /></summary>
-                <div className={styles.creditDetailsBody}>
-                  <a href="https://openfreemap.org/" target="_blank" rel="noreferrer">OpenFreeMap</a>
-                  <a href="https://openmaptiles.org/" target="_blank" rel="noreferrer">© OpenMapTiles</a>
-                  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">Data from OpenStreetMap / ODbL</a>
-                </div>
-              </details>
-            </footer>
-          ) : null}
         </div>
 
         {effectiveView === "list" || mapState === "error" ? (
           <div ref={listPanelRef} className={styles.listPanel} data-testid="ondo-b-list-panel" onScroll={(event) => rememberListScroll(event.currentTarget.scrollTop)}>
             {balancePlacesActive ? <button type="button" className={styles.balanceFilter} data-testid="map-balance-places-filter" aria-label={BALANCE_MAP_COPY[locale].clear} aria-pressed="true" onClick={clearBalancePlaces}>{BALANCE_MAP_COPY[locale].places}<X size={13} aria-hidden="true" /></button> : null}
-            {collection ? <DiscoveryCollectionResultsB id={collection} locale={locale} places={collectionPlaces} selected={collectionSelected} onSelect={selectCollectionPin} onOpen={openCollectionPlace} onClose={() => goBackFromBDiscovery("city")} layout="list" /> : <ResearchedFoodListB places={researchedFoods} locale={locale} onSelect={place => setSelectedResearchId(place.id)} />}
+            {collection ? <DiscoveryCollectionResultsB key={`${collection}:list`} id={collection} locale={locale} places={collectionPlaces} selected={collectionSelected} onSelect={selectCollectionPin} onOpen={openCollectionPlace} onClose={() => goBackFromBDiscovery("city")} layout="list" suspended={state.surface.kind !== "map" || Boolean(selectedResearchId || collectionDetailId)} viewControl={collectionViewControl} {...collectionRecovery} /> : <ResearchedFoodListB places={researchedFoods} locale={locale} onSelect={place => setSelectedResearchId(place.id)} />}
             {mapState === "error" ? <div className={styles.mapError} role="status" data-testid="ondo-b-map-fallback-status"><span>{city === "jeju" ? copy.editorialMapUnavailable : copy.mapUnavailable}</span><button type="button" onClick={retryMap}>{copy.retryMap}</button></div> : null}
             {retryListForeground && mapState === "loading" && mapProgressVisible ? <div className={styles.mapRetryStatus} role="status" data-testid="ondo-b-map-retry-status"><i aria-hidden="true" /><span>{city === "jeju" ? copy.editorialMapLoading : copy.mapLoading}</span></div> : null}
             {collection || researchedFoods.length > 0 && (city === "jeju" ? editorialPlaces.length === 0 : venues.length === 0) ? null : city === "jeju" ? (
@@ -3961,10 +4080,16 @@ export function MapEntryB() {
           </div>
         ) : null}
         {effectiveView === "map" && !editorialOpen && !mapOptionsOpen && !discoverySearchOpen ? collection
-          ? <DiscoveryCollectionResultsB id={collection} locale={locale} places={collectionPlaces} selected={collectionSelected} onSelect={selectCollectionPin} onOpen={openCollectionPlace} onClose={() => goBackFromBDiscovery("city")} layout="map" />
-          : !query.trim() && !selectedVenueId && !selectedEditorialPlaceId && !selectedResearchId && !balancePlacesActive && !after19Active && !entryTransitionCity && state.surface.kind === "map"
-            ? <DiscoveryStoryHintB city={city} locale={locale} onOpen={openDiscoveryCollection} /> : null : null}
-        <DiscoveryCollectionPinsB map={mapState === "ready" ? mapRef.current : null} places={collectionPlaces} locale={locale} selected={collectionSelected} visible={Boolean(collection && effectiveView === "map" && !editorialOpen)} onSelect={selectCollectionPin} />
+          ? <DiscoveryCollectionResultsB key={`${collection}:map`} id={collection} locale={locale} places={collectionPlaces} selected={collectionSelected} onSelect={selectCollectionPin} onOpen={openCollectionPlace} onClose={() => goBackFromBDiscovery("city")} layout="map" suspended={state.surface.kind !== "map" || Boolean(selectedResearchId || collectionDetailId)} viewControl={collectionViewControl} onShowList={isDiscoveryMoodB(collection) ? toggleDiscoveryView : undefined} {...collectionRecovery} />
+          : showDiscoveryDock
+            ? <div className={styles.storyDock} data-testid="map-discovery-dock">
+                <div className={styles.storyListControl}><span>{locale === "ko" ? "이야기로 둘러보기" : locale === "ja" ? "物語から探す" : "Explore a story"}</span>{collectionViewControl}</div>
+                <DiscoveryStoryCarouselB stories={discoveryStoriesForCityB(city)} locale={locale} selectedId={previewStoryId} onPreview={previewDiscoveryStory} onOpen={openDiscoveryStory} />
+              </div> : null : null}
+        <DiscoveryCollectionPinsB map={mapState === "ready" ? mapRef.current : null} places={collection ? collectionPlaces : showDiscoveryDock ? previewPlaces : []} locale={locale} selected={collection ? collectionSelected : null} visible={Boolean((collection || previewStoryId && showDiscoveryDock) && effectiveView === "map" && !editorialOpen)} onSelect={id => { if (collection) selectCollectionPin(id); else if (previewStoryId) openDiscoveryStory(previewStoryId) }} />
+        {effectiveView === "map" && mapState !== "error" && !editorialOpen ? <footer className={styles.mapCredits} aria-label={copy.mapCredits} data-testid="ondo-b-attribution" data-attribution-presentation="visible-legal">
+          <span data-testid="ondo-b-map-credit-details"><a href="https://openmaptiles.org/" target="_blank" rel="noreferrer">© OpenMapTiles</a> · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap</a></span>
+        </footer> : null}
         {selectedVenue && selectedPulse ? <span className={styles.srOnly} role="status" data-testid="ondo-b-selected-marker-status">{`${venueDisplayName(selectedVenue.name.ko, locale)} · ${TEMPERATURE_NAME[locale]} · ${pulseLevelLabel(selectedPulse.level, locale)}`}</span> : null}
         {selectedEditorialPlace ? <span className={styles.srOnly} role="status" data-testid="ondo-b-selected-editorial-marker-status">{`${selectedEditorialPlace.name[locale]} · ${jejuEditorialCoverageSummary(selectedEditorialPlace, locale, TEMPERATURE_NAME[locale])}`}</span> : null}
         {userLocation ? <span className={styles.srOnly} data-testid="ondo-b-user-location-marker" data-longitude={userLocation.longitude} data-latitude={userLocation.latitude}>{copy.locationReady}</span> : null}
@@ -3985,9 +4110,14 @@ export function MapEntryB() {
             const venue = CANONICAL_MAP_VENUES_COMPACT.find(item => item.id === id)
             if (venue) selectVenue(venue)
           }} /> : null}
+        {balancePlacesActive && effectiveView === "map" ? <button type="button" className={`${styles.balanceFilter} ${styles.balanceFilterFloating}`} data-testid="map-balance-places-filter" aria-label={BALANCE_MAP_COPY[locale].clear} aria-pressed="true" onClick={clearBalancePlaces}>{BALANCE_MAP_COPY[locale].places}<X size={13} aria-hidden="true" /></button> : null}
       </section>
-      {balancePlacesActive && effectiveView === "map" ? <button type="button" className={`${styles.balanceFilter} ${styles.balanceFilterFloating}`} data-testid="map-balance-places-filter" aria-label={BALANCE_MAP_COPY[locale].clear} aria-pressed="true" onClick={clearBalancePlaces}>{BALANCE_MAP_COPY[locale].places}<X size={13} aria-hidden="true" /></button> : null}
-      {compactChrome && mapOptionsOpen && state.tab === "ondo" ? <MapOptionsB
+      {cityPickerOpen && state.tab === "ondo" ? <SheetB locale={locale} label={locale === "ko" ? "도시 선택" : locale === "ja" ? "都市を選択" : "Choose city"} variant="decision" onClose={() => setCityPickerOpen(false)}>
+        <div className={styles.headerCityChoices} data-testid="ondo-b-city-choices">
+          {(["seoul", "busan", "jeju"] as const).map(id => <button type="button" key={id} aria-pressed={city === id} data-city-choice={id} onClick={() => { setCityPickerOpen(false); if (id !== city) { updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined }); chooseCity(id, true) } }}><MapPin size={20} aria-hidden="true" /><span>{CITY[id].label[locale]}</span><ChevronRight size={18} aria-hidden="true" /></button>)}
+        </div>
+      </SheetB> : null}
+      {mapOptionsOpen && state.tab === "ondo" ? <MapOptionsB
         locale={locale}
         cityLabel={CITY[city].label[locale]}
         categories={city === "jeju" ? EDITORIAL_CATEGORY_OPTIONS.map(id => ({ id, label: EDITORIAL_CATEGORY[id][locale], selected: editorialCategory === id })) : categoryRailItems.map(id => ({ id, label: CATEGORY[id][locale], selected: category === id }))}
@@ -4001,6 +4131,8 @@ export function MapEntryB() {
           }
         }}
         categoryLocked={after19NightSubsetActive}
+        after19Active={after19Active}
+        onAfter19={() => { flushSync(() => setMapOptionsOpen(false)); setAfter19OpenRequest(request => request + 1) }}
         resultLabel={resultCount(visibleResultCount ?? (city === "jeju" ? editorialPlaces.length : venues.length) + researchedFoods.length, locale)}
         canTilt={effectiveView === "map" && mapState === "ready" && entryTransitionCity !== city}
         tilted={mapTilted}

@@ -62,6 +62,9 @@ type GlobalAfter19BProps = {
   accountActive?: boolean
   noticeTarget?: HTMLElement | null
   onActiveChange?(active: boolean, activation: GlobalAfter19SessionB["activation"]): void
+  hideTrigger?: boolean
+  externalOpenRequest?: number
+  returnFocusSelector?: string
 }
 
 type Notice = "off" | "expired" | null
@@ -298,7 +301,7 @@ function focusVisibleDestination(element: HTMLElement) {
   return true
 }
 
-export function GlobalAfter19B({ locale, context, accountActive = false, onActiveChange, noticeTarget = null }: GlobalAfter19BProps) {
+export function GlobalAfter19B({ locale, context, accountActive = false, onActiveChange, noticeTarget = null, hideTrigger = false, externalOpenRequest, returnFocusSelector }: GlobalAfter19BProps) {
   const reviewMode = useQaControls()
   const [hydrated, setHydrated] = useState(false)
   const [preference, setPreference] = useState<GlobalAfter19PreferenceB>(DEFAULT_GLOBAL_AFTER19_PREFERENCE)
@@ -320,6 +323,7 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
   const reviewDetailsCloseRef = useRef<HTMLButtonElement | null>(null)
   const reviewContextRef = useRef(`${context.cityId}:${context.venueId ?? "none"}`)
   const openerRef = useRef<HTMLElement | null>(null)
+  const externalRequestRef = useRef(externalOpenRequest)
   const pendingTimerRef = useRef<number | null>(null)
   const gateOpenRef = useRef(gateOpen)
   const gateLifecycleSerialRef = useRef(0)
@@ -430,6 +434,18 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
     if (!hydrated) return
     onActiveChange?.(session.mode === "on", session.activation)
   }, [hydrated, onActiveChange, session.activation, session.mode])
+
+  useEffect(() => {
+    if (!hydrated || externalOpenRequest === undefined || externalRequestRef.current === externalOpenRequest) return
+    externalRequestRef.current = externalOpenRequest
+    if (session.mode === "on") {
+      if (hideTrigger) turnOff()
+      else if (reviewResult) openReviewDetails()
+      else turnOff()
+    } else {
+      openGate()
+    }
+  }, [externalOpenRequest, hydrated, reviewResult, session.mode])
 
   useEffect(() => {
     if (!hydrated) return
@@ -614,12 +630,25 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
     writeStorage(window.localStorage, GLOBAL_AFTER19_PREFERENCE_KEY, next)
   }
 
+  function resolveExternalOpener() {
+    const selector = returnFocusSelector?.trim()
+    if (selector) {
+      try {
+        const target = document.querySelector<HTMLElement>(selector)
+        if (target && isRenderedFocusable(target)) return target
+      } catch {
+        // An invalid optional integration selector must not block the gate.
+      }
+    }
+    return document.activeElement instanceof HTMLElement ? document.activeElement : chipRef.current
+  }
+
   function openGate() {
     clearPendingCheck()
     gateOpenRef.current = true
     gateLifecycleSerialRef.current += 1
     gateExitPlanRef.current = null
-    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : chipRef.current
+    openerRef.current = resolveExternalOpener()
     setPlaceReturn(null)
     setGateView("intro")
     setNotice(null)
@@ -642,7 +671,10 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
   function closeReviewDetails(restoreFocus: boolean) {
     setReviewDetailsOpen(false)
     if (!restoreFocus) return
-    window.requestAnimationFrame(() => reviewToggleRef.current?.focus({ preventScroll: true }))
+    window.requestAnimationFrame(() => {
+      const target = reviewToggleRef.current ?? (returnFocusSelector ? resolveExternalOpener() : null)
+      target?.focus({ preventScroll: true })
+    })
   }
 
   function clearPendingCheck() {
@@ -821,7 +853,10 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
     closeReviewDetails(false)
     commitSession({ ...session, mode: "manual-off", activation: null, expiryNotice: false })
     setNotice("off")
-    window.requestAnimationFrame(() => chipRef.current?.focus({ preventScroll: true }))
+    window.requestAnimationFrame(() => {
+      const target = hideTrigger ? resolveExternalOpener() : chipRef.current
+      target?.focus({ preventScroll: true })
+    })
   }
 
   function undoOff() {
@@ -829,7 +864,7 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
       commitSession({ ...session, mode: "on", activation: "manual", expiryNotice: false })
       setNotice(null)
       window.requestAnimationFrame(() => {
-        const target = reviewToggleRef.current ?? activeOffRef.current
+        const target = reviewToggleRef.current ?? activeOffRef.current ?? (hideTrigger ? resolveExternalOpener() : null)
         target?.focus({ preventScroll: true })
       })
     } else {
@@ -840,7 +875,10 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
   function dismissNotice() {
     setNotice(null)
     if (session.expiryNotice) commitSession({ ...session, expiryNotice: false })
-    window.requestAnimationFrame(() => chipRef.current?.focus({ preventScroll: true }))
+    window.requestAnimationFrame(() => {
+      const target = hideTrigger ? resolveExternalOpener() : chipRef.current
+      target?.focus({ preventScroll: true })
+    })
   }
 
   function consumeGateClosingInput(event: SyntheticEvent) {
@@ -988,11 +1026,11 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
       data-context-city={context.cityId}
       data-context-venue={context.venueId ?? "none"}
     >
-      {session.mode !== "on" ? (
+      {!hideTrigger && session.mode !== "on" ? (
         <button ref={chipRef} type="button" className={styles.chip} onClick={openGate} data-testid="global-after19-toggle" aria-label={t.chipLabel}>
           <MoonStar size={17} aria-hidden="true" /><span>{t.chip}</span>
         </button>
-      ) : (
+      ) : !hideTrigger ? (
         <section className={styles.banner} data-testid="global-after19-banner" data-activation={session.activation ?? "manual"} data-review-result={reviewResult ? "true" : "false"}>
           <MoonStar size={19} aria-hidden="true" />
           {reviewResult ? (
@@ -1038,7 +1076,7 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
             </section>
           ) : null}
         </section>
-      )}
+      ) : null}
 
       {noticeContent && noticeTarget ? createPortal(noticeContent, noticeTarget) : noticeContent}
 

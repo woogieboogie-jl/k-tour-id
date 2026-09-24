@@ -1603,3 +1603,13 @@
 }
 .detailCompanions > .secondary:only-child { grid-column: 1 / -1; }
 .detailCompanions > .secondary > svg { flex: 0 0 auto; }
+
+/* Phone portrait title rhythm: keep table cards within the shared compact
+   card scale without changing the larger editorial/table detail headings. */
+@media (max-width: 699px) and (orientation: portrait) {
+  .card h2,
+  .cardActive h2 {
+    font-size: clamp(20px, 5.6vw, 22px);
+    line-height: 1.2;
+  }
+}

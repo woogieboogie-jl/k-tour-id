@@ -44,6 +44,7 @@ import { ONDO_B_TABLES, ondoBTableTimeline } from "../connect/table-model"
 import { capturePlaceServiceMapReturnB } from "../map/place-service-map-return-b"
 import { PlacePeekActionsB, PlaceServiceActionsB } from "./place-service-actions-b"
 import { JourneyVisitEntryB } from "../commerce-b/journey-visit-b"
+import { ExperienceEntryB } from "../experience-b/experience-b"
 import { HackathonEntitlementCtaB } from "../hackathon-b/hackathon-cta-b"
 import {
   canonicalFactFreshness,
@@ -176,7 +177,7 @@ const COPY = {
     pulseTooHotBody: "Compare a calmer place from the same curated area.",
     pulseAlternative: "Open calmer place",
     pulseLocalEvidence: "Your recent signal",
-    table: "Dining plans",
+    table: "Dine with travelers",
     tableBody: (schedule: string) => `${schedule} · Korean + English · 1 seat left`,
     tableClosedBody: "This Table has ended · view details",
     browseTables: "Browse all Tables",
@@ -258,7 +259,7 @@ const COPY = {
     pulseTooHotBody: "같은 선별 지역에서 더 여유로운 장소를 살펴보세요.",
     pulseAlternative: "더 여유로운 장소 열기",
     pulseLocalEvidence: "내 최근 신호",
-    table: "식사 계획",
+    table: "여행자와 함께 먹기",
     tableBody: (schedule: string) => `${schedule} · 한국어 + 영어 · 1자리 남음`,
     tableClosedBody: "종료된 테이블 · 상세 보기",
     browseTables: "전체 테이블 보기",
@@ -340,7 +341,7 @@ const COPY = {
     pulseTooHotBody: "同じ選定エリアから、より落ち着いた場所を比べられます。",
     pulseAlternative: "落ち着いた場所を開く",
     pulseLocalEvidence: "自分の最近のシグナル",
-    table: "食事プラン",
+    table: "旅行者と食事",
     tableBody: (schedule: string) => `${schedule}・韓国語＋英語・残り1席`,
     tableClosedBody: "終了したTable・詳細を見る",
     browseTables: "すべてのテーブルを見る",
@@ -1142,11 +1143,17 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
             </div>
           </details>
 
-          <PlaceServiceActionsB placeId={currentVenueId} locale={locale} onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open" presentation="place-detail" />
-          <HackathonEntitlementCtaB venueId={currentVenueId} locale={locale} />
-          <JourneyVisitEntryB key={`journey-${currentVenueId}`} locale={locale} venueId={currentVenueId} />
+          <section className={styles.placeActions} data-testid="canonical-place-actions" aria-label={locale === "ko" ? "이 장소에서 할 수 있는 일" : locale === "ja" ? "この場所でできること" : "At this place"}>
+            <PlaceServiceActionsB placeId={currentVenueId} locale={locale} onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open" presentation="place-detail" includeGuide={false} />
+            <HackathonEntitlementCtaB venueId={currentVenueId} locale={locale} />
+          </section>
+          <section className={styles.tripActions} data-testid="canonical-trip-actions" aria-labelledby="canonical-trip-actions-title">
+            <h3 id="canonical-trip-actions-title">{locale === "ko" ? "가이드·여행 기록" : locale === "ja" ? "ガイド・旅の記録" : "Guides & memories"}</h3>
+            <ExperienceEntryB placeId={currentVenueId} locale={locale} />
+            <JourneyVisitEntryB key={`journey-${currentVenueId}`} locale={locale} venueId={currentVenueId} />
+          </section>
           {placeTable ? (
-            <section className={styles.tableActions} aria-label={locale === "ko" ? "이 장소의 식사 계획" : locale === "ja" ? "この場所の食事プラン" : "Dining plans at this place"} data-place-return-section="table">
+            <section className={styles.tableActions} aria-label={copy.table} data-place-return-section="table">
               <button type="button" className={styles.tablePrimary} onClick={openTableFromPlace} data-testid="canonical-place-table" data-place-service="table">
                 <UsersRound size={18} aria-hidden="true" />
                 <span><strong>{copy.table}</strong><small>{tableUpcoming ? ondoBTableTimeline(placeTable, productTimeline, locale).schedule : copy.tableClosedBody}</small></span>

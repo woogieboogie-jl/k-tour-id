@@ -1114,11 +1114,11 @@ function FundingSourceSheet({ locale, source, subject, purpose, returnVenueName,
         <header><span>{operation ? words("Add money", "충전", "チャージ") : purpose === "topup" ? copy.addFunds : copy.sheet}</span><button type="button" data-funding-focus aria-label={COPY[locale].close} aria-disabled={closing ? "true" : undefined} onClick={closeFunding}><X size={20} aria-hidden="true" /></button></header>
         <div className={styles.fundingSheetBody} data-sample-step={phase ?? "methods"}>
           <h2 id="funding-source-title">{operation ? phaseTitle : purpose === "topup" ? copy.topupTitle : copy.title}</h2>
-          {returnVenueName ? <section className={styles.fundingReturnContext} data-testid="funding-return-context" data-shortage-krw={returnShortageKrw ?? 0}>
+          {returnVenueName ? <section className={styles.fundingReturnContext} data-testid="funding-return-context" data-shortage-krw={returnShortageKrw ?? 0} data-credit-committed={creditComplete}>
             <strong><MapPin size={15} aria-hidden="true" />{returnVenueName}</strong>
-            <p>{!creditComplete && returnShortageKrw !== undefined && returnShortageKrw > 0
+            {!creditComplete ? <p>{!creditComplete && returnShortageKrw !== undefined && returnShortageKrw > 0
               ? words(`Shortfall before top-up: ${formatKrw(returnShortageKrw, locale)}`, `충전 전 부족 금액 ${formatKrw(returnShortageKrw, locale)}`, `チャージ前の不足額 ${formatKrw(returnShortageKrw, locale)}`)
-              : words("Return to this payment after adding funds", "충전 후 같은 결제로 돌아와요", "チャージ後は同じ支払いに戻ります")}</p>
+              : words("Return to this payment after adding funds", "충전 후 같은 결제로 돌아와요", "チャージ後は同じ支払いに戻ります")}</p> : null}
             <small>{words("Adding funds is separate from paying the place.", "충전은 매장 결제와 별개예요.", "チャージとお店への支払いは別です。")}</small>
           </section> : null}
           {operation && quote && operation.stablecoin ? <div data-testid="funding-rail-journey" data-phase={phase} data-provider-route={quote.rail} data-credit-committed={creditComplete}>
@@ -1216,7 +1216,9 @@ function CanonicalCommerceOfferB({ commerce, locale, presenceState, venueId, ven
   const fundingStatus = fundingSource === "travel_balance"
     ? walletStatus === "ready"
       ? reviewMode
-        ? `${formatKrwFromSettlementUnits(balance, locale)} → ${formatKrwFromSettlementUnits(balanceAfterUse, locale)}`
+        ? shortageKrw > 0
+          ? `${words("Available", "사용 가능", "利用可能")} ${formatKrwFromSettlementUnits(balance, locale)}`
+          : `${formatKrwFromSettlementUnits(balance, locale)} → ${formatKrwFromSettlementUnits(balanceAfterUse, locale)}`
         : `${formatKrw(0, locale)} · ${fundingCopy.addFunds}`
       : fundingCopy.setup
     : fundingCopy.provider
@@ -1683,6 +1685,7 @@ function CanonicalCommerceOfferB({ commerce, locale, presenceState, venueId, ven
       style={renderedView === "receipt" ? { zIndex: 139 } : undefined}
       data-origin-venue-id={originVenueId}
       data-transaction-venue-id={venueId}
+      data-order-id={order.orderId}
       data-cross-venue-receipt={crossVenueReceipt ? "true" : "false"}
       data-return-to={returnTo}
       data-payment-state={renderedView}
@@ -1699,7 +1702,7 @@ function CanonicalCommerceOfferB({ commerce, locale, presenceState, venueId, ven
     >
       <header className={styles.offerHeader}>
         <button type="button" data-commerce-initial-focus data-testid="commerce-origin-return" aria-label={crossVenueReceipt ? copy.returnToPlace(originVenueName) : copy.close} onClick={closeOffer}><ArrowLeft size={20} aria-hidden="true" /></button>
-        <span>{copy.eyebrow}</span>
+        {renderedView === "review" ? <span className={styles.checkoutContext} data-testid="commerce-checkout-context" data-venue-id={venueId}><strong>{venueName}</strong><small>{formatKrwFromSettlementUnits(debit, locale)}</small></span> : <span>{copy.eyebrow}</span>}
         <i className={styles.headerSpacer} aria-hidden="true" />
       </header>
 
@@ -1719,17 +1722,16 @@ function CanonicalCommerceOfferB({ commerce, locale, presenceState, venueId, ven
           </section>
 
           {renderedBenefitPolicy.status === "recommended" ? <>
-          <section className={styles.quote} aria-label={copy.total} data-flow8-object="quote">
+          <section className={styles.quote} aria-label={copy.total} data-flow8-object="quote" data-locked-quote={commerce.lockedQuote ? JSON.stringify(commerce.lockedQuote) : undefined}>
             <div><span>{copy.price}</span><strong>{formatKrw(order.grossKrw, locale)}</strong></div>
             <div className={styles.discount} data-flow8-benefit-delta={benefitSelected ? "applied" : "available"}><span>{copy.benefit}</span><strong>{benefitSelected ? `−${formatKrw(order.benefitKrw, locale)}` : copy.available}</strong></div>
             <div className={styles.quoteTotal}><span>{copy.total}</span><strong>{formatKrwFromSettlementUnits(debit, locale)}</strong></div>
           </section>
           <section className={styles.fundingSummary} data-testid="commerce-funding-source" data-funding-source={fundingSource} data-provider-connected={fundingAvailable}>
-            <div><WalletCards size={20} aria-hidden="true" /><span><small>{fundingCopy.selected}</small><strong>{fundingSourceLabel(locale, fundingSource)}</strong><em>{fundingStatus}</em></span></div>
+            <div><WalletCards size={20} aria-hidden="true" /><span><small>{fundingCopy.selected}</small><strong>{fundingSourceLabel(locale, fundingSource)}</strong><em>{fundingStatus}</em>{reviewMode && shortageKrw > 0 ? <em className={styles.shortageAmount} data-testid="commerce-balance-shortage" role="status">{words("Short by", "부족 금액", "不足額")} {formatKrw(shortageKrw, locale)}</em> : null}</span></div>
             <button type="button" onClick={(event) => openFundingForQuote(event.currentTarget)}>{fundingCopy.change}</button>
           </section>
 
-          {reviewMode && shortageKrw > 0 ? <section className={styles.shortage} data-testid="commerce-balance-shortage" role="status"><strong>{words("Add a little more for this payment", "이 결제에 조금 더 필요해요", "この支払いには少し追加が必要です")}</strong><p>{words("Available", "사용 가능", "利用可能")} {formatKrwFromSettlementUnits(balance, locale)} · {words("Short by", "부족 금액", "不足額")} {formatKrw(shortageKrw, locale)}</p><button type="button" data-testid="commerce-shortage-fund" onClick={event => openFundingForQuote(event.currentTarget, "topup")}>{words("Top up and return here", "충전하고 이 결제로 돌아오기", "チャージしてこの決済に戻る")}</button></section> : null}
           {commerce.lockedQuote && !commerce.confirmationPending ? <p className={styles.quoteReturn} data-testid="commerce-held-quote">{words("This place and amount are kept while you top up. Adding funds is separate from paying the place.", "충전하는 동안 장소와 금액은 그대로예요. 충전은 매장 결제와 별개예요.", "チャージ中も場所と金額を保持します。チャージとお店への支払いは別です。")} <button type="button" onClick={() => { actions.dispatchCommerce({ type: "CANCEL_CONFIRMATION" }); setConsent(false) }}>{words("Review changes", "금액·혜택 다시 보기", "金額・特典を見直す")}</button></p> : null}
 
           <section className={styles.offerBenefit} data-testid="commerce-voucher" data-voucher-state={commerce.voucher} data-benefit-recommendation={commerce.benefitRecommendation}>
@@ -1772,7 +1774,7 @@ function CanonicalCommerceOfferB({ commerce, locale, presenceState, venueId, ven
               aria-describedby="payment-consequence"
               onClick={!reviewMode
                 ? walletStatus === "ready" ? (event) => openFundingForQuote(event.currentTarget) : (event) => onConnect(event.currentTarget)
-                : fundingSource !== "travel_balance" || shortageKrw > 0 ? (event) => openFundingForQuote(event.currentTarget) : walletStatus === "ready" ? pay : (event) => onConnect(event.currentTarget)}
+                : shortageKrw > 0 ? (event) => openFundingForQuote(event.currentTarget, "topup") : fundingSource !== "travel_balance" ? (event) => openFundingForQuote(event.currentTarget) : walletStatus === "ready" ? pay : (event) => onConnect(event.currentTarget)}
             >
               <CircleDollarSign size={19} aria-hidden="true" />
               {!reviewMode

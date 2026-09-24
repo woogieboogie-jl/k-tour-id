@@ -190,24 +190,19 @@ test.describe("ONDO B production CLEAN1 finding regressions", () => {
         const context = await productionContext(browser, viewport, locale)
         const page = await openPage(context, "/?city=seoul&view=map")
         const attribution = page.getByTestId("ondo-b-attribution")
+        const creditSurface = attribution.getByTestId("ondo-b-map-credit-details")
         await expect(attribution).toBeVisible()
-        const surface = await attribution.evaluate((node) => {
+        const surface = await creditSurface.evaluate((node) => {
           const style = getComputedStyle(node)
           return {
             backgroundColor: style.backgroundColor,
-            borderStyle: style.borderTopStyle,
-            borderWidth: style.borderTopWidth,
             boxSizing: style.boxSizing,
             paddingLeft: style.paddingLeft,
             paddingRight: style.paddingRight,
           }
         })
         expect(surface.backgroundColor).not.toBe("rgba(0, 0, 0, 0)")
-        expect(surface.borderStyle).toBe("solid")
-        expect(surface.borderWidth).toBe("1px")
         expect(surface.boxSizing).toBe("border-box")
-        await attribution.getByTestId("ondo-b-map-credit-details").locator("summary").click()
-        await expect(attribution.getByTestId("ondo-b-map-credit-details")).toHaveAttribute("open", "")
         await expect(attribution.getByRole("link")).toHaveCount(3)
         const targets = await attribution.getByRole("link").evaluateAll((links) => links.map((link) => {
           const box = link.getBoundingClientRect()
