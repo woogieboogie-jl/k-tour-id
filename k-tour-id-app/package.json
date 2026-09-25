@@ -16,6 +16,7 @@
     "build:vercel:hackathon": "next build",
     "build:vercel:readiness": "node scripts/hackathon-preview-build.mjs",
     "build:vercel:cx-preview": "node scripts/hackathon-preview-build.mjs --cx-only",
+    "vercel:ktour": "node scripts/vercel-ktour-account.mjs",
     "build:harvey:local": "node scripts/hackathon-local.mjs build",
     "start:harvey:local": "node scripts/hackathon-local.mjs start",
     "dev:harvey:local": "node scripts/hackathon-local.mjs dev",

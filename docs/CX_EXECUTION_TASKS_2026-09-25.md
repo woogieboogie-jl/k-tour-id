@@ -10,11 +10,11 @@
 | --- | --- | --- | --- |
 | Redis 인프라 연결/서울 실행 | 기존 완료 | 실제 서버 primitive 11/11, 임시 진단 종료 | 완료 |
 | 앱 store의 Redis 필수/fail-closed 설정 | 저장소 담당 | 잘못된 설정·별칭 혼합·샘플 seed·기본 namespace 거부 | 구현/fixture 완료 |
-| 실제 앱 store 지속성/동시성 | 저장소 담당 + root 실행 | 전용 synthetic 원장, 다중 프로세스 쓰기/새 프로세스 읽기/정리 | fixture/독립 리뷰 완료, 실제 Redis 실행 대기 |
+| 실제 앱 store 지속성/동시성 | 저장소 담당 + root 실행 | 전용 synthetic 원장, 다중 프로세스 쓰기/새 프로세스 읽기/정리 | 9/26 실제 Redis 6/6, cleanup=true 완료 |
 | CX-only 빌드·접근 보호·API allowlist | root + 독립 검토 | 비인증·다른 Origin·다른 경로·체인 호출 거부 | 구현/빌드/독립 리뷰/route 9개 완료 |
 | 인증 상태 경합/재시도 안전성 | 인증 담당 | 동시 시작·늦은 완료·취소/만료 후 완료·중복 완료 반례 | 구현/15개 반례 완료 |
 | 기존 장소 UI에 CX-only 흐름 연결 | UI 담당 | 명시적 동의, QR/app, 수동 결과 확인, 같은 장소 복귀 | 로컬 구현/독립 검토 완료 |
-| 실제 Preview 배포와 provider handoff | root | 정확한 SHA/region, 실제 trans/QR 생성, 민감값 미기록 | Vercel 계정 접근 복구 필요 |
+| 실제 Preview 배포와 provider handoff | root | 정확한 SHA/region, 실제 trans/QR 생성, 민감값 미기록 | 전용 프로필·CX runtime 설정 완료, 실제 배포/handoff 대기 |
 | 모바일/오류/새로고침 회귀 | QA + 독립 검토 | 브라우저 증거 및 실패 상태, CI/토큰 비노출 | mocked API 7개 통과, 실제 provider/기기는 대기 |
 | 본인 신분증 앱 승인 | 실제 보유자 | verified/transaction correlation/CI 및 성인 결과 확인 | 사람의 승인 필요 |
 | 완료/미완료 문서 업데이트 | root | 재현 경로·최종 배포·검사 결과·남은 조건 | 로컬 검수 결과와 배포 차단 사유 반영 |
@@ -40,6 +40,12 @@
 - 이번 CX-only 환경변수 등록 결과는 확인되지 않았고, 후속 범위 조회는 scope 확인에서 거부됐다. 원격 변수 등록 성공, 실제 store canary 성공, 새 CX 배포 성공으로 보고하지 않는다. 재연결 후 기존 변수 존재/범위를 먼저 재조회해 중복 생성·seed 교체를 피한다.
 - 로컬 구현·독립 리뷰·fixture·브라우저 검수는 계속한다. 계정 복구 뒤 정확한 Preview 브랜치에만 설정하고 실제 Redis → 배포 → CX handoff 순서로 진행한다.
 
+### 9/25 계정 접근 후속 확인
+
+위 접근 거부는 당시 기본 CLI 컨텍스트의 기록이다. 이후 별도 `jaewook` 프로필에서 `jaewook-9643` 사용자와 `ondo` 프로젝트 접근을 확인했고, 기본 `megan-3020` 로그인은 유지했다. 우리 작업 폴더의 로컬 프로젝트 링크와 읽기 전용 계정/대상 가드를 추가했다. [계정 분리 기록](./VERCEL_ACCOUNT_ISOLATION_2026-09-25.md) 참조.
+
+이 접근 확인 중에는 환경변수나 배포를 변경하지 않았다. **실제 앱 Redis canary, 부분 등록 변수의 범위 재조회, 새 Preview 배포, CX handoff는 아직 대기**다. 이후 사용자가 알려준 megan 작업 폴더는 별도 저장소이며, 조회된 ohayo-global 프로젝트에는 K-Tour 저장소 연결이 없었다. 이 결과는 모든 수동 배포 명령의 안전성까지 보장하지 않는다.
+
 ## CX 이후 남은 전체 실연동 순서
 
 1. **CX 실기기 결과 확인:** 새 Preview에서 원장/상태 복원과 실제 앱 승인·결과/거래 상관관계를 확인. QR 생성만으로 완료 처리하지 않는다.
@@ -50,6 +56,27 @@
 전체 요구사항별 증거와 미완료 항목은 [실연동 감사](./HACKATHON_LIVE_READINESS_2026-09-25.md)를 기준으로 한다.
 
 ## 계정 복구 후 실행 체크포인트
+
+### 9/26 재개 시 읽기 확인
+
+- 전용 `jaewook` 프로필의 `vercel:ktour status`가 다시 통과했다. megan 기본 인증은 변경하지 않았다.
+- 원격 프로젝트 환경변수 목록에서 `KV_REST_API_URL`과 `KV_REST_API_TOKEN`이 정확한 Preview 브랜치에 등록된 것을 확인했다. 같은 조회에서 `HK_*` CX runtime 변수는 없었다. 값은 출력하지 않았으며 이번 재조회에서는 어떤 변수도 생성·변경하지 않았다.
+- 최신 Preview는 여전히 `6e4535b7` / `dpl_8ZtfT8mvGEkcAXHNa6miPfGcNC6z`, READY다. 최신 Production은 `58d284b9`이며, 로컬 CX-only 구현 `fa8c5e98`은 아직 새 Preview로 배포되지 않았다.
+- 재개 순서는 **실제 앱 Redis canary → 정확한 Preview 브랜치 CX 설정 → 검수 SHA 배포 → 실제 공급자 handoff → 보유자 직접 승인**이다. 독립 리뷰로 이 순서와 canary의 고유 테스트 namespace·정리 조건을 다시 확인했다.
+
+### 9/26 실제 앱 Redis 검증
+
+- 기존 검토된 `runStoreCanary`를 fixture 옵션 없이 실제 Preview Redis에 실행했다. 두 독립 프로세스의 동시 저장과 세 번째 새 프로세스 재조회가 통과했다.
+- 결과: `ok=true`, `checks=6`, `cleanup=true`, `failures=0`. 본 서비스 원장이 아닌 자동 생성 UUID 공간만 사용했고, 소유권 확인 후 해당 임시 데이터만 제거했다. 실제 서비스 데이터는 삭제하지 않았다.
+- Redis 자격 증명은 정확한 브랜치의 Vercel 변수에서 프로세스 메모리로만 전달했다. 로컬 env 파일·출력·보고서에 값을 남기지 않았다.
+- 재검수: hackathon 단위 테스트 **149/149**, 앱 계약 테스트 **964/964**, CX-only production build 및 TypeScript **PASS**. 공급자/실기기 결과와는 구분한다.
+
+### 9/26 CX 설정 등록
+
+- `ondo`의 정확한 Preview 브랜치에 CX runtime 변수 **12개**를 신규 등록하고 각 변수의 이름·대상·브랜치·저장 유형을 재조회했다. 기존 Redis 쌍 및 Production/다른 Preview 변수의 메타데이터는 유지됐다.
+- issuer seed와 access signing secret은 새 난수로 생성해 Sensitive로 저장했다. 접근 코드는 새 고엔트로피 난수로 생성해 encrypted로 저장했다. 값은 메모리와 Vercel에만 전달했으며 채팅·Git·로컬 env 파일로 출력하지 않았다.
+- 최초 일괄 등록 시도는 성공하지 않았고, 재조회로 미등록을 확인한 후 개별 등록했다. 이미 존재하는 seed를 덮어쓰거나 재생성하지 않았다.
+- 환경 만료는 `2026-09-30T14:59:59Z`이며 본인확인 외 발급/AI/체인 요청은 CX-only 빌드 가드로 계속 차단한다. 설정 등록은 실인증 성공 증거가 아니다.
 
 설정 대상은 `ondo` 프로젝트의 **Preview + 정확한 `feat/hackathon-readiness-preview-20260925` 브랜치**뿐이다. Production/전체 Preview 설정이나 Harvey 저장소의 값을 바꾸지 않는다.
 
@@ -89,4 +116,4 @@
 
 ### 아직 주장하지 않는 것
 
-이번 앱 store canary의 **실제 Redis 실행**, 새 CX-only 환경변수 등록 확인, 새 Preview 배포, 실제 CX transaction/QR 생성, 신분증 앱 승인 및 최종 검증은 미완료다. 로컬 변경은 별도 체크포인트로 보존하며, Vercel 계정 접근이 복구되기 전 공개 Production이나 기존 Preview를 바꾸기 위해 push하지 않는다.
+9/26 후속 실행으로 실제 앱 Redis canary 및 CX-only 환경변수 등록 확인은 완료했다. **새 Preview 배포, 실제 CX transaction/QR 생성, 신분증 앱 승인 및 최종 검증**은 아직 미완료다. 공개 Production과 Harvey 별도 환경은 변경하지 않는다.
