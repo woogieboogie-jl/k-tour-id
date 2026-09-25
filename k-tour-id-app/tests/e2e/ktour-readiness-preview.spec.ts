@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page, type TestInfo } from "@playwright/test"
 
 test.describe.configure({ timeout: 120_000 })
 test.use({ serviceWorkers: "block", video: "off", deviceScaleFactor: 1 })
@@ -11,12 +11,16 @@ async function installReadOnlyGuard(page: Page, baseURL: string) {
   const mutations: string[] = []
   const providerRequests: string[] = []
   const blocked: string[] = []
+  const hostingRequests: string[] = []
   const pageErrors: string[] = []
   page.on("pageerror", error => pageErrors.push(error.message))
   page.on("request", request => {
     const url = new URL(request.url())
-    if (request.method() === "POST") mutations.push(`${request.method()} ${url.pathname}`)
-    if (url.origin !== origin && !["tiles.openfreemap.org", "fonts.googleapis.com", "fonts.gstatic.com"].includes(url.hostname)) {
+    const platformProbe = request.method() === "POST" && url.origin === "https://vercel.live" && url.pathname === "/login/validate"
+    const hostingFeedback = request.method() === "GET" && url.origin === "https://vercel.live" && ["/_next-live/feedback/feedback.js", "/_next-live/feedback/feedback.html"].includes(url.pathname)
+    if (platformProbe || hostingFeedback) hostingRequests.push(`${request.method()} ${url.origin}${url.pathname}`)
+    if (request.method() === "POST" && !platformProbe) mutations.push(`${request.method()} ${url.pathname}`)
+    if (url.origin !== origin && !["tiles.openfreemap.org", "fonts.googleapis.com", "fonts.gstatic.com"].includes(url.hostname) && !platformProbe && !hostingFeedback) {
       providerRequests.push(`${request.method()} ${url.origin}${url.pathname}`)
     }
   })
@@ -27,17 +31,31 @@ async function installReadOnlyGuard(page: Page, baseURL: string) {
     const venueRead = /^\/api\/ondo\/venues(?:\/|$)/.test(url.pathname)
     const configRead = url.pathname === "/api/hackathon/v1/config"
     const passive = ["tiles.openfreemap.org", "fonts.googleapis.com", "fonts.gstatic.com"].includes(url.hostname)
-    const allowed = request.method() === "GET" && (local
+    const platformProbe = request.method() === "POST" && url.origin === "https://vercel.live" && url.pathname === "/login/validate"
+    const hostingFeedback = request.method() === "GET" && url.origin === "https://vercel.live" && ["/_next-live/feedback/feedback.js", "/_next-live/feedback/feedback.html"].includes(url.pathname)
+    const allowed = ["GET", "HEAD", "OPTIONS"].includes(request.method()) && (local
       ? (!url.pathname.startsWith("/api/") || venueRead || configRead)
-      : passive)
+      : passive || hostingFeedback)
     if (!allowed) {
+      if (platformProbe) {
+        await route.abort("blockedbyclient")
+        return
+      }
       blocked.push(`${request.method()} ${url.origin}${url.pathname}`)
       await route.abort("blockedbyclient")
       return
     }
     await route.continue()
   })
-  return { mutations, providerRequests, blocked, pageErrors }
+  return { mutations, providerRequests, blocked, hostingRequests, pageErrors }
+}
+
+async function assertGuardClean(guard: Awaited<ReturnType<typeof installReadOnlyGuard>>, testInfo: TestInfo) {
+  await testInfo.attach("hosting-requests", { body: JSON.stringify(guard.hostingRequests, null, 2), contentType: "application/json" })
+  expect(guard.mutations).toEqual([])
+  expect(guard.providerRequests).toEqual([])
+  expect(guard.blocked).toEqual([])
+  expect(guard.pageErrors).toEqual([])
 }
 
 async function openMap(page: Page, baseURL: string) {
@@ -89,13 +107,10 @@ test("read-only Preview readiness keeps the public place journey and blocks muta
     await expect(page.getByTestId("ondo-b-root")).toBeVisible()
   }
 
-  expect(guard.mutations).toEqual([])
-  expect(guard.providerRequests).toEqual([])
-  expect(guard.blocked).toEqual([])
-  expect(guard.pageErrors).toEqual([])
+  await assertGuardClean(guard, testInfo)
 })
 
-test("read-only Preview sanitizes a fake zkLogin callback and returns to map", async ({ page, baseURL }) => {
+test("read-only Preview sanitizes a fake zkLogin callback and returns to map", async ({ page, baseURL }, testInfo) => {
   const guard = await installReadOnlyGuard(page, baseURL!)
   await openMap(page, baseURL!)
   await page.evaluate(({ venueId }) => {
@@ -114,18 +129,12 @@ test("read-only Preview sanitizes a fake zkLogin callback and returns to map", a
   await page.getByTestId("hackathon-login-return").click()
   await expect(page.getByTestId("ondo-b-root")).toBeVisible()
   await expect(page.getByTestId("hackathon-layer")).toHaveCount(0)
-  expect(guard.mutations).toEqual([])
-  expect(guard.providerRequests).toEqual([])
-  expect(guard.blocked).toEqual([])
-  expect(guard.pageErrors).toEqual([])
+  await assertGuardClean(guard, testInfo)
 })
 
-test("read-only Preview does not expose the Lab header route", async ({ page, baseURL }) => {
+test("read-only Preview does not expose the Lab header route", async ({ page, baseURL }, testInfo) => {
   const guard = await installReadOnlyGuard(page, baseURL!)
   const response = await page.goto(`${baseURL}/labs/header-preview`, { waitUntil: "domcontentloaded" })
   expect(response?.status()).toBe(404)
-  expect(guard.mutations).toEqual([])
-  expect(guard.providerRequests).toEqual([])
-  expect(guard.blocked).toEqual([])
-  expect(guard.pageErrors).toEqual([])
+  await assertGuardClean(guard, testInfo)
 })

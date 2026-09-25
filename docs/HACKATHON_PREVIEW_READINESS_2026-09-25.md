@@ -22,7 +22,7 @@
 - 모든 hackathon POST와 기존 `/api/ask`, `/api/chat`을 provider·세션·본문 처리 전에 503으로 차단한다.
 - 실제 여정 컴포넌트 대신 준비상태 안내를 표시한다. API 연결 확인 뒤 같은 장소로 돌아간다.
 - callback은 query/fragment만 지우며 JWT·서명키·승인을 저장/복원하지 않는다.
-- 로컬용 Lab은 원격 Preview에서 404다.
+- 로컬용 Lab은 원격 Preview에서 not-found 경계로 차단한다. 헤더 Lab은 HTTP 404이고, 중첩 discovery Lab은 Vercel streaming 응답에서 HTTP 200 + 404 fallback일 수 있다. 이 경우에도 Lab UI는 렌더링되지 않아야 한다.
 - 지도 타일/폰트 같은 수동 조회는 남는다. “모든 외부 네트워크 차단”을 주장하지 않는다.
 - Redis 및 파일 세션을 사용하지 않으므로, 이 단계에서 durable storage를 검증했다고 할 수 없다.
 
@@ -38,7 +38,20 @@
 - 모바일 Chromium 브라우저 3/3 PASS: 준비상태 → 같은 장소/포커스 복원 → 로딩 완료 지도, 5탭, 형식·state가 맞는 가짜 OAuth callback의 무저장·URL 정리·지도 복귀, Lab 404.
 - 초기 브라우저 검수에서 테스트 harness의 modal close/callback 이동 가정을 수정했다. 최초 지도 캡처는 loading 상태여서 이를 완료 증거로 쓰지 않고 ready 대기 후 재검수했다. 최종 실행은 worker 1, DPR 1, video off; 실제 iOS/Safari 검증이 아니다.
 - 독립 HTTP probe 22개 + 경로/메서드/헤더 변형 13개 통과. 원격 probe는 GitHub Preview 배포 ID·정확한 URL·커밋을 확인하도록 추가 제한했다.
-- 원격 배포 검증은 완료 후 아래 기록에 추가한다.
+
+## 원격 배포 기록
+
+- 검증한 앱 SHA: `4dd58618435a9632a2f3e27677db4fdff1b1fbed`.
+- GitHub Preview deployment: `6652830204`, success.
+- Vercel deployment: `H56ydh8sFLmYowtA8QdQKXRQnmTe`.
+- [검증한 Preview](https://ondo-mbirwhni1-jaewook-9643s-projects.vercel.app/hackathon).
+- 실제 config 응답: 동일 SHA, `region=icn1`, `previewReadOnly=true`, `isolatedMock=true`, `chainExecutionEnabled=false`.
+- 원격 HTTP 22/22 PASS. 최초 probe는 중첩 discovery Lab의 streaming 404를 단순 status=404로 가정하여 실패했다. 응답의 404 fallback·not-found 문구·Lab UI 부재를 함께 검사하도록 probe만 보정했다. 앱 실행 코드는 변경하지 않았다.
+- 원격 모바일 Chromium 3/3 PASS: 준비 안내/같은 장소와 포커스 복원, 지도 ready, 5탭, fake callback 무저장/복귀, 헤더 Lab 404.
+- 원격 브라우저에는 Vercel의 플랫폼 toolbar/auth 요청이 추가된다. `POST https://vercel.live/login/validate`는 차단하고 별도로 기록한다. 같은 origin의 `GET /_next-live/feedback/feedback.js`·`feedback.html`만 추가 허용한다. query는 기록하지 않으며, 이를 포함해 “전체 네트워크 요청 0”이라고 보고하지 않는다. 이 예외를 exact origin·path·method로 좁힌 최종 실행도 3/3 PASS.
+- 원격 최종 캡처: `k-tour-id-app/artifacts/qa/preview-readiness-remote-final5/`. 초기·최종 캡처를 구분해 보존했다.
+- 재확인한 main/Production은 여전히 `58d284b9c6f51e8563765df7b7a3c13b4d575bdd` / GitHub deployment `6645990285`.
+- 위 결과는 이 immutable Preview의 증거다. 이후 검수 스크립트·문서 커밋과 실행 앱 SHA를 혼동하지 않는다.
 
 ## 실제 CX를 이 UI에서 검증하기 위한 다음 단계
 

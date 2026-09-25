@@ -68,8 +68,17 @@ for (const [path, expected] of [
   ["/", 200],
   ["/api/ondo/venues/mois-0021cd596bc5b2a922ad", 200],
   ["/labs/header-preview", 404],
-  ["/ondo-b/labs/discovery", 404],
   ["/hackathon/zklogin/callback", 200],
   ["/hackathon", 307],
 ]) assert.equal((await request(path)).status, expected, String(path))
+// Next may already have started streaming this nested route before notFound().
+// A 200 transport alone is not a rendered Lab; verify the actual 404 fallback.
+const discoveryLab = await request("/ondo-b/labs/discovery")
+const discoveryBody = await discoveryLab.text()
+assert.ok(discoveryLab.status === 404 || (
+  discoveryLab.status === 200 &&
+  discoveryBody.includes("NEXT_HTTP_ERROR_FALLBACK;404") &&
+  discoveryBody.includes("This page could not be found")
+), "Discovery Lab must render the not-found boundary")
+assert.ok(!/data-testid="discovery-preview/.test(discoveryBody), "Discovery Lab UI was exposed")
 console.log(JSON.stringify({ origin: base.origin, deployment: config.deployment, passed: results.length, results }, null, 2))
