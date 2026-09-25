@@ -1,0 +1,4 @@
+.accessField { display:grid; gap:6px; margin-bottom:12px; font-size:13px; line-height:1.4; }
+.badge { align-self:start; justify-self:start; width:max-content; max-width:100%; }
+.accessInput { box-sizing:border-box; width:100%; min-height:44px; padding:10px 12px; border:1px solid var(--ondo-line-strong, var(--input, #a0a0a0)); border-radius:10px; background:var(--ondo-surface-raised, var(--popover, #fff)); color:var(--ondo-ink, var(--foreground, #171717)); font:inherit; font-size:16px; }
+.accessInput:focus-visible { outline:3px solid var(--ondo-focus, var(--focus, #2563eb)); outline-offset:2px; }

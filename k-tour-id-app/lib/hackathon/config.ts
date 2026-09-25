@@ -2,7 +2,7 @@
 // Nothing here is a vendor spec; adapters translate to each provider's real API.
 // Server-only: never import from client components.
 import { HkError } from "./util"
-import { isReadinessPreview } from "./preview-readiness"
+import { isCxPreview, isReadinessPreview } from "./preview-readiness"
 
 export type CxMode = "mock" | "cx"
 export type OpenDidMode = "mock" | "opendid"
@@ -31,15 +31,17 @@ function env(name: string, fallback = ""): string {
 }
 
 export function hkConfig() {
-  const isolatedMock = isReadinessPreview() || env("HK_ISOLATED_MOCK") === "1"
-  const cxMode = (!isolatedMock && env("HK_MODE_CX", "mock") === "cx" ? "cx" : "mock") as CxMode
-  const openDidMode = (!isolatedMock && env("HK_MODE_OPENDID", "mock") === "opendid" ? "opendid" : "mock") as OpenDidMode
-  const aiMode = (!isolatedMock && env("HK_AI_MODE", env("GEMINI_API_KEY") ? "gemini" : "rule") === "gemini" && env("GEMINI_API_KEY") ? "gemini" : "rule") as AiMode
+  const cxPreview = isCxPreview()
+  const isolatedMock = isReadinessPreview() || (!cxPreview && env("HK_ISOLATED_MOCK") === "1")
+  const cxMode = (!isolatedMock && (cxPreview || env("HK_MODE_CX", "mock") === "cx") ? "cx" : "mock") as CxMode
+  const openDidMode = (!cxPreview && !isolatedMock && env("HK_MODE_OPENDID", "mock") === "opendid" ? "opendid" : "mock") as OpenDidMode
+  const aiMode = (!cxPreview && !isolatedMock && env("HK_AI_MODE", env("GEMINI_API_KEY") ? "gemini" : "rule") === "gemini" && env("GEMINI_API_KEY") ? "gemini" : "rule") as AiMode
   return {
+    cxPreview,
     isolatedMock,
     campaign: {
       venueId: env("HK_CAMPAIGN_VENUE_ID", env("NEXT_PUBLIC_HK_CAMPAIGN_VENUE_ID", "mois-0021cd596bc5b2a922ad")),
-      campaignId: env("HK_CAMPAIGN_ID", "hk-identity-perk-v1"),
+      campaignId: env("HK_CAMPAIGN_ID", cxPreview ? "ktour-cx-preview-20260925" : "hk-identity-perk-v1"),
       purpose: HK_SERVICE_ACCESS,
       policyVersion: HK_POLICY_VERSION,
       endsAt: env("HK_CAMPAIGN_ENDS_AT", "2026-09-30T23:59:59+09:00"),
@@ -89,7 +91,7 @@ export function hkConfig() {
       sponsorSecretKey: env("HK_SUI_SPONSOR_SECRET_KEY", env("HK_SUI_ISSUER_SECRET_KEY")),
       zkSaltSeed: env("HK_ZKLOGIN_SALT_SEED"),
       zkProverUrl: env("HK_ZKLOGIN_PROVER_URL", "https://prover-dev.mystenlabs.com/v1"),
-      googleClientId: isolatedMock ? "" : env("NEXT_PUBLIC_GOOGLE_CLIENT_ID"),
+      googleClientId: isolatedMock || cxPreview ? "" : env("NEXT_PUBLIC_GOOGLE_CLIENT_ID"),
       explorer: env("HK_SUI_EXPLORER", "https://suiscan.xyz/testnet"),
     },
     omnione: {
@@ -107,6 +109,7 @@ export type HkConfig = ReturnType<typeof hkConfig>
 
 /** Isolation is an execution boundary, not a simulated chain confirmation. */
 export function assertExternalServicesEnabled(service: string) {
+  if (isCxPreview()) throw new HkError("cx_preview_scope", "Only Mobile ID verification is enabled in this preview.", 503)
   if (hkConfig().isolatedMock) throw new HkError("isolated_mock_external_disabled", `${service} is disabled in isolated mock mode; live verification remains pending`, 503)
 }
 
@@ -115,8 +118,9 @@ export function hkPublicConfig() {
   const c = hkConfig()
   return {
     previewReadOnly: isReadinessPreview(),
-    deployment: isReadinessPreview() ? {
-      profile: "readiness-preview",
+    cxPreview: c.cxPreview,
+    deployment: isReadinessPreview() || c.cxPreview ? {
+      profile: c.cxPreview ? "cx-only-preview" : "readiness-preview",
       revision: env("VERCEL_GIT_COMMIT_SHA", "local"),
       region: env("VERCEL_REGION", "local"),
     } : undefined,
@@ -124,15 +128,15 @@ export function hkPublicConfig() {
     campaign: c.campaign,
     modes: {
       cx: c.cx.mode,
-      opendid: c.opendid.mode,
-      ai: c.ai.mode,
-      sui: c.isolatedMock ? "disabled-isolated" : c.sui.packageId && c.sui.issuerSecretKey && c.sui.agentSecretKey ? "testnet" : "unconfigured",
-      omnione: c.isolatedMock ? "disabled-isolated" : c.omnione.rpcUrl && c.omnione.privateKey && c.omnione.registryAddress ? "stage" : "unconfigured",
-      zklogin: c.isolatedMock ? "disabled-isolated" : c.sui.googleClientId && c.sui.zkSaltSeed ? "google" : "demo-signer",
+      opendid: c.cxPreview ? "disabled-cx-preview" : c.opendid.mode,
+      ai: c.cxPreview ? "disabled-cx-preview" : c.ai.mode,
+      sui: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : c.sui.packageId && c.sui.issuerSecretKey && c.sui.agentSecretKey ? "testnet" : "unconfigured",
+      omnione: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : c.omnione.rpcUrl && c.omnione.privateKey && c.omnione.registryAddress ? "stage" : "unconfigured",
+      zklogin: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : c.sui.googleClientId && c.sui.zkSaltSeed ? "google" : "demo-signer",
     },
-    capabilities: { opendidProviderReady: false, chainExecutionEnabled: !c.isolatedMock },
-    sui: { network: c.sui.network, packageId: c.isolatedMock ? "" : c.sui.packageId, campaignId: c.isolatedMock ? "" : c.sui.campaignId, explorer: c.isolatedMock ? "" : c.sui.explorer, googleClientId: c.sui.googleClientId },
-    omnione: { chainId: c.omnione.chainId, registryAddress: c.isolatedMock ? "" : c.omnione.registryAddress },
+    capabilities: { opendidProviderReady: false, chainExecutionEnabled: !c.isolatedMock && !c.cxPreview },
+    sui: { network: c.sui.network, packageId: c.isolatedMock || c.cxPreview ? "" : c.sui.packageId, campaignId: c.isolatedMock || c.cxPreview ? "" : c.sui.campaignId, explorer: c.isolatedMock || c.cxPreview ? "" : c.sui.explorer, googleClientId: c.sui.googleClientId },
+    omnione: { chainId: c.omnione.chainId, registryAddress: c.isolatedMock || c.cxPreview ? "" : c.omnione.registryAddress },
     ttl: HK_TTL,
     consentVersion: HK_CONSENT_VERSION,
     schemaVersion: HK_SCHEMA_VERSION,

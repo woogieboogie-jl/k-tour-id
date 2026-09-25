@@ -32,10 +32,19 @@ export function previewBuildEnv(env) {
   return {
     ...out, NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1",
     NEXT_PUBLIC_HK_PREVIEW_READ_ONLY: "1",
+    NEXT_PUBLIC_HK_CX_PREVIEW: "0",
     NEXT_PUBLIC_HK_ENABLED: "1", NEXT_PUBLIC_HK_DEMO_ENTRY: "1",
     NEXT_PUBLIC_HK_CX_BROWSER_QR: "0", NEXT_PUBLIC_ONDO_QA_CONTROLS: "0",
     HK_API_ENABLED: "1", HK_ISOLATED_MOCK: "1",
     HK_MODE_CX: "mock", HK_MODE_OPENDID: "mock", HK_AI_MODE: "rule",
+  }
+}
+
+export function cxPreviewBuildEnv(env) {
+  return {
+    ...previewBuildEnv(env),
+    NEXT_PUBLIC_HK_PREVIEW_READ_ONLY: "0", NEXT_PUBLIC_HK_CX_PREVIEW: "1",
+    HK_ISOLATED_MOCK: "0", HK_MODE_CX: "cx",
   }
 }
 
@@ -44,8 +53,10 @@ if (process.argv[1] === import.meta.filename) {
     for (const file of [".env", ".env.local", ".env.production", ".env.production.local"]) {
       if (existsSync(resolve(file))) throw new Error("Readiness builds must not load local env files")
     }
-    const env = previewBuildEnv(process.env)
-    console.log("Building read-only UI + API readiness preview; no provider credentials")
+    if (process.argv.slice(2).some(arg => arg !== "--cx-only")) throw new Error("Unknown preview profile")
+    const cxOnly = process.argv.includes("--cx-only")
+    const env = cxOnly ? cxPreviewBuildEnv(process.env) : previewBuildEnv(process.env)
+    console.log(cxOnly ? "Building private CX-only preview; runtime access and Redis required" : "Building read-only UI + API readiness preview; no provider credentials")
     const result = spawnSync(process.execPath, ["node_modules/next/dist/bin/next", "build", "--webpack"], { env, stdio: "inherit" })
     if (result.error) throw result.error
     process.exitCode = result.status ?? 1

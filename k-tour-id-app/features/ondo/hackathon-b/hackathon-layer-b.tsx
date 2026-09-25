@@ -16,8 +16,9 @@ import { HACKATHON_ENABLED, HACKATHON_DEMO_ENTRY, HACKATHON_OPEN_EVENT_B, manual
 import { ApiError, api, beginZkLogin, canonicalJson, clearJourneySecrets, createDemoSigner, ensureHolderKey, finishZkLogin, holderSign, readSigner, sha256Hex, signPersonalMessage, signTransactionBytes, fromBase64, type EntitlementInfo, type PublicConfig, type StoredSigner } from "./hackathon-client"
 import styles from "./hackathon-b.module.css"
 import { journeyStepIndex } from "./hackathon-navigation"
-import { isReadinessPreview } from "@/lib/hackathon/preview-readiness"
+import { isCxPreview, isReadinessPreview } from "@/lib/hackathon/preview-readiness"
 import { HackathonReadinessB } from "./hackathon-readiness-b"
+import { HackathonCxPreviewB } from "./hackathon-cx-preview-b"
 
 type Locale = "ko" | "en" | "ja"
 const T = {
@@ -83,7 +84,7 @@ export function HackathonEntitlementLayerB() {
   }, [])
   if (!HACKATHON_ENABLED) return null
   if (!open) return null
-  const JourneyView = isReadinessPreview() ? HackathonReadinessB : Journey
+  const JourneyView = isCxPreview() ? HackathonCxPreviewB : isReadinessPreview() ? HackathonReadinessB : Journey
   return <JourneyView key={open.resumeOperationId ?? open.venueId} detail={open} onClose={() => {
     setOpen(null)
     window.setTimeout(() => {

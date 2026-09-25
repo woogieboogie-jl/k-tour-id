@@ -16,6 +16,7 @@ import { hkConfig } from "./config"
 import type { OperationResult } from "./types"
 import { HkError } from "./util"
 import { parseStoredJourney } from "./store-integrity"
+import { previewRedisConfig, storeRedisCommand, type StoreCanaryOwnership } from "./redis-config"
 
 export type OperationRecord = OperationResult & {
   sessionId: string
@@ -30,6 +31,7 @@ export type OperationRecord = OperationResult & {
     cxToken?: string
     cxTxId?: string
     cxCxId?: string                 // CX-issued correlation id; required by the result call
+    cxStartClaim?: { id: string; expiresAt: string }
     proposalPromptDigest?: string
   }
   audit: Array<{ at: string; event: string; detail?: Record<string, unknown> }>
@@ -59,11 +61,22 @@ export type Db = {
 const EMPTY: Db = { version: 1, sessions: {}, operations: {}, redemptions: {}, outbox: {}, idempotency: {}, nonces: {} }
 
 // ── backend selection ─────────────────────────────────────────────────
-type RedisBackend = { kind: "redis"; url: string; token: string; key: string }
+type RedisBackend = { kind: "redis"; url: string; token: string; key: string; canary?: StoreCanaryOwnership }
 type Backend = RedisBackend | { kind: "file"; path: string }
 
 let backendSingleton: Backend | null = null
 function backend(): Backend {
+  if (process.env.NEXT_PUBLIC_HK_CX_PREVIEW === "1" || process.env.HK_STORE_CANARY_UUID || process.env.HK_STORE_CANARY_OWNER) {
+    const config = previewRedisConfig(process.env)
+    if (hkConfig().isolatedMock) throw new HkError("store_configuration", "CX Preview requires isolated Redis storage, not file fallback.", 503)
+    if (backendSingleton && (backendSingleton.kind !== "redis" || backendSingleton.url !== config.url ||
+      backendSingleton.token !== config.token || backendSingleton.key !== config.key ||
+      backendSingleton.canary?.ownerToken !== config.canary?.ownerToken)) {
+      throw new HkError("store_configuration", "Journey storage configuration changed; restart the instance.", 503)
+    }
+    backendSingleton ??= { kind: "redis", ...config }
+    return backendSingleton
+  }
   if (backendSingleton) return backendSingleton
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || ""
   const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || ""
@@ -98,19 +111,23 @@ function filePersist(path: string, db: Db) {
 
 // ── redis backend (Upstash REST) ──────────────────────────────────────
 async function redisCmd<T = unknown>(b: RedisBackend, cmd: (string | number)[]): Promise<T> {
-  const res = await fetch(b.url, { method: "POST", headers: { authorization: `Bearer ${b.token}`, "content-type": "application/json" }, body: JSON.stringify(cmd), cache: "no-store" })
-  const data = (await res.json().catch(() => ({}))) as { result?: T; error?: string }
-  if (!res.ok || data.error) throw new Error(`redis ${cmd[0]}: ${data.error ?? res.statusText}`)
-  return data.result as T
+  return storeRedisCommand<T>(b, cmd, { timeoutMs: b.canary ? 3000 : 8000 })
 }
 async function redisLoad(b: RedisBackend): Promise<Db> {
+  if (b.canary) {
+    const raw = await redisCmd<string | null>(b, ["EVAL", "-- ktour-canary-load\nif redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('GET', KEYS[2]) end return false", 2, b.canary.ownerKey, b.key, b.canary.ownerToken])
+    if (raw === null) throw new HkError("store_canary_ownership", "Canary ownership is unavailable.", 503)
+    return parseStoredJourney(raw)
+  }
   const raw = await redisCmd<string | null>(b, ["GET", b.key])
   if (raw === null) return structuredClone(EMPTY)
   return parseStoredJourney(raw)
 }
 async function redisPersist(b: RedisBackend, db: Db, token: string) {
   // Atomic compare-and-write: an expired lease cannot overwrite a newer owner.
-  const committed = await redisCmd<number>(b, ["EVAL", "if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('SET', KEYS[2], ARGV[2]); return 1 end return 0", 2, `${b.key}:lock`, b.key, token, JSON.stringify(db)])
+  const committed = b.canary
+    ? await redisCmd<number>(b, ["EVAL", "-- ktour-canary-commit\nif redis.call('GET', KEYS[1]) == ARGV[1] and redis.call('GET', KEYS[3]) == ARGV[3] then redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[4]); return 1 end return 0", 3, `${b.key}:lock`, b.key, b.canary.ownerKey, token, JSON.stringify(db), b.canary.ownerToken, b.canary.ttlMs])
+    : await redisCmd<number>(b, ["EVAL", "if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('SET', KEYS[2], ARGV[2]); return 1 end return 0", 2, `${b.key}:lock`, b.key, token, JSON.stringify(db)])
   if (committed !== 1) throw new HkError("store_lease_lost", "Journey changed while saving. Check the current result before retrying.", 503)
 }
 async function redisLock(b: RedisBackend): Promise<string> {
@@ -118,7 +135,10 @@ async function redisLock(b: RedisBackend): Promise<string> {
   const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
   const deadline = Date.now() + 8000
   while (Date.now() < deadline) {
-    const ok = await redisCmd<string | null>(b, ["SET", lockKey, token, "NX", "PX", 5000])
+    const ok = b.canary
+      ? await redisCmd<string | null | number>(b, ["EVAL", "-- ktour-canary-lock\nif redis.call('GET', KEYS[1]) ~= ARGV[1] then return -1 end return redis.call('SET', KEYS[2], ARGV[2], 'NX', 'PX', 5000)", 2, b.canary.ownerKey, lockKey, b.canary.ownerToken, token])
+      : await redisCmd<string | null>(b, ["SET", lockKey, token, "NX", "PX", 5000])
+    if (ok === -1 && b.canary) throw new HkError("store_canary_ownership", "Canary ownership is unavailable.", 503)
     if (ok === "OK") return token
     await new Promise((r) => setTimeout(r, 60 + Math.random() * 90))
   }
@@ -135,7 +155,21 @@ const RETAIN_MS = 3 * 24 * 60 * 60 * 1000
 function prune(db: Db) {
   const cutoff = Date.now() - RETAIN_MS
   const stale = (iso: string) => { const t = Date.parse(iso); return Number.isFinite(t) && t < cutoff }
-  for (const [id, op] of Object.entries(db.operations)) if (stale(op.updatedAt)) delete db.operations[id]
+  const expired = (iso: string | undefined) => Boolean(iso) && (!Number.isFinite(Date.parse(iso!)) || Date.parse(iso!) <= Date.now())
+  for (const [id, op] of Object.entries(db.operations)) {
+    const terminal = ["failed", "cancelled", "expired"].includes(op.status) || expired(op.expiresAt)
+    const expiredHandoff = expired(op.identity?.handoff?.expiresAt)
+    const secrets = op.secrets
+    if (secrets && (op.identity?.mode === "cx" || secrets.cxToken || secrets.cxTxId || secrets.cxCxId || secrets.cxStartClaim) &&
+      (terminal || expiredHandoff || expired(secrets.cxStartClaim?.expiresAt))) {
+      delete secrets.cxToken; delete secrets.cxTxId; delete secrets.cxCxId; delete secrets.cxStartClaim
+      if (op.identity && (terminal || expiredHandoff)) {
+        if (op.identity.personVerified) op.identity.handoff = null
+        else op.identity = null
+      }
+    }
+    if (stale(op.updatedAt)) delete db.operations[id]
+  }
   for (const [id, s] of Object.entries(db.sessions)) if (stale(s.lastSeenAt) && !s.subjectRef) delete db.sessions[id]
   for (const [id, n] of Object.entries(db.nonces)) if (stale(n.createdAt)) delete db.nonces[id]
   for (const [id, i] of Object.entries(db.idempotency)) if (stale(i.createdAt)) delete db.idempotency[id]

@@ -78,6 +78,23 @@ function fail(op: OperationRecord, code: string, message: string, retryable = fa
 export async function loadOperation(sessionId: string, operationId: string): Promise<OperationRecord> {
   const op = await readStore((db) => db.operations[operationId])
   if (!op || op.sessionId !== sessionId) throw new HkError("not_found", "operation not found", 404)
+  const terminalCx = ["failed", "cancelled", "expired"].includes(op.status) &&
+    (op.secrets.cxToken || op.secrets.cxTxId || op.secrets.cxCxId || op.secrets.cxStartClaim || op.identity?.handoff)
+  if ((op.status === "pending" && isPast(op.expiresAt)) || (op.identity?.handoff && isPast(op.identity.handoff.expiresAt)) ||
+    (op.secrets.cxStartClaim && isPast(op.secrets.cxStartClaim.expiresAt)) || terminalCx) {
+    return mutate(sessionId, operationId, (current) => {
+      if (["failed", "cancelled", "expired"].includes(current.status)) clearCxHandoff(current)
+      if (current.identity?.handoff && isPast(current.identity.handoff.expiresAt)) {
+        clearCxHandoff(current)
+        touch(current, "identity.expired")
+      }
+      if (current.secrets.cxStartClaim && isPast(current.secrets.cxStartClaim.expiresAt)) {
+        clearCxHandoff(current)
+        touch(current, "identity.preparation_expired")
+      }
+      return current
+    })
+  }
   return op
 }
 
@@ -92,8 +109,18 @@ async function mutate<T>(sessionId: string, operationId: string, fn: (op: Operat
 
 function expireIfNeeded(op: OperationRecord) {
   if (op.status === "pending" && isPast(op.expiresAt) && op.phase !== "fulfillment" && op.phase !== "done") {
+    clearCxHandoff(op)
     op.status = "expired"; op.phase = "expired"; touch(op, "expired")
   }
+}
+
+function clearCxHandoff(op: OperationRecord) {
+  delete op.secrets.cxToken; delete op.secrets.cxTxId; delete op.secrets.cxCxId; delete op.secrets.cxStartClaim
+  if (op.identity?.handoff) op.identity = null
+}
+
+function assertIdentityPending(op: OperationRecord) {
+  assert(op.status === "pending" && op.phase === "identity" && !isPast(op.expiresAt), "phase", "identity not in progress", 409)
 }
 
 // ── create ────────────────────────────────────────────────────────────
@@ -124,26 +151,77 @@ export async function createOperation(input: { sessionId: string; venueId: strin
 
 // ── identity (CX) ─────────────────────────────────────────────────────
 export async function identityStart(sessionId: string, operationId: string, mobile: boolean) {
-  const op = await loadOperation(sessionId, operationId)
-  assert(op.status === "pending" && op.phase === "identity", "phase", "identity not in progress", 409)
-  const started = await cxStart({ operationId, mobile })
+  await loadOperation(sessionId, operationId)
+  const mode = hkConfig().cx.mode, provider = hkConfig().cx.provider
+  const claimId = randomId("cxstart")
+  // Persist ownership before provider I/O: independent instances must not mint
+  // parallel CX transactions. A valid handoff is replayed, never silently reset.
+  const prepared = await mutate(sessionId, operationId, (o) => {
+    assertIdentityPending(o)
+    if (o.identity?.handoff && !isPast(o.identity.handoff.expiresAt)) {
+      assert(o.identity.mode === mode && o.identity.provider === provider, "cx_mode_changed", "identity configuration changed; cancel and restart", 409)
+      return { existing: toResult(o) }
+    }
+    assert(!o.secrets.cxStartClaim || isPast(o.secrets.cxStartClaim.expiresAt), "identity_start_pending", "identity request is being prepared; check again shortly", 409)
+    clearCxHandoff(o)
+    o.secrets.cxStartClaim = { id: claimId, expiresAt: plusMs(45_000) }
+    o.error = null
+    touch(o, "identity.preparing")
+    return { snapshot: structuredClone(o) }
+  })
+  if (prepared.existing) return prepared.existing
+  const op = prepared.snapshot!
+  let started: Awaited<ReturnType<typeof cxStart>>
+  try { started = await cxStart({ operationId, mobile }) }
+  catch (error) {
+    await mutate(sessionId, operationId, (o) => {
+      if (o.secrets.cxStartClaim?.id !== claimId) return
+      clearCxHandoff(o)
+      o.error = { code: "identity_start_failed", message: "Identity request could not be prepared. Retry explicitly.", retryable: true }
+      touch(o, "identity.start_failed")
+    })
+    if (error instanceof HkError) throw error
+    throw new HkError("cx_request", "CX request could not be completed", 502, true)
+  }
+  await loadOperation(sessionId, operationId)
   return mutate(sessionId, operationId, (o) => {
-    o.identity = { evidenceId: "", subjectRef: "", source: "cx_mobile_id", mode: hkConfig().cx.mode, provider: hkConfig().cx.provider, personVerified: false, adultVerified: null, verifiedAt: "", expiresAt: started.handoff.expiresAt, providerTransactionRef: started.txId ?? "", handoff: started.handoff }
+    assertIdentityPending(o)
+    assertSnapshot(o, op)
+    assert(o.secrets.cxStartClaim?.id === claimId && !isPast(o.secrets.cxStartClaim.expiresAt), "operation_changed", "identity request ownership expired; reload first", 409)
+    assert(hkConfig().cx.mode === mode && hkConfig().cx.provider === provider, "cx_mode_changed", "identity configuration changed; cancel and restart", 409)
+    o.identity = { evidenceId: "", subjectRef: "", source: "cx_mobile_id", mode, provider, personVerified: false, adultVerified: null, verifiedAt: "", expiresAt: started.handoff.expiresAt, providerTransactionRef: started.txId ?? "", handoff: started.handoff }
     o.secrets.cxToken = started.token; o.secrets.cxTxId = started.txId; o.secrets.cxCxId = started.cxId
+    delete o.secrets.cxStartClaim
     touch(o, "identity.handoff", { kind: started.handoff.kind })
     return toResult(o)
   })
 }
 
 export async function identityComplete(sessionId: string, operationId: string, sample?: { outcome: "verified" | "cancelled" | "failed" | "expired"; subjectSeed: string }) {
+  if (hkConfig().cx.mode === "cx" && sample) throw new HkError("cx_sample_not_allowed", "Sample identity results cannot complete a provider check", 409)
   const op = await loadOperation(sessionId, operationId)
-  assert(op.status === "pending" && op.phase === "identity" && op.identity?.handoff, "phase", "no identity handoff", 409)
-  if (isPast(op.identity.handoff.expiresAt)) return mutate(sessionId, operationId, (o) => { o.identity = null; touch(o, "identity.expired"); return toResult(o) })
+  if (op.identity) assert(op.identity.mode === hkConfig().cx.mode && op.identity.provider === hkConfig().cx.provider, "cx_mode_changed", "identity configuration changed; cancel and restart", 409)
+  const verified = (o: OperationRecord) => (o.status === "pending" || o.status === "succeeded") && o.identity?.personVerified === true && !o.identity.handoff && !isPast(o.identity.expiresAt)
+  if (verified(op)) return toResult(op)
+  assertIdentityPending(op)
+  assert(op.identity?.handoff && !isPast(op.identity.handoff.expiresAt), "phase", "no identity handoff", 409)
   const result = await cxComplete({ operationId, token: op.secrets.cxToken, txId: op.secrets.cxTxId, cxId: op.secrets.cxCxId, mobile: op.identity.handoff.kind === "app", sample })
+  await loadOperation(sessionId, operationId)
   return mutate(sessionId, operationId, (o, db) => {
-    if ("pending" in result) { touch(o, "identity.pending"); return toResult(o) }
+    assert(op.identity?.mode === hkConfig().cx.mode && op.identity.provider === hkConfig().cx.provider, "cx_mode_changed", "identity configuration changed; cancel and restart", 409)
+    // A second completion may only replay the same already-verified transaction.
+    if (verified(o) && o.identity?.providerTransactionRef === op.identity?.providerTransactionRef) return toResult(o)
+    assertIdentityPending(o)
+    assertSnapshot(o, op)
+    assert(o.identity?.handoff && !isPast(o.identity.handoff.expiresAt) && o.identity.mode === op.identity?.mode &&
+      o.secrets.cxToken === op.secrets.cxToken && o.secrets.cxTxId === op.secrets.cxTxId && o.secrets.cxCxId === op.secrets.cxCxId,
+    "operation_changed", "identity request changed while checking; reload first", 409)
+    if ("pending" in result) {
+      if (result.token) o.secrets.cxToken = result.token
+      touch(o, "identity.pending"); return toResult(o)
+    }
     if ("failed" in result) {
-      o.identity = null
+      clearCxHandoff(o)
       touch(o, "identity.failed", { reason: result.failed })
       if (result.failed === "cancelled") { o.error = { code: "identity_cancelled", message: "user cancelled mobile id check", retryable: true } }
       else o.error = { code: `identity_${result.failed}`, message: `mobile id check ${result.failed}`, retryable: true }
@@ -151,8 +229,8 @@ export async function identityComplete(sessionId: string, operationId: string, s
     }
     // uniqueness pre-check: one redemption per subject+campaign
     const already = db.redemptions[redemptionKey(result.evidence.subjectRef, o.campaignId)]
+    clearCxHandoff(o)
     o.identity = { ...result.evidence, handoff: null }
-    o.secrets.cxToken = undefined; o.secrets.cxTxId = undefined; o.secrets.cxCxId = undefined
     db.sessions[sessionId].subjectRef = result.evidence.subjectRef
     if (already) {
       o.fulfillment = { status: "blocked", reason: "already_redeemed", redemptionRef: already.redemptionRef, redeemedAt: already.redeemedAt, recheck: null }
@@ -649,6 +727,7 @@ export async function cancel(sessionId: string, operationId: string) {
     assert(o.phase !== "agent" && o.phase !== "fulfillment", "cannot_cancel", "execution already started; use reconcile", 409)
     assert(!o.delegation?.userTxDigest || o.delegation.status === "failed", "cannot_cancel", "signed delegation may already be on-chain; use reconcile", 409)
     if (o.presentation?.nonce && db.nonces[o.presentation.nonce]) db.nonces[o.presentation.nonce].consumedAt = nowIso()
+    clearCxHandoff(o)
     o.status = "cancelled"; o.phase = "cancelled"
     touch(o, "cancelled", { at_phase: o.phase })
     return toResult(o)

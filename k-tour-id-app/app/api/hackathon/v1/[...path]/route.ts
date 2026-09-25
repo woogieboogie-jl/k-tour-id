@@ -9,8 +9,9 @@ import * as svc from "@/lib/hackathon/service"
 import { currentEpoch, suiKeys } from "@/lib/hackathon/adapters/sui"
 import { proveZkLogin, zkLoginConfigured } from "@/lib/hackathon/adapters/zklogin"
 import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
-import { isReadinessPreview, previewReadOnlyResponse } from "@/lib/hackathon/preview-readiness"
+import { isCxPreview, isReadinessPreview, previewReadOnlyResponse } from "@/lib/hackathon/preview-readiness"
 import { cxReadinessResponse } from "@/lib/hackathon/cx-readiness"
+import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewBody, cxPreviewRouteAllowed, grantCxPreviewAccess, requireCxPreviewAccess } from "@/lib/hackathon/cx-preview-access"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -19,9 +20,23 @@ export const maxDuration = 60
 
 type Ctx = { params: Promise<{ path: string[] }> }
 
-function json(data: unknown, status = 200) { return NextResponse.json(data, { status, headers: { "cache-control": "no-store" } }) }
+function cxProjection(data: unknown): unknown {
+  if (!isCxPreview() || !data || typeof data !== "object") return data
+  const value = data as Record<string, unknown>
+  if (value.operation) return { ...value, operation: cxProjection(value.operation) }
+  if (!value.operationId) return data
+  const identity = value.identity as Record<string, unknown> | null
+  const verified = identity?.mode === "cx" && identity.personVerified === true
+  return { ...value,
+    identity: identity ? { ...identity, subjectRef: "", providerTransactionRef: "" } : null,
+    allowedActions: verified ? ["return"] : value.allowedActions,
+    safeNextAction: verified ? "return" : value.safeNextAction,
+  }
+}
+function json(data: unknown, status = 200) { return NextResponse.json(cxProjection(data), { status, headers: { "cache-control": "no-store" } }) }
 function err(e: unknown) {
   if (e instanceof HkError) return json({ error: { code: e.code, message: e.message, retryable: e.retryable } }, e.status)
+  if (isCxPreview()) return json({ error: { code: "cx_preview_unavailable", message: "Identity verification is temporarily unavailable.", retryable: true } }, 503)
   const message = e instanceof Error ? e.message : "unknown"
   console.error("[hackathon]", e)
   return json({ error: { code: "internal", message: message.slice(0, 300), retryable: true } }, 500)
@@ -38,6 +53,14 @@ function venueCtx(venueId: string, loc: "ko" | "en" | "ja") {
 }
 
 export async function GET(req: Request, ctx: Ctx) {
+  if (isCxPreview()) {
+    try {
+      assertCxPreviewTarget(req)
+      const { path } = await ctx.params
+      if (!cxPreviewRouteAllowed(req.method, path) || new URL(req.url).search) return json({ error: { code: "cx_preview_scope" } }, 403)
+      requireCxPreviewAccess(req)
+    } catch (e) { return err(e) }
+  }
   // Before runtime flags, session access or service work. Build flags alone
   // do not populate Vercel's server runtime environment.
   if (isReadinessPreview()) {
@@ -79,6 +102,28 @@ export async function GET(req: Request, ctx: Ctx) {
 
 export async function POST(req: Request, ctx: Ctx) {
   if (isReadinessPreview()) return previewReadOnlyResponse()
+  let checkedBody: Record<string, unknown> | undefined
+  if (isCxPreview()) {
+    try {
+      assertCxPreviewTarget(req)
+      const { path } = await ctx.params
+      if (!cxPreviewRouteAllowed(req.method, path) || new URL(req.url).search) return json({ error: { code: "cx_preview_scope" } }, 403)
+      assertCxPreviewOrigin(req)
+      if (path[0] === "preview") {
+        const b = await cxPreviewBody(req)
+        if (Object.keys(b).some(key => key !== "accessCode")) return json({ error: { code: "bad_request" } }, 400)
+        return grantCxPreviewAccess(req, b.accessCode)
+      }
+      requireCxPreviewAccess(req)
+      checkedBody = await cxPreviewBody(req)
+      const fields = path.length === 1 && path[0] === "operations" ? ["venueId", "consentVersion", "locale"]
+        : path[3] === "start" ? ["mobile"] : []
+      if (Object.keys(checkedBody).some(key => !fields.includes(key)) ||
+        (path[3] === "start" && typeof checkedBody.mobile !== "boolean")) {
+        return json({ error: { code: "cx_preview_body", message: "Only the identity preview request is accepted." } }, 400)
+      }
+    } catch (e) { return err(e) }
+  }
   if (process.env.HK_API_ENABLED !== "1" || process.env.NEXT_PUBLIC_HK_ENABLED !== "1") return json({ error: { code: "not_found" } }, 404)
   const { path } = await ctx.params
   try {
@@ -91,13 +136,13 @@ export async function POST(req: Request, ctx: Ctx) {
     }
     const s = await ensureSession()
     if (path[0] === "operations" && !path[1]) {
-      const b = await body(req)
+      const b = checkedBody ?? await body(req)
       const venueId = str(b.venueId, 120)
       const vc = venueCtx(venueId, locale(b.locale))
       return json(await svc.createOperation({ sessionId: s.sessionId, venueId, consentVersion: str(b.consentVersion, 64), locale: vc.locale, venueName: vc.venueName }))
     }
     if (path[0] === "operations" && path[1]) {
-      const id = path[1]; const action = path.slice(2).join("/"); const b = await body(req)
+      const id = path[1]; const action = path.slice(2).join("/"); const b = checkedBody ?? await body(req)
       switch (action) {
         case "identity/start": return json(await svc.identityStart(s.sessionId, id, Boolean(b.mobile)))
         case "identity/complete": {

@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs"
 import { expect, test } from "@playwright/test"
-import { assertPreviewTarget, previewBuildEnv, PREVIEW_BRANCH } from "../../scripts/hackathon-preview-build.mjs"
+import { assertPreviewTarget, previewBuildEnv, cxPreviewBuildEnv, PREVIEW_BRANCH } from "../../scripts/hackathon-preview-build.mjs"
 
 const read = (path: string) => readFileSync(path, "utf8")
 const target = {
@@ -11,7 +11,7 @@ const target = {
 
 test("readiness profile is full-stack in Seoul and cannot build for Production or another branch", () => {
   expect(JSON.parse(read("vercel.json"))).toMatchObject({
-    buildCommand: "pnpm build:vercel:readiness", outputDirectory: ".next", regions: ["icn1"],
+    buildCommand: "pnpm build:vercel:cx-preview", outputDirectory: ".next", regions: ["icn1"],
   })
   expect(() => assertPreviewTarget(target)).not.toThrow()
   for (const override of [
@@ -22,6 +22,13 @@ test("readiness profile is full-stack in Seoul and cannot build for Production o
   expect(() => assertPreviewTarget({ VERCEL_ENV: "production" })).toThrow()
   expect(() => assertPreviewTarget({ VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_REF: "main" })).toThrow()
   expect(() => assertPreviewTarget({})).not.toThrow()
+})
+
+test("CX-only build keeps private secrets out and enables only the explicit profile", () => {
+  const env = cxPreviewBuildEnv({ ...target, HK_CX_PREVIEW_ACCESS_CODE: "secret", HK_CX_PREVIEW_ACCESS_SECRET: "secret", HK_ISSUER_SIGNING_SEED: "secret", KV_REST_API_TOKEN: "secret", HK_MODE_OPENDID: "opendid", HK_AI_MODE: "gemini" })
+  expect(Object.values(env)).not.toContain("secret")
+  expect(env).toMatchObject({ NEXT_PUBLIC_HK_CX_PREVIEW: "1", NEXT_PUBLIC_HK_PREVIEW_READ_ONLY: "0", HK_ISOLATED_MOCK: "0", HK_MODE_CX: "cx", HK_MODE_OPENDID: "mock", HK_AI_MODE: "rule" })
+  expect(() => cxPreviewBuildEnv({ ...target, VERCEL_ENV: "production" })).toThrow()
 })
 
 test("preview build strips inherited credentials and freezes execution gates", () => {
