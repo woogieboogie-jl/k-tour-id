@@ -7,12 +7,13 @@ import { workAsyncStorage } from "next/dist/server/app-render/work-async-storage
 const originalEnv = { ...process.env }
 const originalFetch = globalThis.fetch
 const originalNow = Date.now
-const origin = "https://cx-preview.example.test"
+const origin = "https://cx-preview-fixture.vercel.app"
 const op = "op_fixture12345"
 const fixtureNow = Date.parse("2026-09-25T12:00:00Z")
 const fixture = {
   NEXT_PUBLIC_HK_CX_PREVIEW: "1", NEXT_PUBLIC_HK_PREVIEW_READ_ONLY: "0", NEXT_PUBLIC_HK_ENABLED: "1",
   VERCEL: "1", VERCEL_ENV: "preview", VERCEL_REGION: "icn1", VERCEL_GIT_PROVIDER: "github",
+  VERCEL_URL: new URL(origin).host,
   VERCEL_GIT_COMMIT_REF: "feat/hackathon-readiness-preview-20260925", VERCEL_GIT_REPO_OWNER: "woogieboogie-jl",
   VERCEL_GIT_REPO_SLUG: "k-tour-id", VERCEL_GIT_COMMIT_SHA: "a".repeat(40),
   HK_CX_PREVIEW_ENABLED: "1", HK_CX_PREVIEW_EXPIRES_AT: "2026-09-30T14:59:59Z",

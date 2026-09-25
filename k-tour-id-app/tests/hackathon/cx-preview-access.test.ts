@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
-import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewPreflightIssues, cxPreviewBody, cxPreviewRouteAllowed, CX_PREVIEW_COOKIE, grantCxPreviewAccess, requireCxPreviewAccess } from "../../lib/hackathon/cx-preview-access"
+import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewRequestOrigin, cxPreviewPreflightIssues, cxPreviewBody, cxPreviewRouteAllowed, CX_PREVIEW_COOKIE, grantCxPreviewAccess, requireCxPreviewAccess } from "../../lib/hackathon/cx-preview-access"
 import { hkConfig, hkPublicConfig, assertExternalServicesEnabled } from "../../lib/hackathon/config"
 import { HkError } from "../../lib/hackathon/util"
 
@@ -9,9 +9,10 @@ after(() => { for (const key of Object.keys(process.env)) if (!(key in original)
 process.env.NEXT_PUBLIC_HK_CX_PREVIEW = "1"
 process.env.NEXT_PUBLIC_HK_PREVIEW_READ_ONLY = "0"
 const now = Date.parse("2026-09-25T12:00:00Z")
-const origin = "https://preview.example.test"
+const origin = "https://cx-preview-fixture.vercel.app"
 const env = {
   VERCEL: "1", VERCEL_ENV: "preview", VERCEL_REGION: "icn1", VERCEL_GIT_PROVIDER: "github",
+  VERCEL_URL: new URL(origin).host,
   VERCEL_GIT_COMMIT_REF: "feat/hackathon-readiness-preview-20260925", VERCEL_GIT_REPO_OWNER: "woogieboogie-jl", VERCEL_GIT_REPO_SLUG: "k-tour-id", VERCEL_GIT_COMMIT_SHA: "a".repeat(40),
   HK_CX_PREVIEW_ENABLED: "1", HK_CX_PREVIEW_EXPIRES_AT: "2026-09-30T14:59:59Z",
   HK_CX_PREVIEW_ACCESS_CODE: "a".repeat(64), HK_CX_PREVIEW_ACCESS_SECRET: "b".repeat(64),
@@ -58,9 +59,32 @@ test("private cookie is signed, origin and branch-bound, expires, and never retu
   assert.throws(() => requireCxPreviewAccess(req("/config", { headers: { cookie: cookie + "; " + cookie } }), env, now), isCode("cx_preview_access_denied"))
   assert.throws(() => requireCxPreviewAccess(req("/config", { headers: { cookie: cookie.slice(0, -2) + "aa" } }), env, now), isCode("cx_preview_access_denied"))
   assert.throws(() => requireCxPreviewAccess(req("/config", { headers: { cookie } }), env, now + 2 * 3600_000), isCode("cx_preview_access_denied"))
-  assert.throws(() => requireCxPreviewAccess(new Request("https://other.example.test/api/hackathon/v1/config", { headers: { cookie } }), env, now), isCode("cx_preview_access_denied"))
+  assert.throws(() => requireCxPreviewAccess(new Request("https://other.example.test/api/hackathon/v1/config", { headers: { cookie } }), env, now), isCode("cx_preview_unavailable"))
   assert.throws(() => requireCxPreviewAccess(req(), env, now), isCode("cx_preview_access_denied"))
   assert.ok(cookie.startsWith(CX_PREVIEW_COOKIE + "="))
+})
+
+test("Vercel TLS termination uses the same pinned HTTPS origin for CSRF and cookie signatures", () => {
+  const internal = (headers: Record<string, string> = {}) => new Request(origin.replace("https:", "http:") + "/api/hackathon/v1/config", {
+    headers: { "x-forwarded-proto": "https", host: env.VERCEL_URL, "x-forwarded-host": env.VERCEL_URL, ...headers },
+  })
+  assert.equal(cxPreviewRequestOrigin(internal(), env), origin)
+  assert.doesNotThrow(() => assertCxPreviewTarget(internal(), env, now))
+  assert.doesNotThrow(() => assertCxPreviewOrigin(internal({ origin }), env))
+  const response = grantCxPreviewAccess(internal({ origin }), env.HK_CX_PREVIEW_ACCESS_CODE, env, now)
+  const cookie = response.headers.get("set-cookie")!.split(";")[0]
+  assert.doesNotThrow(() => requireCxPreviewAccess(internal({ cookie }), env, now + 1))
+  assert.doesNotThrow(() => requireCxPreviewAccess(req("/config", { headers: { cookie } }), env, now + 1))
+  for (const headers of [
+    { "x-forwarded-proto": "http" }, { "x-forwarded-proto": "https,http" }, { "x-forwarded-proto": "" },
+    { host: "other.vercel.app" }, { "x-forwarded-host": "other.vercel.app" }, { "x-forwarded-host": env.VERCEL_URL + ",other.vercel.app" },
+  ]) assert.throws(() => assertCxPreviewTarget(internal(headers), env, now), isCode("cx_preview_unavailable"))
+  assert.throws(() => assertCxPreviewTarget(new Request(origin.replace("https:", "http:")), env, now), isCode("cx_preview_unavailable"))
+  for (const overrides of [{ VERCEL_URL: "" }, { VERCEL_URL: "other.vercel.app" }, { VERCEL_URL: env.VERCEL_URL + ":443" }, { VERCEL_URL: "evil.invalid" }, { VERCEL_ENV: "production" }]) {
+    assert.throws(() => assertCxPreviewTarget(internal(), { ...env, ...overrides }, now), isCode("cx_preview_unavailable"))
+  }
+  assert.throws(() => assertCxPreviewTarget(new Request("http://evil.invalid/api/hackathon/v1/config", { headers: { "x-forwarded-proto": "https", host: env.VERCEL_URL } }), env, now), isCode("cx_preview_unavailable"))
+  assert.throws(() => assertCxPreviewOrigin(internal({ origin: "https://evil.invalid" }), env), isCode("csrf"))
 })
 
 test("POST requires exact Origin and no cross-site fetch metadata", () => {

@@ -13,6 +13,24 @@ const equal = (a: string, b: string) => timingSafeEqual(hash(a), hash(b))
 const unavailable = () => new HkError("cx_preview_unavailable", "Identity preview is unavailable.", 503)
 const reportedPreflightFailures = new Set<string>()
 
+/** Vercel terminates TLS before Next; never derive our origin from client Origin. */
+export function cxPreviewRequestOrigin(request: Request, env: Env = process.env) {
+  const url = new URL(request.url)
+  const remote = Object.keys(env).some(key => key === "VERCEL" || key.startsWith("VERCEL_"))
+  if (!remote) return url.origin
+  const host = env.VERCEL_URL ?? ""
+  if (env.VERCEL !== "1" || env.VERCEL_ENV !== "preview" ||
+    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.vercel\.app$/.test(host) || url.host !== host || url.username || url.password) throw unavailable()
+  for (const header of ["host", "x-forwarded-host"]) {
+    const presented = request.headers.get(header)
+    if (presented !== null && presented !== host) throw unavailable()
+  }
+  const forwardedProtocol = request.headers.get("x-forwarded-proto")
+  if (forwardedProtocol !== null && forwardedProtocol !== "https") throw unavailable()
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && forwardedProtocol === "https")) throw unavailable()
+  return `https://${host}`
+}
+
 /** Fixed check names only: never return environment values, URLs or secrets. */
 export function cxPreviewPreflightIssues(request: Request, env: Env, now = Date.now()) {
   const url = new URL(request.url)
@@ -27,8 +45,9 @@ export function cxPreviewPreflightIssues(request: Request, env: Env, now = Date.
       vercel: env.VERCEL === "1", preview: env.VERCEL_ENV === "preview", seoul: env.VERCEL_REGION === "icn1",
       git_provider: env.VERCEL_GIT_PROVIDER === "github", git_branch: env.VERCEL_GIT_COMMIT_REF === CX_PREVIEW_BRANCH,
       git_owner: env.VERCEL_GIT_REPO_OWNER === "woogieboogie-jl", git_repo: env.VERCEL_GIT_REPO_SLUG === "k-tour-id",
-      git_revision: /^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? ""), https: url.protocol === "https:",
+      git_revision: /^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? ""),
     })
+    try { cxPreviewRequestOrigin(request, env); checks.request_origin = true } catch { checks.request_origin = false }
   } else Object.assign(checks, { local_opt_in: env.HK_CX_PREVIEW_LOCAL_TEST === "1", local_host: ["localhost", "127.0.0.1"].includes(url.hostname) })
   Object.assign(checks, {
     cx_mode: env.HK_MODE_CX === "cx", non_mock: env.HK_ISOLATED_MOCK === "0", api_enabled: env.HK_API_ENABLED === "1",
@@ -52,13 +71,13 @@ export function assertCxPreviewTarget(request: Request, env: Env = process.env, 
     }
     throw unavailable()
   }
-  return { expiry: Date.parse(env.HK_CX_PREVIEW_EXPIRES_AT!), secret: env.HK_CX_PREVIEW_ACCESS_SECRET!, code: env.HK_CX_PREVIEW_ACCESS_CODE!, origin: new URL(request.url).origin }
+  return { expiry: Date.parse(env.HK_CX_PREVIEW_EXPIRES_AT!), secret: env.HK_CX_PREVIEW_ACCESS_SECRET!, code: env.HK_CX_PREVIEW_ACCESS_CODE!, origin: cxPreviewRequestOrigin(request, env) }
 }
 
-export function assertCxPreviewOrigin(request: Request) {
-  const url = new URL(request.url)
+export function assertCxPreviewOrigin(request: Request, env: Env = process.env) {
+  const origin = cxPreviewRequestOrigin(request, env)
   const site = request.headers.get("sec-fetch-site")
-  if (request.headers.get("origin") !== url.origin || (site && !["same-origin", "none"].includes(site))) {
+  if (request.headers.get("origin") !== origin || (site && !["same-origin", "none"].includes(site))) {
     throw new HkError("csrf", "Use this preview directly to continue.", 403)
   }
 }
@@ -96,7 +115,7 @@ export function requireCxPreviewAccess(request: Request, env: Env = process.env,
 
 export function grantCxPreviewAccess(request: Request, code: unknown, env: Env = process.env, now = Date.now()) {
   const config = assertCxPreviewTarget(request, env, now)
-  assertCxPreviewOrigin(request)
+  assertCxPreviewOrigin(request, env)
   if (typeof code !== "string" || code.length > 128 || !equal(code, config.code)) {
     throw new HkError("cx_preview_access_denied", "The private preview code was not accepted.", 401)
   }
