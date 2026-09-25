@@ -40,6 +40,14 @@
 - 허용 정책은 유지하고 각 origin 검사 결과를 고정된 조건명으로 세분화했다. 호스트 불일치 시 loopback 여부와 port 존재 여부만 고정 분류명으로 남긴다. 실제 주소·포트·헤더값은 출력하지 않는다. 검사를 완화하기 전에 실제 조건을 확인하기 위한 변경이다.
 - 기존 앱 계약 회귀도 독립 재실행 **964/964 PASS**였다.
 
+### 관측에 근거한 외부 origin 계약
+
+- 세분화 진단 revision `dfa0c259401ec11b6a0395bba63ed66ab7793c96`의 실제 로그는 `origin_url_host` 불일치, non-loopback, port 없음만 가리켰다. 따라서 localhost였다고 단정하지 않는다. Next adapter에는 `http://n` 같은 dummy URL 경로도 있으며 내부 authority는 외부 접속 도메인 식별자가 아니다.
+- 독립 검토자 2명의 설계 GO 후, Preview에서 **Host와 X-Forwarded-Host 둘 다 고정 `VERCEL_URL`과 정확히 일치**, **X-Forwarded-Proto는 정확히 `https`**를 필수화했다. 기존 선택적 헤더보다 엄격하다. 내부 URL은 HTTP(S)·credentials 없음만 검사한다.
+- 외부 origin은 서버의 고정 배포 환경값으로만 구성한다. 이 헤더 검사는 접근 인증이 아니며 기존 접근코드·서명 쿠키·정확한 POST Origin·Fetch-Site·지역/Git/만료 가드가 여전히 필요하다. 프로젝트 ID는 배포 wrapper의 metadata 검사로 확인한다.
+- 내부 URL 호스트 불일치를 실패로 세던 진단도 제거했다. 정상 프록시 입력에서 preflight `[]`, 내부 URL의 실제 router config 200, 필수 헤더 하나라도 없으면 storage 이전 503, 다른 Origin은 403, 다른 배포의 접근 쿠키 재사용은 401을 검사한다.
+- `x-vercel-deployment-url`의 새 필수 조건이나 전역 Next `trustHostHeader` 설정은 도입하지 않았다.
+
 ## 검수 경계
 
 실제 holder 승인, `verified` 결과, OpenDID 발급, Sui 신규 서명/실행, OmniOne 신규 기록은 이 시점에 미수행이다. 테스트 성공 수에 실제 인증 완주를 포함하지 않는다. 체인 공개 인프라의 병렬 조회는 [별도 기록](./CHAIN_READONLY_2026-09-26.md)을 따른다.

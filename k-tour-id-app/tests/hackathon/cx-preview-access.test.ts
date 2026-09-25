@@ -21,7 +21,12 @@ const env = {
   KV_REST_API_URL: "https://fixture.upstash.io", KV_REST_API_TOKEN: "fixture-token",
   HK_STORE_KEY: "ktour:cx-preview:fixture", HK_ISSUER_SIGNING_SEED: "c".repeat(64),
 }
-const req = (path = "/config", init: RequestInit = {}) => new Request(origin + "/api/hackathon/v1" + path, init)
+const proxyHeaders = { host: env.VERCEL_URL, "x-forwarded-host": env.VERCEL_URL, "x-forwarded-proto": "https" }
+const req = (path = "/config", init: RequestInit = {}) => {
+  const headers = new Headers(proxyHeaders)
+  new Headers(init.headers).forEach((value, key) => headers.set(key, value))
+  return new Request(origin + "/api/hackathon/v1" + path, { ...init, headers })
+}
 const isCode = (code: string) => (error: unknown) => error instanceof HkError && error.code === code
 
 test("preflight diagnostics expose only fixed failed check names and keep target fail-closed", () => {
@@ -32,13 +37,12 @@ test("preflight diagnostics expose only fixed failed check names and keep target
   assert.throws(() => assertCxPreviewTarget(req(), broken, now), isCode("cx_preview_unavailable"))
 })
 
-test("origin diagnostics preserve each predicate and disclose only fixed names and classifications", () => {
-  const request = (url: string, headers: Record<string, string> = {}) => ({ url, headers: new Headers(headers) }) as Request
+test("origin diagnostics disclose only fixed names for the public proxy contract", () => {
+  const request = (url: string, headers: Record<string, string> = proxyHeaders) => ({ url, headers: new Headers(headers) }) as Request
   const cases = [
     { request: req(), env: { ...env, VERCEL: "0" }, reason: "origin_vercel" },
     { request: req(), env: { ...env, VERCEL_ENV: "production" }, reason: "origin_preview" },
     { request: req(), env: { ...env, VERCEL_URL: "private-sentinel.invalid" }, reason: "origin_deployment_host_format" },
-    { request: request("http://private-sentinel.invalid:4321/", { "x-forwarded-proto": "https" }), env, reason: "origin_url_host" },
     { request: request(origin.replace("https://", "https://private-sentinel:private-sentinel@")), env, reason: "origin_url_credentials" },
     { request: req("/config", { headers: { host: "private-sentinel.invalid" } }), env, reason: "origin_host_header" },
     { request: req("/config", { headers: { "x-forwarded-host": "private-sentinel.invalid" } }), env, reason: "origin_forwarded_host_header" },
@@ -56,12 +60,18 @@ test("origin diagnostics preserve each predicate and disclose only fixed names a
     assert.throws(() => cxPreviewRequestOrigin(item.request, item.env), isCode("cx_preview_unavailable"))
     assert.throws(() => assertCxPreviewTarget(item.request, item.env, now), isCode("cx_preview_unavailable"))
   }
-  for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
-    const internal = request(`http://${host}:4321/`, { "x-forwarded-proto": "https", host: env.VERCEL_URL, "x-forwarded-host": env.VERCEL_URL })
-    assert.deepEqual(cxPreviewPreflightIssues(internal, env, now), ["request_origin", "origin_url_host", "origin_url_host_mismatch_loopback", "origin_url_port_present"])
+  for (const internalUrl of ["http://n/", "http://localhost:4321/", "http://127.0.0.1/", "https://[::1]/", "http://private-sentinel.invalid/"]) {
+    // URL authority is internal; only the fixed deployment + all three exact
+    // proxy headers attest the public origin, not this arbitrary internal name.
+    const internal = request(internalUrl)
+    assert.deepEqual(cxPreviewPreflightIssues(internal, env, now), [])
+    assert.equal(cxPreviewRequestOrigin(internal, env), origin)
   }
-  const foreign = request("https://private-sentinel.invalid/")
-  assert.deepEqual(cxPreviewPreflightIssues(foreign, env, now), ["request_origin", "origin_url_host", "origin_url_host_mismatch_non_loopback", "origin_url_port_absent"])
+  for (const key of Object.keys(proxyHeaders)) {
+    const headers = new Headers(proxyHeaders); headers.delete(key)
+    assert.throws(() => assertCxPreviewTarget(new Request("http://n/", { headers }), env, now), isCode("cx_preview_unavailable"))
+  }
+  assert.throws(() => assertCxPreviewTarget(request("https://private-sentinel.invalid/", {}), env, now), isCode("cx_preview_unavailable"))
   assert.deepEqual(cxPreviewPreflightIssues(req(), env, now), [])
   assert.deepEqual(cxPreviewRequestOriginChecks(request("http://localhost:4321/"), {}), {})
   assert.equal(cxPreviewRequestOrigin(request("http://localhost:4321/"), {}), "http://localhost:4321")
@@ -110,11 +120,22 @@ test("Vercel TLS termination uses the same pinned HTTPS origin for CSRF and cook
   const cookie = response.headers.get("set-cookie")!.split(";")[0]
   assert.doesNotThrow(() => requireCxPreviewAccess(internal({ cookie }), env, now + 1))
   assert.doesNotThrow(() => requireCxPreviewAccess(req("/config", { headers: { cookie } }), env, now + 1))
+  const dummy = new Request("http://n/api/hackathon/v1/config", { headers: { ...proxyHeaders, cookie, origin } })
+  assert.doesNotThrow(() => requireCxPreviewAccess(dummy, env, now + 1))
+  assert.doesNotThrow(() => assertCxPreviewOrigin(dummy, env))
+  const otherHost = "different-deployment.vercel.app"
+  const otherDeployment = new Request("http://n/api/hackathon/v1/config", { headers: { ...proxyHeaders, host: otherHost, "x-forwarded-host": otherHost, cookie } })
+  assert.throws(() => requireCxPreviewAccess(otherDeployment, { ...env, VERCEL_URL: otherHost }, now + 1), isCode("cx_preview_access_denied"))
   const conflictingHeaders: Record<string, string>[] = [
     { "x-forwarded-proto": "http" }, { "x-forwarded-proto": "https,http" }, { "x-forwarded-proto": "" },
     { host: "other.vercel.app" }, { "x-forwarded-host": "other.vercel.app" }, { "x-forwarded-host": env.VERCEL_URL + ",other.vercel.app" },
   ]
   for (const headers of conflictingHeaders) assert.throws(() => assertCxPreviewTarget(internal(headers), env, now), isCode("cx_preview_unavailable"))
+  for (const key of ["host", "x-forwarded-host"]) {
+    for (const value of ["", env.VERCEL_URL + ":443", env.VERCEL_URL + ",other.vercel.app"]) {
+      assert.throws(() => assertCxPreviewTarget(internal({ [key]: value }), env, now), isCode("cx_preview_unavailable"))
+    }
+  }
   assert.throws(() => assertCxPreviewTarget(new Request(origin.replace("https:", "http:")), env, now), isCode("cx_preview_unavailable"))
   for (const overrides of [{ VERCEL_URL: "" }, { VERCEL_URL: "other.vercel.app" }, { VERCEL_URL: env.VERCEL_URL + ":443" }, { VERCEL_URL: "evil.invalid" }, { VERCEL_ENV: "production" }]) {
     assert.throws(() => assertCxPreviewTarget(internal(), { ...env, ...overrides }, now), isCode("cx_preview_unavailable"))

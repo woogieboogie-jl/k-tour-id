@@ -62,7 +62,8 @@ function request(path: string[], options: { method?: string; cookie?: string; bo
   const method = options.method ?? "GET"
   return new Request(`${origin}/api/hackathon/v1/${path.join("/")}${options.query ?? ""}`, {
     method,
-    headers: { ...(method === "POST" ? { origin, "content-type": "application/json", "sec-fetch-site": "same-origin" } : {}),
+    headers: { host: fixture.VERCEL_URL, "x-forwarded-host": fixture.VERCEL_URL, "x-forwarded-proto": "https",
+      ...(method === "POST" ? { origin, "content-type": "application/json", "sec-fetch-site": "same-origin" } : {}),
       ...(options.cookie ? { cookie: options.cookie } : {}), ...options.headers },
     ...(method === "POST" ? { body: options.body ?? "{}" } : {}),
   })
@@ -91,6 +92,20 @@ async function accessCookie() {
   assert.equal(JSON.stringify(body).includes(fixture.HK_CX_PREVIEW_ACCESS_CODE), false)
   return header.split(";")[0]
 }
+
+test("actual routes accept Next internal URLs only behind the exact HTTPS proxy contract", async () => {
+  const cookie = await accessCookie()
+  const headers = request(["config"], { cookie }).headers
+  const response = await route.GET(new Request("http://n/api/hackathon/v1/config", { headers }), ctx(["config"]))
+  assert.equal(response.status, 200)
+  assert.equal((await response.json()).cxPreview, true)
+  for (const key of ["host", "x-forwarded-host", "x-forwarded-proto"]) {
+    const missing = new Headers(headers); missing.delete(key)
+    await expectDenied(await route.GET(new Request("http://n/api/hackathon/v1/config", { headers: missing }), ctx(["config"])), 503, "cx_preview_unavailable")
+  }
+  const crossOrigin = request(["sessions"], { method: "POST", cookie, headers: { origin: "https://foreign.invalid" } }).headers
+  await expectDenied(await route.POST(new Request("http://n/api/hackathon/v1/sessions", { method: "POST", headers: crossOrigin, body: "{}" }), ctx(["sessions"])), 403, "csrf")
+})
 
 test("session tripwire actually intercepts both session lookup and legacy Origin lookup", async () => {
   await assert.rejects(session.ensureSession(), /session_scope_tripwire/)
