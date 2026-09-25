@@ -49,3 +49,20 @@ Production/main은 `58d284b9c6f51e8563765df7b7a3c13b4d575bdd`, GitHub Production
 3. 현재 `HK_ISOLATED_MOCK=0`은 CX뿐 아니라 다른 실연동 경로에도 영향을 준다. 따라서 단순 flag 전환이 아니라 **CX 인증/세션만 허용하고 체인·AI는 계속 차단하는 별도 제한 단계**를 먼저 검토한다.
 4. 지원되는 실제 신분증 보유자가 본인 기기에서 동의·인증. 서버는 완료/verified, transaction 일치, 안정적 CI를 확인한다. provider 목록 활성만으로 연령 기준이나 CI 제공을 보장하지 않는다.
 5. 취소·만료·재시도·새로고침·중복 완료 및 같은 장소 복귀를 검증한 뒤 CX E2E를 완료 처리한다.
+
+## 후속: 별도 Redis 준비
+
+사용자가 기존 코드 재사용 + 별도 Redis 준비를 승인했다. 기존 인증/사용 이력을 승계하지 않는 신규 CX 검증용 환경이며, Harvey/Production 데이터는 이전하거나 변경하지 않는다.
+
+- 대상 리소스 이름: `ktour-cx-preview-20260925` (아직 생성되지 않음).
+- Vercel Marketplace `upstash/upstash-kv`, `free`, `autoUpgrade=false`, `eviction=false`, `prodPack=false`를 명시했다. 제공 지역 중 `hnd1`(도쿄)을 선택했다. CX 호출을 수행하는 앱 서버 `icn1`(서울)과 Redis 저장 지역은 서로 다른 설정이다.
+- `--no-connect --no-env-pull`로 Production/전체 Preview 자동 연결 및 비밀값 파일 출력을 막았다. 생성 후 검증용 브랜치 범위로만 서버 변수를 구성할 예정이다.
+- CLI 60.0.1 응답은 `action_required / integration_terms_acceptance_required`. 계정 소유자의 최초 Upstash 약관 승인이 필요하다. 이 승인은 대행하지 않았다.
+- 생성 시도 후 해당 scope의 Upstash 리소스 목록을 다시 조회해 `No resources found`를 확인했다. 저장소 생성·연결·실 Redis 검증 완료로 보고하지 않는다.
+- [계정 소유자 승인 화면](https://vercel.com/jaewook-9643s-projects/~/integrations/accept-terms/upstash?source=cli). 승인 후 같은 이름의 리소스가 생겼는지 먼저 확인하고, 없다면 명시한 무료 설정으로 재시도한다. 유료 플랜으로 자동 우회하지 않는다.
+
+실연결 전 필수 보호: CX 전용 프로필에서 Redis 누락 시 파일 폴백 금지, URL/token 동일 쌍 검증, Preview 전용 저장 키 및 비샘플 고정 seed, 서버 비밀 설정만 사용. 기존 `HK_ISOLATED_MOCK=0` 하나만 변경해 CX 외 실행을 여는 방식은 사용하지 않는다.
+
+연결 후 사용할 `scripts/hackathon-redis-probe.mjs`를 준비했다. 전용 `ktour:probe:<UUID>` 키에만 120초 TTL을 두며 PING/GET/SET NX/EVAL/조건부 정리를 검사한다. Production·자격증명 인자 전달·URL/token 혼합을 거부하고, 비밀값 없이 결과 개수/boolean만 출력한다. 쓰기 응답 유실 시 정리 완료라고 주장하지 않는다. 실행에는 별도 `HK_REDIS_PROBE_ALLOW_WRITE=1`이 필요하다.
+
+독립 검토로 Redis error/result 혼합 응답과 쓰기 응답 유실 반례를 보강했다. fixture 7/7, 전체 Harvey 단위 88/88, 타입 검사 PASS. 이는 메모리 fixture 결과이며 **실제 Redis 연결/쓰기 검증은 아직 0회**다. 기존 store/service/CX 실행 코드는 이번 준비 작업에서 변경하지 않았다.
