@@ -32,6 +32,14 @@
 - 독립 adversarial 리뷰 GO, 독립 접근/라우터 검사 **18/18**, 전체 hackathon 단위 **151/151**, CX-only production build/TypeScript **PASS**. 실제 요청 재검증은 배포 후 별도로 기록한다.
 - 근거: [Vercel 요청 헤더 문서](https://vercel.com/docs/headers/request-headers)의 `x-forwarded-proto` 정의.
 
+### 재배포 후 남은 내부 URL 차이
+
+- `d1bb81ba17f017709429a17d27a7343c92a672ac` / `dpl_utM6VCKp2qfpFWMrwgceU9kBKyZr`는 정확한 Preview·`icn1`으로 READY였다. 그러나 접근은 계속 503이었으며, 서버 진단은 `request_origin`을 지목했다. 실제 CX transaction은 아직 시작하지 않았다.
+- 사용자 정의 `VERCEL_*` 환경변수는 없었다. Production은 `dpl_HHDmk5SoQPmdJbonqjE2w7pLwJNj` / `58d284b9c6f51e8563765df7b7a3c13b4d575bdd` 그대로임을 다시 확인했다.
+- 설치된 Next 16.2.6의 `RouteModule.prepare`와 `NextRequestAdapter`에는 공개 Host와 별개인 내부 hostname/localhost로 Request URL을 만드는 경로가 있다. 별도 담당자가 합성 입력으로 이를 재현했다. 이번 배포의 실제 URL 형태와 동일하다고 아직 단정하지 않는다.
+- 허용 정책은 유지하고 각 origin 검사 결과를 고정된 조건명으로 세분화했다. 호스트 불일치 시 loopback 여부와 port 존재 여부만 고정 분류명으로 남긴다. 실제 주소·포트·헤더값은 출력하지 않는다. 검사를 완화하기 전에 실제 조건을 확인하기 위한 변경이다.
+- 기존 앱 계약 회귀도 독립 재실행 **964/964 PASS**였다.
+
 ## 검수 경계
 
 실제 holder 승인, `verified` 결과, OpenDID 발급, Sui 신규 서명/실행, OmniOne 신규 기록은 이 시점에 미수행이다. 테스트 성공 수에 실제 인증 완주를 포함하지 않는다. 체인 공개 인프라의 병렬 조회는 [별도 기록](./CHAIN_READONLY_2026-09-26.md)을 따른다.

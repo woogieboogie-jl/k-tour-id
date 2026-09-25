@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
-import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewRequestOrigin, cxPreviewPreflightIssues, cxPreviewBody, cxPreviewRouteAllowed, CX_PREVIEW_COOKIE, grantCxPreviewAccess, requireCxPreviewAccess } from "../../lib/hackathon/cx-preview-access"
+import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewRequestOrigin, cxPreviewRequestOriginChecks, cxPreviewPreflightIssues, cxPreviewBody, cxPreviewRouteAllowed, CX_PREVIEW_COOKIE, grantCxPreviewAccess, requireCxPreviewAccess } from "../../lib/hackathon/cx-preview-access"
 import { hkConfig, hkPublicConfig, assertExternalServicesEnabled } from "../../lib/hackathon/config"
 import { HkError } from "../../lib/hackathon/util"
 
@@ -30,6 +30,41 @@ test("preflight diagnostics expose only fixed failed check names and keep target
   assert.deepEqual(cxPreviewPreflightIssues(req(), broken, now), ["git_provider", "access_signing_key", "redis_configuration"])
   assert.equal(JSON.stringify(cxPreviewPreflightIssues(req(), broken, now)).includes("private-sentinel"), false)
   assert.throws(() => assertCxPreviewTarget(req(), broken, now), isCode("cx_preview_unavailable"))
+})
+
+test("origin diagnostics preserve each predicate and disclose only fixed names and classifications", () => {
+  const request = (url: string, headers: Record<string, string> = {}) => ({ url, headers: new Headers(headers) }) as Request
+  const cases = [
+    { request: req(), env: { ...env, VERCEL: "0" }, reason: "origin_vercel" },
+    { request: req(), env: { ...env, VERCEL_ENV: "production" }, reason: "origin_preview" },
+    { request: req(), env: { ...env, VERCEL_URL: "private-sentinel.invalid" }, reason: "origin_deployment_host_format" },
+    { request: request("http://private-sentinel.invalid:4321/", { "x-forwarded-proto": "https" }), env, reason: "origin_url_host" },
+    { request: request(origin.replace("https://", "https://private-sentinel:private-sentinel@")), env, reason: "origin_url_credentials" },
+    { request: req("/config", { headers: { host: "private-sentinel.invalid" } }), env, reason: "origin_host_header" },
+    { request: req("/config", { headers: { "x-forwarded-host": "private-sentinel.invalid" } }), env, reason: "origin_forwarded_host_header" },
+    { request: req("/config", { headers: { "x-forwarded-proto": "private-sentinel" } }), env, reason: "origin_forwarded_proto" },
+    { request: request(origin.replace("https:", "ftp:")), env, reason: "origin_url_protocol" },
+  ]
+  for (const item of cases) {
+    const checks = cxPreviewRequestOriginChecks(item.request, item.env)
+    assert.equal(checks[item.reason], false)
+    assert.ok(Object.values(checks).every(value => typeof value === "boolean"))
+    const issues = cxPreviewPreflightIssues(item.request, item.env, now)
+    assert.ok(issues.includes("request_origin") && issues.includes(item.reason))
+    assert.equal(JSON.stringify({ checks, issues }).includes("private-sentinel"), false)
+    assert.equal(JSON.stringify({ checks, issues }).includes("4321"), false)
+    assert.throws(() => cxPreviewRequestOrigin(item.request, item.env), isCode("cx_preview_unavailable"))
+    assert.throws(() => assertCxPreviewTarget(item.request, item.env, now), isCode("cx_preview_unavailable"))
+  }
+  for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+    const internal = request(`http://${host}:4321/`, { "x-forwarded-proto": "https", host: env.VERCEL_URL, "x-forwarded-host": env.VERCEL_URL })
+    assert.deepEqual(cxPreviewPreflightIssues(internal, env, now), ["request_origin", "origin_url_host", "origin_url_host_mismatch_loopback", "origin_url_port_present"])
+  }
+  const foreign = request("https://private-sentinel.invalid/")
+  assert.deepEqual(cxPreviewPreflightIssues(foreign, env, now), ["request_origin", "origin_url_host", "origin_url_host_mismatch_non_loopback", "origin_url_port_absent"])
+  assert.deepEqual(cxPreviewPreflightIssues(req(), env, now), [])
+  assert.deepEqual(cxPreviewRequestOriginChecks(request("http://localhost:4321/"), {}), {})
+  assert.equal(cxPreviewRequestOrigin(request("http://localhost:4321/"), {}), "http://localhost:4321")
 })
 
 test("CX profile requires exact deploy, runtime opt-in, fixed provider and bounded expiry", () => {
@@ -75,10 +110,11 @@ test("Vercel TLS termination uses the same pinned HTTPS origin for CSRF and cook
   const cookie = response.headers.get("set-cookie")!.split(";")[0]
   assert.doesNotThrow(() => requireCxPreviewAccess(internal({ cookie }), env, now + 1))
   assert.doesNotThrow(() => requireCxPreviewAccess(req("/config", { headers: { cookie } }), env, now + 1))
-  for (const headers of [
+  const conflictingHeaders: Record<string, string>[] = [
     { "x-forwarded-proto": "http" }, { "x-forwarded-proto": "https,http" }, { "x-forwarded-proto": "" },
     { host: "other.vercel.app" }, { "x-forwarded-host": "other.vercel.app" }, { "x-forwarded-host": env.VERCEL_URL + ",other.vercel.app" },
-  ]) assert.throws(() => assertCxPreviewTarget(internal(headers), env, now), isCode("cx_preview_unavailable"))
+  ]
+  for (const headers of conflictingHeaders) assert.throws(() => assertCxPreviewTarget(internal(headers), env, now), isCode("cx_preview_unavailable"))
   assert.throws(() => assertCxPreviewTarget(new Request(origin.replace("https:", "http:")), env, now), isCode("cx_preview_unavailable"))
   for (const overrides of [{ VERCEL_URL: "" }, { VERCEL_URL: "other.vercel.app" }, { VERCEL_URL: env.VERCEL_URL + ":443" }, { VERCEL_URL: "evil.invalid" }, { VERCEL_ENV: "production" }]) {
     assert.throws(() => assertCxPreviewTarget(internal(), { ...env, ...overrides }, now), isCode("cx_preview_unavailable"))

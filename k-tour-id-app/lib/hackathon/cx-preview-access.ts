@@ -13,22 +13,33 @@ const equal = (a: string, b: string) => timingSafeEqual(hash(a), hash(b))
 const unavailable = () => new HkError("cx_preview_unavailable", "Identity preview is unavailable.", 503)
 const reportedPreflightFailures = new Set<string>()
 
-/** Vercel terminates TLS before Next; never derive our origin from client Origin. */
-export function cxPreviewRequestOrigin(request: Request, env: Env = process.env) {
+/** Fixed names and booleans only; shared by enforcement and diagnostics. */
+export function cxPreviewRequestOriginChecks(request: Request, env: Env = process.env): Record<string, boolean> {
   const url = new URL(request.url)
   const remote = Object.keys(env).some(key => key === "VERCEL" || key.startsWith("VERCEL_"))
-  if (!remote) return url.origin
+  if (!remote) return {}
   const host = env.VERCEL_URL ?? ""
-  if (env.VERCEL !== "1" || env.VERCEL_ENV !== "preview" ||
-    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.vercel\.app$/.test(host) || url.host !== host || url.username || url.password) throw unavailable()
-  for (const header of ["host", "x-forwarded-host"]) {
-    const presented = request.headers.get(header)
-    if (presented !== null && presented !== host) throw unavailable()
-  }
+  const presentedHost = request.headers.get("host")
+  const forwardedHost = request.headers.get("x-forwarded-host")
   const forwardedProtocol = request.headers.get("x-forwarded-proto")
-  if (forwardedProtocol !== null && forwardedProtocol !== "https") throw unavailable()
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && forwardedProtocol === "https")) throw unavailable()
-  return `https://${host}`
+  return {
+    origin_vercel: env.VERCEL === "1",
+    origin_preview: env.VERCEL_ENV === "preview",
+    origin_deployment_host_format: /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.vercel\.app$/.test(host),
+    origin_url_host: url.host === host,
+    origin_url_credentials: !url.username && !url.password,
+    origin_host_header: presentedHost === null || presentedHost === host,
+    origin_forwarded_host_header: forwardedHost === null || forwardedHost === host,
+    origin_forwarded_proto: forwardedProtocol === null || forwardedProtocol === "https",
+    origin_url_protocol: url.protocol === "https:" || (url.protocol === "http:" && forwardedProtocol === "https"),
+  }
+}
+
+/** Vercel terminates TLS before Next; never derive our origin from client Origin. */
+export function cxPreviewRequestOrigin(request: Request, env: Env = process.env) {
+  const checks = cxPreviewRequestOriginChecks(request, env)
+  if (Object.values(checks).some(passed => !passed)) throw unavailable()
+  return Object.keys(checks).length ? `https://${env.VERCEL_URL}` : new URL(request.url).origin
 }
 
 /** Fixed check names only: never return environment values, URLs or secrets. */
@@ -39,6 +50,7 @@ export function cxPreviewPreflightIssues(request: Request, env: Env, now = Date.
     cx_build: isCxPreview(), writable_build: !isReadinessPreview(), runtime_enabled: env.HK_CX_PREVIEW_ENABLED === "1",
     expiry: Number.isFinite(expiry) && expiry > now && expiry <= CX_PREVIEW_MAX_END,
   }
+  const diagnostics: string[] = []
   const remote = Object.keys(env).some(key => key === "VERCEL" || key.startsWith("VERCEL_"))
   if (remote) {
     Object.assign(checks, {
@@ -47,7 +59,16 @@ export function cxPreviewPreflightIssues(request: Request, env: Env, now = Date.
       git_owner: env.VERCEL_GIT_REPO_OWNER === "woogieboogie-jl", git_repo: env.VERCEL_GIT_REPO_SLUG === "k-tour-id",
       git_revision: /^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? ""),
     })
-    try { cxPreviewRequestOrigin(request, env); checks.request_origin = true } catch { checks.request_origin = false }
+    const originChecks = cxPreviewRequestOriginChecks(request, env)
+    checks.request_origin = Object.values(originChecks).every(Boolean)
+    Object.assign(checks, originChecks)
+    // These classifications do not participate in origin acceptance. Emit them
+    // only after an existing host mismatch; never include the host or port value.
+    if (!originChecks.origin_url_host) {
+      diagnostics.push(["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+        ? "origin_url_host_mismatch_loopback" : "origin_url_host_mismatch_non_loopback")
+      diagnostics.push(url.port ? "origin_url_port_present" : "origin_url_port_absent")
+    }
   } else Object.assign(checks, { local_opt_in: env.HK_CX_PREVIEW_LOCAL_TEST === "1", local_host: ["localhost", "127.0.0.1"].includes(url.hostname) })
   Object.assign(checks, {
     cx_mode: env.HK_MODE_CX === "cx", non_mock: env.HK_ISOLATED_MOCK === "0", api_enabled: env.HK_API_ENABLED === "1",
@@ -55,7 +76,7 @@ export function cxPreviewPreflightIssues(request: Request, env: Env, now = Date.
     access_signing_key: /^[a-f0-9]{64}$/.test(env.HK_CX_PREVIEW_ACCESS_SECRET ?? ""), access_code: /^[A-Za-z0-9_-]{32,128}$/.test(env.HK_CX_PREVIEW_ACCESS_CODE ?? ""),
   })
   try { previewRedisConfig(env); checks.redis_configuration = true } catch { checks.redis_configuration = false }
-  return Object.keys(checks).filter(key => !checks[key])
+  return [...Object.keys(checks).filter(key => !checks[key]), ...diagnostics]
 }
 
 /** No network or storage. Failed check names are logged once per warm instance. */

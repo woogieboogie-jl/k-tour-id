@@ -31,6 +31,7 @@ export async function runBrowserSmoke({ origin, accessCode, expectedRevision } =
   let canceled = false
   let revisionMismatch = false
   let configObserved = false
+  let checkpoint = "page"
   const recordResponse = async response => {
     const url = new URL(response.url())
     if (url.origin !== base.origin) return
@@ -74,6 +75,7 @@ export async function runBrowserSmoke({ origin, accessCode, expectedRevision } =
     await preview().waitFor({ state: "visible" })
   }
   const beginConsent = async () => {
+    checkpoint = "consent"
     const surface = preview(); await surface.getByRole("checkbox").check()
     const response = page.waitForResponse(item => item.url() === `${base.origin}/api/hackathon/v1/operations` && item.request().method() === "POST")
     consentCommitted = true; counts.consent += 1
@@ -90,6 +92,7 @@ export async function runBrowserSmoke({ origin, accessCode, expectedRevision } =
     } catch { safeFailure(`${kind}-handoff`) }
   }
   const cancelCurrent = async () => {
+    checkpoint = "cancel"
     const response = page.waitForResponse(item => item.url().endsWith(`/operations/${operationId}/cancel`) && item.request().method() === "POST")
     await preview().getByRole("button", { name: /^Cancel$|^취소$|^キャンセル$/ }).click(); const result = await response
     if (!result.ok()) safeFailure("cancel")
@@ -98,42 +101,43 @@ export async function runBrowserSmoke({ origin, accessCode, expectedRevision } =
     await preview().getByRole("checkbox").waitFor({ state: "visible" })
   }
   try {
+    checkpoint = "page"
     await page.addInitScript(() => localStorage.setItem("ondo-b.device.v1", JSON.stringify({ locale: "en", appearancePreference: "light", onboarding: "ONB-COMPLETE" })))
     await page.goto(`${base.origin}/?venueId=${VENUE_ID}&review=0`, { waitUntil: "domcontentloaded" })
-    await page.getByTestId("ondo-b-root").waitFor({ state: "visible" }); await clickPlaceCta()
-    const surface = preview(); await surface.locator("input[type=password]").waitFor({ state: "visible" })
+    checkpoint = "place"; await page.getByTestId("ondo-b-root").waitFor({ state: "visible" }); await clickPlaceCta()
+    checkpoint = "access"; const surface = preview(); await surface.locator("input[type=password]").waitFor({ state: "visible" })
     await surface.locator("input[type=password]").fill(accessCode); counts.access += 1
     const accessResponse = page.waitForResponse(item => item.url() === `${base.origin}/api/hackathon/v1/preview/access` && item.request().method() === "POST")
     await surface.getByRole("button", { name: /Continue|확인|確認/ }).click(); if (!(await accessResponse).ok()) safeFailure("access")
-    await surface.getByRole("checkbox").waitFor({ state: "visible" })
+    checkpoint = "config"; await surface.getByRole("checkbox").waitFor({ state: "visible" })
     if (!configObserved || revisionMismatch) safeFailure("config")
     await beginConsent()
-    await surface.getByRole("button", { name: /Use QR|QR로 확인|QRで確認/ }).click()
+    checkpoint = "qr-start"; await surface.getByRole("button", { name: /Use QR|QR로 확인|QRで確認/ }).click()
     startPermit = true
     const qrStartResponse = page.waitForResponse(item => item.url().endsWith(`/operations/${operationId}/identity/start`) && item.request().method() === "POST")
     await surface.getByRole("button", { name: /Start Mobile ID check|모바일 신분증 확인 시작|Mobile ID確認を開始/ }).click(); await assertStart(await qrStartResponse, "qr")
-    const qrImage = surface.locator("img[alt*='QR'], img[alt*='Mobile ID']"); await qrImage.waitFor({ state: "visible" }); await expect.poll(() => qrImage.evaluate(image => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0), { timeout: 5_000 }).toBe(true); counts.qr += 1
-    await page.reload(); await preview().waitFor({ state: "detached" })
+    checkpoint = "qr-render"; const qrImage = surface.locator("img[alt*='QR'], img[alt*='Mobile ID']"); await qrImage.waitFor({ state: "visible" }); await expect.poll(() => qrImage.evaluate(image => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0), { timeout: 5_000 }).toBe(true); counts.qr += 1
+    checkpoint = "reload-resume"; await page.reload(); await preview().waitFor({ state: "detached" })
     await page.goto(`${base.origin}/?venueId=${VENUE_ID}&review=0`, { waitUntil: "domcontentloaded" }); await clickPlaceCta()
-    checkPermit = true; const checkResponse = page.waitForResponse(item => item.url().endsWith(`/operations/${operationId}/identity/complete`) && item.request().method() === "POST")
+    checkpoint = "pending"; checkPermit = true; const checkResponse = page.waitForResponse(item => item.url().endsWith(`/operations/${operationId}/identity/complete`) && item.request().method() === "POST")
     await preview().getByRole("button", { name: /Check result|결과 확인|結果を確認/ }).click(); const checked = await checkResponse; counts.checkResult += 1
     if (!checked.ok()) safeFailure("check-result")
     try { const body = await checked.json(); if (body?.identity?.personVerified === true || body?.phase !== "identity" || body?.status !== "pending" || body?.identity?.handoff?.kind !== "qr" || body?.error) safeFailure("pending-result") } catch { safeFailure("check-result") }
     await expect(preview()).toHaveAttribute("data-status", "identity")
     await expect(preview()).toContainText("The check is not complete yet.")
     await cancelCurrent()
-    await beginConsent(); await preview().getByRole("button", { name: /Use app|앱으로 확인|アプリで確認/ }).click(); startPermit = true; const appStartResponse = page.waitForResponse(item => item.url().endsWith(`/operations/${operationId}/identity/start`) && item.request().method() === "POST"); await preview().getByRole("button", { name: /Start Mobile ID check|모바일 신분증 확인 시작|Mobile ID確認を開始/ }).click(); if (!(await appStartResponse).ok()) safeFailure("app-start")
+    await beginConsent(); checkpoint = "app-start"; await preview().getByRole("button", { name: /Use app|앱으로 확인|アプリで確認/ }).click(); startPermit = true; const appStartResponse = page.waitForResponse(item => item.url().endsWith(`/operations/${operationId}/identity/start`) && item.request().method() === "POST"); await preview().getByRole("button", { name: /Start Mobile ID check|모바일 신분증 확인 시작|Mobile ID確認を開始/ }).click(); if (!(await appStartResponse).ok()) safeFailure("app-start")
     await assertStart(await appStartResponse, "app")
-    const links = preview().locator("a[href]"); await links.first().waitFor({ state: "visible" })
+    checkpoint = "app-links"; const links = preview().locator("a[href]"); await links.first().waitFor({ state: "visible" })
     const unsafeLinks = await links.evaluateAll(nodes => nodes.filter(node => { try { return ["javascript:", "data:", "file:", "vbscript:"].includes(new URL(node.getAttribute("href") ?? "").protocol) } catch { return true } }).length)
     if (unsafeLinks) safeFailure("app-link-safety"); counts.app += await links.count()
     await cancelCurrent()
-    await preview().getByRole("button", { name: /^(Close|닫기|閉じる)$/ }).click(); await expect(page.getByTestId("hackathon-entitlement-open")).toBeFocused(); counts.returnedFocus += 1
-    if (counts.identityBeforeConsent || counts.forbiddenRequests || counts.pageErrors || forbidden.length) safeFailure("network-guards")
+    checkpoint = "focus"; await preview().getByRole("button", { name: /^(Close|닫기|閉じる)$/ }).click(); await expect(page.getByTestId("hackathon-entitlement-open")).toBeFocused(); counts.returnedFocus += 1
+    checkpoint = "network-guards"; if (counts.identityBeforeConsent || counts.forbiddenRequests || counts.pageErrors || forbidden.length) safeFailure("network-guards")
     return { ...counts, operationObserved: Boolean(operationId), revisionChecked: Boolean(expectedRevision), canceled: true }
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("cx browser smoke failed at ")) throw error
-    safeFailure("interaction")
+    safeFailure(checkpoint)
   } finally {
     let cleanupUnconfirmed = false
     if (operationId && /^op_[A-Za-z0-9_-]{8,160}$/.test(operationId) && !canceled) {
