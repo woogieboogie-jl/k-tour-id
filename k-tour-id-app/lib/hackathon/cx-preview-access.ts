@@ -11,26 +11,48 @@ type Env = Record<string, string | undefined>
 const hash = (s: string) => createHash("sha256").update(s).digest()
 const equal = (a: string, b: string) => timingSafeEqual(hash(a), hash(b))
 const unavailable = () => new HkError("cx_preview_unavailable", "Identity preview is unavailable.", 503)
+const reportedPreflightFailures = new Set<string>()
 
-/** No network or storage: called before every protected route. */
-export function assertCxPreviewTarget(request: Request, env: Env = process.env, now = Date.now()) {
-  if (!isCxPreview() || isReadinessPreview() || env.HK_CX_PREVIEW_ENABLED !== "1") throw unavailable()
+/** Fixed check names only: never return environment values, URLs or secrets. */
+export function cxPreviewPreflightIssues(request: Request, env: Env, now = Date.now()) {
   const url = new URL(request.url)
   const expiry = Date.parse(env.HK_CX_PREVIEW_EXPIRES_AT ?? "")
-  if (!Number.isFinite(expiry) || expiry <= now || expiry > CX_PREVIEW_MAX_END) throw unavailable()
+  const checks: Record<string, boolean> = {
+    cx_build: isCxPreview(), writable_build: !isReadinessPreview(), runtime_enabled: env.HK_CX_PREVIEW_ENABLED === "1",
+    expiry: Number.isFinite(expiry) && expiry > now && expiry <= CX_PREVIEW_MAX_END,
+  }
   const remote = Object.keys(env).some(key => key === "VERCEL" || key.startsWith("VERCEL_"))
   if (remote) {
-    if (env.VERCEL !== "1" || env.VERCEL_ENV !== "preview" || env.VERCEL_REGION !== "icn1" ||
-      env.VERCEL_GIT_PROVIDER !== "github" || env.VERCEL_GIT_COMMIT_REF !== CX_PREVIEW_BRANCH ||
-      env.VERCEL_GIT_REPO_OWNER !== "woogieboogie-jl" || env.VERCEL_GIT_REPO_SLUG !== "k-tour-id" ||
-      !/^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? "") || url.protocol !== "https:") throw unavailable()
-  } else if (env.HK_CX_PREVIEW_LOCAL_TEST !== "1" || !["localhost", "127.0.0.1"].includes(url.hostname)) throw unavailable()
-  if (env.HK_MODE_CX !== "cx" || env.HK_ISOLATED_MOCK !== "0" || env.HK_API_ENABLED !== "1" ||
-    env.HK_CX_BASE_URL !== "https://cx.raonsecure.co.kr:18543" || env.HK_CX_PROVIDER !== "comdl" || env.HK_CX_ZKP_TYPE !== "AdultVerify" ||
-    !/^[a-f0-9]{64}$/.test(env.HK_CX_PREVIEW_ACCESS_SECRET ?? "") ||
-    !/^[A-Za-z0-9_-]{32,128}$/.test(env.HK_CX_PREVIEW_ACCESS_CODE ?? "")) throw unavailable()
-  try { previewRedisConfig(env) } catch { throw unavailable() }
-  return { expiry, secret: env.HK_CX_PREVIEW_ACCESS_SECRET!, code: env.HK_CX_PREVIEW_ACCESS_CODE!, origin: url.origin }
+    Object.assign(checks, {
+      vercel: env.VERCEL === "1", preview: env.VERCEL_ENV === "preview", seoul: env.VERCEL_REGION === "icn1",
+      git_provider: env.VERCEL_GIT_PROVIDER === "github", git_branch: env.VERCEL_GIT_COMMIT_REF === CX_PREVIEW_BRANCH,
+      git_owner: env.VERCEL_GIT_REPO_OWNER === "woogieboogie-jl", git_repo: env.VERCEL_GIT_REPO_SLUG === "k-tour-id",
+      git_revision: /^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? ""), https: url.protocol === "https:",
+    })
+  } else Object.assign(checks, { local_opt_in: env.HK_CX_PREVIEW_LOCAL_TEST === "1", local_host: ["localhost", "127.0.0.1"].includes(url.hostname) })
+  Object.assign(checks, {
+    cx_mode: env.HK_MODE_CX === "cx", non_mock: env.HK_ISOLATED_MOCK === "0", api_enabled: env.HK_API_ENABLED === "1",
+    cx_origin: env.HK_CX_BASE_URL === "https://cx.raonsecure.co.kr:18543", cx_provider: env.HK_CX_PROVIDER === "comdl", cx_zkp: env.HK_CX_ZKP_TYPE === "AdultVerify",
+    access_signing_key: /^[a-f0-9]{64}$/.test(env.HK_CX_PREVIEW_ACCESS_SECRET ?? ""), access_code: /^[A-Za-z0-9_-]{32,128}$/.test(env.HK_CX_PREVIEW_ACCESS_CODE ?? ""),
+  })
+  try { previewRedisConfig(env); checks.redis_configuration = true } catch { checks.redis_configuration = false }
+  return Object.keys(checks).filter(key => !checks[key])
+}
+
+/** No network or storage. Failed check names are logged once per warm instance. */
+export function assertCxPreviewTarget(request: Request, env: Env = process.env, now = Date.now()) {
+  const issues = cxPreviewPreflightIssues(request, env, now)
+  if (issues.length) {
+    if (env === process.env && env.VERCEL === "1") {
+      const unreported = issues.filter(issue => !reportedPreflightFailures.has(issue))
+      if (unreported.length) {
+        unreported.forEach(issue => reportedPreflightFailures.add(issue))
+        console.warn("[cx-preview-preflight]", JSON.stringify({ failedChecks: unreported }))
+      }
+    }
+    throw unavailable()
+  }
+  return { expiry: Date.parse(env.HK_CX_PREVIEW_EXPIRES_AT!), secret: env.HK_CX_PREVIEW_ACCESS_SECRET!, code: env.HK_CX_PREVIEW_ACCESS_CODE!, origin: new URL(request.url).origin }
 }
 
 export function assertCxPreviewOrigin(request: Request) {

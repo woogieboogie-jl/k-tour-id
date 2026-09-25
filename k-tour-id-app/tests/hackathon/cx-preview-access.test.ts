@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
-import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewBody, cxPreviewRouteAllowed, CX_PREVIEW_COOKIE, grantCxPreviewAccess, requireCxPreviewAccess } from "../../lib/hackathon/cx-preview-access"
+import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewPreflightIssues, cxPreviewBody, cxPreviewRouteAllowed, CX_PREVIEW_COOKIE, grantCxPreviewAccess, requireCxPreviewAccess } from "../../lib/hackathon/cx-preview-access"
 import { hkConfig, hkPublicConfig, assertExternalServicesEnabled } from "../../lib/hackathon/config"
 import { HkError } from "../../lib/hackathon/util"
 
@@ -22,6 +22,14 @@ const env = {
 }
 const req = (path = "/config", init: RequestInit = {}) => new Request(origin + "/api/hackathon/v1" + path, init)
 const isCode = (code: string) => (error: unknown) => error instanceof HkError && error.code === code
+
+test("preflight diagnostics expose only fixed failed check names and keep target fail-closed", () => {
+  assert.deepEqual(cxPreviewPreflightIssues(req(), env, now), [])
+  const broken = { ...env, VERCEL_GIT_PROVIDER: "private-sentinel", HK_CX_PREVIEW_ACCESS_SECRET: "private-sentinel", KV_REST_API_TOKEN: "" }
+  assert.deepEqual(cxPreviewPreflightIssues(req(), broken, now), ["git_provider", "access_signing_key", "redis_configuration"])
+  assert.equal(JSON.stringify(cxPreviewPreflightIssues(req(), broken, now)).includes("private-sentinel"), false)
+  assert.throws(() => assertCxPreviewTarget(req(), broken, now), isCode("cx_preview_unavailable"))
+})
 
 test("CX profile requires exact deploy, runtime opt-in, fixed provider and bounded expiry", () => {
   assert.doesNotThrow(() => assertCxPreviewTarget(req(), env, now))
