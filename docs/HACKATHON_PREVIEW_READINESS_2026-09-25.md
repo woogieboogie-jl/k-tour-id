@@ -17,7 +17,7 @@
 
 - 빌드에 provider/체인/AI/Redis 비밀키를 전달하지 않는다.
 - 빌드 시 고정한 `NEXT_PUBLIC_HK_PREVIEW_READ_ONLY=1`로 서버·브라우저를 읽기 전용으로 고정한다.
-- API에서는 정확한 `GET/HEAD /api/hackathon/v1/config`와 정적 장소 조회만 허용한다.
+- API에서는 정확한 `GET/HEAD /api/hackathon/v1/config`와 정적 장소 조회를 허용한다. 후속 CX 통신 점검은 아래의 한시적 public catalogue GET 예외만 사용한다.
 - `/me`, 장소별 entitlement, zkLogin params도 세션/외부 조회 가능성이 있으므로 차단한다.
 - 모든 hackathon POST와 기존 `/api/ask`, `/api/chat`을 provider·세션·본문 처리 전에 503으로 차단한다.
 - 실제 여정 컴포넌트 대신 준비상태 안내를 표시한다. API 연결 확인 뒤 같은 장소로 돌아간다.
@@ -55,7 +55,7 @@
 
 ## 실제 CX를 이 UI에서 검증하기 위한 다음 단계
 
-1. 현재 앱 소유 프로젝트 `jaewook-9643s-projects / ondo`에 환경설정 접근 확보.
+1. **완료:** 현재 앱 소유 프로젝트 `jaewook-9643s-projects / ondo`에 환경설정 접근 확보.
 2. 접근 보호된 실연동 Preview에 전용 durable Redis·서명 seed·CX 설정을 서버 변수로 구성. 기존 환경변수 전체 복제 금지.
 3. 해당 서버에서 CX provider 통신 및 지원 provider를 확인. `icn1`은 실행 지역 지정일 뿐 국내 IP 허용을 보장하지 않는다.
 4. readonly 프로필을 의도적으로 해제한 새 빌드에서 CX만 활성화. OpenDID native 및 체인 검증 상태는 별도로 표시.
@@ -63,9 +63,18 @@
 6. 서버가 verified=true, 완료 상태, 요청 txId/cxId 일치, 안정적인 CI를 확인하고 원래 장소로 복귀.
 7. 취소·만료·거절·새로고침·중복 완료를 검증. 신분증/CI/JWT/비밀키 원문은 보고서·로그·체인에 기록하지 않는다.
 
-GitHub 자동 배포 권한은 확인됐다. 현재 CLI 계정은 앱 소유 Vercel scope에 접근하지 못한다.
-Vercel 연결 또는 해당 계정의 프로젝트 접근이 필요하며, 비밀키를 채팅으로 보낼 필요는 없다.
-이 설정 접근 전에는 “CX 연결 완료”로 보고하지 않는다.
+9/25 사용자 재연결 뒤 CLI `jaewook-9643`으로 소유 프로젝트 접근을 확인했다. Preview/Production 환경변수 **목록만** 확인했으며 양쪽 모두 `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_ONDO_B_ORIGIN`만 등록돼 있다. 이 브랜치 전용 변수는 없다. 비밀 값은 출력하거나 pull하지 않았다. Harvey의 별도 `ktourid.vercel.app` 프로젝트는 이 scope에서 조회되지 않았다.
+
+새 저장소 생성/비용 발생 또는 Harvey 환경 인계는 별도 선택이 필요하다. Vercel 접근 해결을 실제 CX 인증 완료로 보고하지 않는다.
+
+## 후속: 서울 리전 CX 통신 점검
+
+- 로컬에서 고정 공개 `provider/list`를 무인증 GET해 HTTP 200을 확인했다. `comdl`·`coidentitydocument` prod는 활성, `comrc`·`coresidence`의 관측된 dev/prod는 비활성이다. 실제 holder/claims 지원 여부를 뜻하지 않는다.
+- `GET /api/hackathon/v1/readiness/cx`만 이 readonly Preview에 한시적으로 추가한다. `2026-09-25 15:00 KST`부터 자동 404이며, Production/readonly 미설정에서도 404다.
+- 고정 upstream URL, 무자격증명, redirect 차단, 15초 제한, 256KB 제한, 허용한 provider 필드만 반환한다. query/body/HEAD/POST를 허용하지 않는다. 인스턴스 내 60초 캐시·동시 요청 합치기를 적용한다(글로벌 rate limit은 아님).
+- `/trans`, QR/app 실행, `/result`, token claims, CI 수집, 실제 인증·AI·체인 실행은 하지 않는다. 원격 결과에도 `authenticated:false`, `identityVerified:false`를 명시한다.
+- 작성자와 다른 검토자가 고정 URL·경계·만료·필드 제한을 검사했다. 응답 대기 중 만료 및 GET body 선언의 반례를 보완한 뒤 독립 fixture 7개가 통과했다.
+- 실제 icn1 관측 결과는 [CX 연결 점검 기록](./CX_CONNECTIVITY_2026-09-25.md)에 기록한다.
 
 ## 재현
 

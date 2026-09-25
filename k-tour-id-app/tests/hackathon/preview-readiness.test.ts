@@ -65,7 +65,7 @@ test("preview readiness is an exact opt-in and publishes a non-cacheable isolate
   assert.equal(body.capabilities?.chainExecutionEnabled, false)
 })
 
-test("read-only hackathon GET allows only the exact config path and never reads session state", async () => {
+test("read-only hackathon GET rejects session reads and malformed config paths", async () => {
   const blocked = await route.GET(new Request("http://localhost/api/hackathon/v1/me", { headers: { cookie: "session=sentinel" } }), ctx(["me"]))
   assert.equal(blocked.status, 503)
   assert.equal((await json(blocked)).error?.code, "preview_read_only")
@@ -73,6 +73,10 @@ test("read-only hackathon GET allows only the exact config path and never reads 
   const nested = await route.GET(new Request("http://localhost/api/hackathon/v1/config/extra"), ctx(["config", "extra"]))
   assert.equal(nested.status, 503)
   assert.equal((await json(nested)).error?.code, "preview_read_only")
+
+  const extra = await route.GET(new Request("http://localhost/api/hackathon/v1/readiness/cx/extra"), ctx(["readiness", "cx", "extra"]))
+  assert.equal(extra.status, 503)
+  assert.equal((await json(extra)).error?.code, "preview_read_only")
 })
 
 test("read-only hackathon POST rejects before same-origin, cookies, body parsing, or provider code", async () => {
@@ -84,6 +88,10 @@ test("read-only hackathon POST rejects before same-origin, cookies, body parsing
   const response = await route.POST(request, ctx(["sessions"]))
   assert.equal(response.status, 503)
   assert.equal((await json(response)).error?.code, "preview_read_only")
+
+  const diagnosticPost = await route.POST(new Request("http://localhost/api/hackathon/v1/readiness/cx", { method: "POST" }), ctx(["readiness", "cx"]))
+  assert.equal(diagnosticPost.status, 503)
+  assert.equal((await json(diagnosticPost)).error?.code, "preview_read_only")
 })
 
 test("ask and chat reject preview POSTs before reading a live-looking body", async () => {

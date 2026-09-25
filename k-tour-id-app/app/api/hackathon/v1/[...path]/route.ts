@@ -10,6 +10,7 @@ import { currentEpoch, suiKeys } from "@/lib/hackathon/adapters/sui"
 import { proveZkLogin, zkLoginConfigured } from "@/lib/hackathon/adapters/zklogin"
 import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
 import { isReadinessPreview, previewReadOnlyResponse } from "@/lib/hackathon/preview-readiness"
+import { cxReadinessResponse } from "@/lib/hackathon/cx-readiness"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -41,6 +42,9 @@ export async function GET(req: Request, ctx: Ctx) {
   // do not populate Vercel's server runtime environment.
   if (isReadinessPreview()) {
     const { path } = await ctx.params
+    // One temporary public-catalogue GET from the actual Preview function.
+    // Never creates a provider transaction or accesses identity/session data.
+    if (path.length === 2 && path[0] === "readiness" && path[1] === "cx") return cxReadinessResponse(req)
     return path.length === 1 && path[0] === "config"
       ? json(hkPublicConfig())
       : previewReadOnlyResponse()
