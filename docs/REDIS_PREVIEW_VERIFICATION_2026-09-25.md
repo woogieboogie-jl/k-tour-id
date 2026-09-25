@@ -23,11 +23,24 @@
 
 ## 서울 Preview 런타임 검사
 
-진행 중. 실제 배포 ID/앱 SHA/검사 결과를 확인한 뒤 아래에 기록한다.
+**2026-09-25 18:25:49 KST, 실제 서울 Preview → Redis 검증 성공.**
+
+| 항목 | 관측값 |
+| --- | --- |
+| 앱 SHA | `6d3dbebd1e065f58fdc460ae624ea078aa01a764` |
+| Vercel / GitHub 배포 | `dpl_6i4eNAxfwA5gLDrsj3x399aUogan` / `6657671787` |
+| 실행 지역 / config | `icn1`, `previewReadOnly=true`, `isolatedMock=true`, chain disabled |
+| 실제 Redis 응답 | HTTP 200, **11 checks, ok=true, cleanup=true, failures=0** |
+| 진단 접근 경계 | 인증 없음/틀림 401, GET/추가경로 503, query/body/cookie 400 — 7개 통과 |
+| 원격 앱 회귀 | API 22/22, 모바일 Chromium 3/3 PASS |
+
+배포 전 타입 검사·full-stack production build, Harvey 단위 99/99, 배포 보호 계약 3/3, 로컬 HTTP 22/22 및 모바일 Chromium 3/3도 통과했다. 작성자와 별도의 검토자가 실행 게이트·만료·쓰기 불확실성·빈 POST stream 경계를 검수했고 blocker 없음으로 승인했다.
+
+원격 브라우저 캡처: `k-tour-id-app/artifacts/qa/redis-preview-remote/`. 모바일 Chromium 테스트이며 실기기 iOS 인증 시험은 아니다.
 
 임시 예외는 정확한 `POST /api/hackathon/v1/readiness/redis`뿐이다. 별도 임시 서버 토큰, frozen read-only, 정확한 Vercel Preview/저장소/브랜치/SHA/서울 지역, 고정 만료를 모두 요구한다. 요청 body/query/cookie는 거부한다. 앱 세션·서비스·store.ts·CX·서명·체인은 호출하지 않는다. 작업 25초 + 정리 8초의 한도와 테스트 키 TTL을 둔다.
 
-진단 토큰은 임시 branch-only `HK_REDIS_READINESS_TOKEN`이며 Redis 자격증명을 재사용하지 않는다. 검증 후 변수와 공개된 진단 경로를 정리한다.
+진단 토큰은 임시 branch-only `HK_REDIS_READINESS_TOKEN`이며 Redis 자격증명을 재사용하지 않는다. 검증 후 라우터 예외를 제거하고 helper를 만료 처리했다. 임시 변수도 ID를 확인해 삭제하고 목록에서 부재를 재확인했다. 최종 소스에서 단위 99/99·계약 3/3·타입 검사 재통과. 최종 닫힌 Preview 배포 및 위 임시 배포 제거 결과는 후속 정리 기록으로 남긴다.
 
 ## 완료 범위와 다음 단계
 

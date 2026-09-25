@@ -94,7 +94,7 @@ test("read-only hackathon POST rejects before same-origin, cookies, body parsing
   assert.equal((await json(diagnosticPost)).error?.code, "preview_read_only")
 
   const redis = await route.POST(new Request("http://localhost/api/hackathon/v1/readiness/redis", { method: "POST" }), ctx(["readiness", "redis"]))
-  assert.equal(redis.status, 404, "operator diagnostic must be disabled outside its exact remote profile")
+  assert.equal(redis.status, 503, "completed Redis diagnostic must no longer be routed")
   for (const path of [["readiness", "redis", "extra"], ["operations", "sentinel", "reconcile"], ["operations", "sentinel", "credential", "issue"]]) {
     const denied = await route.POST(new Request("http://localhost/api/hackathon/v1/" + path.join("/"), { method: "POST" }), ctx(path))
     assert.equal(denied.status, 503)

@@ -2,8 +2,9 @@ import { createHash, timingSafeEqual } from "node:crypto"
 import { redisProbeCredentials, runRedisProbeCore } from "../../scripts/hackathon-redis-probe.mjs"
 import { isReadinessPreview } from "./preview-readiness"
 
-// Temporary, authenticated infrastructure check. This never enables app APIs.
-export const REDIS_READINESS_END = Date.parse("2026-09-25T10:30:00Z")
+// Retired after the successful 09:25:49Z smoke; no API route imports this module.
+// Kept for regression fixtures only. This never enables app APIs.
+export const REDIS_READINESS_END = Date.parse("2026-09-25T09:26:00Z")
 const BRANCH = "feat/hackathon-readiness-preview-20260925"
 const PATH = "/api/hackathon/v1/readiness/redis"
 const CACHE_MS = 30_000
