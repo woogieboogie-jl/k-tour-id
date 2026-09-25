@@ -1,6 +1,6 @@
 # UI + API 통합 검증 Preview — 2026-09-25
 
-> 9/25 후속: 검증 브랜치 전용 Redis 변수를 연결했고 인증된 임시 infrastructure smoke를 준비했다. [최신 Redis 검증 기록](./REDIS_PREVIEW_VERIFICATION_2026-09-25.md)에 범위/결과/진단 정리를 별도로 기록한다. 앱 본인인증·서명·체인 차단은 그대로이며 아래 무변경 POST 원칙은 임시 operator 진단을 제외한 앱 경로에 적용된다.
+> 9/25 후속 완료: 검증 브랜치 전용 Redis 설정과 서울 서버 실제 primitive smoke 11개를 통과했다. 임시 operator 진단은 경로·토큰·배포까지 제거했고 모든 앱 POST 차단을 복원했다. [최신 Redis 검증 기록](./REDIS_PREVIEW_VERIFICATION_2026-09-25.md)에 범위/결과/종료 증거를 기록한다. 앱 본인인증·서명·체인 차단은 그대로다.
 
 ## 목적과 한계
 

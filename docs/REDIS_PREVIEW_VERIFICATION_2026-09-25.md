@@ -1,5 +1,7 @@
 # 검증 브랜치 Redis 연결 — 2026-09-25
 
+**최종 결론: 브랜치 전용 설정, 실제 서울 서버 Redis 명령 검증, 임시 진단 종료까지 완료. 앱의 실제 인증 원장 연동/CX 본인인증은 별도 후속 작업이다.**
+
 ## 범위
 
 사용자가 입력한 Redis 변수를 검증 브랜치로 한정하고, 전용 테스트 키로 실제 연결을 검증한다. 공개 앱 UI, Harvey의 기존 저장소/이력, 인증·발급·체인 실행은 변경하지 않는다. 이 작업을 CX 본인인증 완료로 보고하지 않는다.
@@ -40,7 +42,17 @@
 
 임시 예외는 정확한 `POST /api/hackathon/v1/readiness/redis`뿐이다. 별도 임시 서버 토큰, frozen read-only, 정확한 Vercel Preview/저장소/브랜치/SHA/서울 지역, 고정 만료를 모두 요구한다. 요청 body/query/cookie는 거부한다. 앱 세션·서비스·store.ts·CX·서명·체인은 호출하지 않는다. 작업 25초 + 정리 8초의 한도와 테스트 키 TTL을 둔다.
 
-진단 토큰은 임시 branch-only `HK_REDIS_READINESS_TOKEN`이며 Redis 자격증명을 재사용하지 않는다. 검증 후 라우터 예외를 제거하고 helper를 만료 처리했다. 임시 변수도 ID를 확인해 삭제하고 목록에서 부재를 재확인했다. 최종 소스에서 단위 99/99·계약 3/3·타입 검사 재통과. 최종 닫힌 Preview 배포 및 위 임시 배포 제거 결과는 후속 정리 기록으로 남긴다.
+진단 토큰은 임시 branch-only `HK_REDIS_READINESS_TOKEN`이며 Redis 자격증명을 재사용하지 않는다. 검증 후 라우터 예외를 제거하고 helper를 만료 처리했다. 임시 변수도 ID를 확인해 삭제하고 목록에서 부재를 재확인했다. 최종 소스에서 단위 **99/99**, 전체 계약 **963/963**, 타입 검사 재통과.
+
+### 진단 종료 확인 — 18:31 KST
+
+- 최종 앱 코드 SHA: `215cd6f403c524abd1d7c35223d39addc3355ef6`.
+- [진단이 닫힌 검증 Preview](https://ondo-3ln9w8b3e-jaewook-9643s-projects.vercel.app/hackathon): Vercel `dpl_3cBRw9VbNcARQaxSkpbVby2v2Jhq`, GitHub `6657756240`, READY/success, `icn1`.
+- Redis 진단 GET/POST는 모두 503 `preview_read_only`; 이전 CX 공개 진단은 404(만료). 일반 앱 POST는 세션/서비스 전에 즉시 차단된다.
+- 해당 최종 앱에서 원격 HTTP 22/22, 모바일 Chromium 3/3 재통과. 캡처는 `artifacts/qa/redis-preview-closed-remote/`.
+- 임시 진단 배포 `dpl_6i4eNAxfwA5gLDrsj3x399aUogan`만 대상 ID/Preview/브랜치/SHA를 검증한 뒤 삭제했다. 배포 목록에서 부재 및 원래 URL HTTP 404를 확인했다. 기존 Production 및 다른 Preview는 삭제하지 않았다. 삭제한 실행 인스턴스는 복원하지 않으며 소스/테스트는 Git의 `6d3dbebd`에 남아 있다.
+- Production은 사용자 재배포 `dpl_HHDmk5SoQPmdJbonqjE2w7pLwJNj` / main `58d284b9` 그대로다. 공개 `/` HTTP 200, `/api/hackathon/v1/config` HTTP 404 재확인.
+- 이 결과 기록을 담는 후속 문서 커밋과 실제 검증한 앱 코드 SHA를 구분한다. 문서 업데이트는 앱 코드를 바꾸지 않는다.
 
 ## 완료 범위와 다음 단계
 
