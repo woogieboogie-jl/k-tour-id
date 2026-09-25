@@ -4,6 +4,7 @@
 // Uses Google Gemini (REST, no dependency). Falls back client-side if no key.
 
 import { geminiGenerate } from "@/lib/gemini"
+import { isReadinessPreview, previewReadOnlyResponse } from "@/lib/hackathon/preview-readiness"
 
 export const runtime = "nodejs"
 
@@ -94,6 +95,7 @@ function detectLang(s: string): string {
 }
 
 export async function POST(req: Request) {
+  if (isReadinessPreview()) return previewReadOnlyResponse()
   const gemini = process.env.GEMINI_API_KEY
   if (!gemini) return Response.json({ error: "no-key" }, { status: 503 })
 

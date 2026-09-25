@@ -2,6 +2,7 @@
 // Nothing here is a vendor spec; adapters translate to each provider's real API.
 // Server-only: never import from client components.
 import { HkError } from "./util"
+import { isReadinessPreview } from "./preview-readiness"
 
 export type CxMode = "mock" | "cx"
 export type OpenDidMode = "mock" | "opendid"
@@ -30,7 +31,7 @@ function env(name: string, fallback = ""): string {
 }
 
 export function hkConfig() {
-  const isolatedMock = env("HK_ISOLATED_MOCK") === "1"
+  const isolatedMock = isReadinessPreview() || env("HK_ISOLATED_MOCK") === "1"
   const cxMode = (!isolatedMock && env("HK_MODE_CX", "mock") === "cx" ? "cx" : "mock") as CxMode
   const openDidMode = (!isolatedMock && env("HK_MODE_OPENDID", "mock") === "opendid" ? "opendid" : "mock") as OpenDidMode
   const aiMode = (!isolatedMock && env("HK_AI_MODE", env("GEMINI_API_KEY") ? "gemini" : "rule") === "gemini" && env("GEMINI_API_KEY") ? "gemini" : "rule") as AiMode
@@ -113,6 +114,12 @@ export function assertExternalServicesEnabled(service: string) {
 export function hkPublicConfig() {
   const c = hkConfig()
   return {
+    previewReadOnly: isReadinessPreview(),
+    deployment: isReadinessPreview() ? {
+      profile: "readiness-preview",
+      revision: env("VERCEL_GIT_COMMIT_SHA", "local"),
+      region: env("VERCEL_REGION", "local"),
+    } : undefined,
     isolatedMock: c.isolatedMock,
     campaign: c.campaign,
     modes: {

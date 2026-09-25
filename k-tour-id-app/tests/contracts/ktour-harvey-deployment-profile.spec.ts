@@ -19,7 +19,7 @@ const HARVEY_PRESERVED_SHA256: Record<string, string> = {
 }
 
 test("DEPLOYMENT-PROFILE-001 keeps map-only and Harvey full-stack builds separate", () => {
-  const mapOnly = json("vercel.json")
+  const mapOnly = json("vercel.public-ui.json")
   const harvey = json("vercel.hackathon.json")
   const scripts = json("package.json").scripts as Record<string, string>
 
@@ -62,7 +62,7 @@ test("DEPLOYMENT-PROFILE-003 preserves one source revision and the original Sui/
 })
 
 test("DEPLOYMENT-PROFILE-004 does not silently promote the public static profile to provider or chain runtime", () => {
-  const mapOnly = read("vercel.json")
+  const mapOnly = read("vercel.public-ui.json")
   expect(mapOnly).not.toMatch(/HK_API_ENABLED|NEXT_PUBLIC_HK_ENABLED|HK_SUI_|HK_OMNIONE_|HK_CX_/)
   expect(mapOnly).not.toContain("vercel.hackathon.json")
 })

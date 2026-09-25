@@ -9,6 +9,7 @@ import * as svc from "@/lib/hackathon/service"
 import { currentEpoch, suiKeys } from "@/lib/hackathon/adapters/sui"
 import { proveZkLogin, zkLoginConfigured } from "@/lib/hackathon/adapters/zklogin"
 import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
+import { isReadinessPreview, previewReadOnlyResponse } from "@/lib/hackathon/preview-readiness"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -36,6 +37,14 @@ function venueCtx(venueId: string, loc: "ko" | "en" | "ja") {
 }
 
 export async function GET(req: Request, ctx: Ctx) {
+  // Before runtime flags, session access or service work. Build flags alone
+  // do not populate Vercel's server runtime environment.
+  if (isReadinessPreview()) {
+    const { path } = await ctx.params
+    return path.length === 1 && path[0] === "config"
+      ? json(hkPublicConfig())
+      : previewReadOnlyResponse()
+  }
   if (process.env.HK_API_ENABLED !== "1" || process.env.NEXT_PUBLIC_HK_ENABLED !== "1") return json({ error: { code: "not_found" } }, 404)
   const { path } = await ctx.params
   try {
@@ -65,6 +74,7 @@ export async function GET(req: Request, ctx: Ctx) {
 }
 
 export async function POST(req: Request, ctx: Ctx) {
+  if (isReadinessPreview()) return previewReadOnlyResponse()
   if (process.env.HK_API_ENABLED !== "1" || process.env.NEXT_PUBLIC_HK_ENABLED !== "1") return json({ error: { code: "not_found" } }, 404)
   const { path } = await ctx.params
   try {

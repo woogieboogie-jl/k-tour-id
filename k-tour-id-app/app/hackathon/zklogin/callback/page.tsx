@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react"
 import { readPendingHackathon } from "@/features/ondo/hackathon-b/hackathon-campaign"
 import { readSigner, writeSigner } from "@/features/ondo/hackathon-b/hackathon-client"
 import { readOAuthReturn } from "@/features/ondo/hackathon-b/hackathon-oauth-return"
+import { isReadinessPreview } from "@/lib/hackathon/preview-readiness"
 import styles from "./return.module.css"
 
 const COPY = {
@@ -26,6 +27,8 @@ export default function ZkLoginCallbackPage() {
     const fragment = window.location.hash, query = window.location.search
     // Strip credentials even on cancelled, malformed or unrelated callbacks.
     window.history.replaceState(null, "", window.location.pathname)
+    // This preview must not accept or store even a well-formed OAuth return.
+    if (isReadinessPreview()) { setFailed(true); return }
     try {
       const pending = readPendingHackathon()
       if (pending) setLocale(pending.locale)

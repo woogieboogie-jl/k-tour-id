@@ -14,6 +14,7 @@
     "build:sites:ondo-b": "node scripts/ondo-b-standalone/build.mjs",
     "build:vercel:ondo-b": "pnpm prepare:sites:ondo-b && cd .ondo-b-standalone && ../node_modules/.bin/next build --webpack && cd .. && pnpm scan:vercel:ondo-b",
     "build:vercel:hackathon": "next build",
+    "build:vercel:readiness": "node scripts/hackathon-preview-build.mjs",
     "build:harvey:local": "node scripts/hackathon-local.mjs build",
     "start:harvey:local": "node scripts/hackathon-local.mjs start",
     "dev:harvey:local": "node scripts/hackathon-local.mjs dev",
