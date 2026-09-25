@@ -6,6 +6,14 @@ const HACKATHON_GET = /^\/api\/hackathon\/v1\/(config|places\/[^/]+\/demo-entitl
 const HACKATHON_POST = /^\/api\/hackathon\/v1\/(preview\/access|sessions|operations|operations\/[^/]+\/(identity\/start|identity\/complete|cancel))$/
 
 function safeFailure(step) { throw new Error(`cx browser smoke failed at ${step}`) }
+const REJECTED_CODES = new Set(["identity_failed", "identity_cancelled", "identity_expired"])
+
+export function classifyIdentityResult(body, operationId) {
+  if (!body || typeof body !== "object" || body.operationId !== operationId) throw new Error("cx browser result invalid")
+  if (body.phase === "identity" && body.status === "pending" && body.identity?.mode === "cx" && body.identity?.personVerified === false && body.identity?.handoff?.kind === "qr" && body.error == null) return "pending"
+  if (body.phase === "identity" && body.status === "pending" && body.identity === null && body.error?.retryable === true && REJECTED_CODES.has(body.error.code)) return "rejected"
+  throw new Error("cx browser result invalid")
+}
 
 /**
  * Real CX preview smoke. The caller supplies the access code in memory; this
@@ -21,7 +29,7 @@ export async function runBrowserSmoke({ origin, accessCode, expectedRevision } =
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({ viewport: { width: 375, height: 812 }, locale: "en-US", colorScheme: "light", serviceWorkers: "block" })
   const page = await context.newPage()
-  const counts = { access: 0, consent: 0, qr: 0, app: 0, checkResult: 0, cancel: 0, returnedFocus: 0, forbiddenRequests: 0, identityBeforeConsent: 0, pageErrors: 0 }
+  const counts = { access: 0, consent: 0, qr: 0, app: 0, checkResult: 0, pendingResult: 0, rejectedResult: 0, cancel: 0, returnedFocus: 0, forbiddenRequests: 0, identityBeforeConsent: 0, pageErrors: 0 }
   const forbidden = []
   let consentCommitted = false
   let startPermit = false
@@ -31,6 +39,7 @@ export async function runBrowserSmoke({ origin, accessCode, expectedRevision } =
   let canceled = false
   let revisionMismatch = false
   let configObserved = false
+  let observedResultOutcome = null
   let checkpoint = "page"
   const recordResponse = async response => {
     const url = new URL(response.url())
@@ -122,9 +131,11 @@ export async function runBrowserSmoke({ origin, accessCode, expectedRevision } =
     checkpoint = "pending"; checkPermit = true; const checkResponse = page.waitForResponse(item => item.url().endsWith(`/operations/${operationId}/identity/complete`) && item.request().method() === "POST")
     await preview().getByRole("button", { name: /Check result|결과 확인|結果を確認/ }).click(); const checked = await checkResponse; counts.checkResult += 1
     if (!checked.ok()) safeFailure("check-result")
-    try { const body = await checked.json(); if (body?.identity?.personVerified === true || body?.phase !== "identity" || body?.status !== "pending" || body?.identity?.handoff?.kind !== "qr" || body?.error) safeFailure("pending-result") } catch { safeFailure("check-result") }
+    let resultOutcome
+    try { const body = await checked.json(); resultOutcome = classifyIdentityResult(body, operationId); observedResultOutcome = resultOutcome === "pending" ? "pending" : body.error.code } catch { safeFailure("check-result") }
     await expect(preview()).toHaveAttribute("data-status", "identity")
-    await expect(preview()).toContainText("The check is not complete yet.")
+    if (resultOutcome === "pending") { counts.pendingResult += 1; await expect(preview()).toContainText("The check is not complete yet.") }
+    else { counts.rejectedResult += 1; await expect(preview().locator("img[alt*='QR'], img[alt*='Mobile ID']")).toHaveCount(0); await expect(preview().getByRole("button", { name: /Start Mobile ID check|모바일 신분증 확인 시작|Mobile ID確認を開始/ })).toBeVisible(); await expect(preview().locator("[data-tone='error']")).toBeVisible() }
     await cancelCurrent()
     await beginConsent(); checkpoint = "app-start"; await preview().getByRole("button", { name: /Use app|앱으로 확인|アプリで確認/ }).click(); startPermit = true; const appStartResponse = page.waitForResponse(item => item.url().endsWith(`/operations/${operationId}/identity/start`) && item.request().method() === "POST"); await preview().getByRole("button", { name: /Start Mobile ID check|모바일 신분증 확인 시작|Mobile ID確認を開始/ }).click(); if (!(await appStartResponse).ok()) safeFailure("app-start")
     await assertStart(await appStartResponse, "app")
@@ -134,7 +145,7 @@ export async function runBrowserSmoke({ origin, accessCode, expectedRevision } =
     await cancelCurrent()
     checkpoint = "focus"; await preview().getByRole("button", { name: /^(Close|닫기|閉じる)$/ }).click(); await expect(page.getByTestId("hackathon-entitlement-open")).toBeFocused(); counts.returnedFocus += 1
     checkpoint = "network-guards"; if (counts.identityBeforeConsent || counts.forbiddenRequests || counts.pageErrors || forbidden.length) safeFailure("network-guards")
-    return { ...counts, operationObserved: Boolean(operationId), revisionChecked: Boolean(expectedRevision), canceled: true }
+    return { ...counts, observedResultOutcome, operationObserved: Boolean(operationId), revisionChecked: Boolean(expectedRevision), canceled: true }
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("cx browser smoke failed at ")) throw error
     safeFailure(checkpoint)

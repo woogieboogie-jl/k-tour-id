@@ -1,5 +1,7 @@
 # CX 실연동 실행 체크리스트
 
+> **최신 상태 (9/26):** 실제 앱 Redis 6/6, 보호된 서울 Preview 배포, 실제 QR/app handoff·미인증 결과 처리·복원·취소·장소 복귀 검수가 완료됐다. 실제 holder 승인 성공은 아직 아니다. 아래 날짜별 기록의 과거 차단 상태보다 [최신 검수/접속/남은 조건](./CX_LIVE_PREVIEW_2026-09-26.md)을 우선한다.
+
 ## 이번 완료 기준
 
 기존 최신 UI + Harvey 인증 어댑터를 **접근 제한된 서울 Preview**에서 실제 Redis와 연결한다. 실인증을 흉내 내지 않는다. 자동 검증으로 가능한 작업을 끝내고, 실제 모바일 신분증 보유자의 승인과 그 결과 확인만 사람에게 요청한다.
@@ -14,10 +16,10 @@
 | CX-only 빌드·접근 보호·API allowlist | root + 독립 검토 | 비인증·다른 Origin·다른 경로·체인 호출 거부 | 구현/빌드/독립 리뷰/route 9개 완료 |
 | 인증 상태 경합/재시도 안전성 | 인증 담당 | 동시 시작·늦은 완료·취소/만료 후 완료·중복 완료 반례 | 구현/15개 반례 완료 |
 | 기존 장소 UI에 CX-only 흐름 연결 | UI 담당 | 명시적 동의, QR/app, 수동 결과 확인, 같은 장소 복귀 | 로컬 구현/독립 검토 완료 |
-| 실제 Preview 배포와 provider handoff | root | 정확한 SHA/region, 실제 trans/QR 생성, 민감값 미기록 | 전용 프로필·CX runtime 설정 완료, 실제 배포/handoff 대기 |
-| 모바일/오류/새로고침 회귀 | QA + 독립 검토 | 브라우저 증거 및 실패 상태, CI/토큰 비노출 | mocked API 7개 통과, 실제 provider/기기는 대기 |
+| 실제 Preview 배포와 provider handoff | root | 정확한 SHA/region, 실제 trans/QR 생성, 민감값 미기록 | bdc7b2af / icn1 실제 QR·app handoff 완료 |
+| 모바일/오류/새로고침 회귀 | QA + 독립 검토 | 브라우저 증거 및 실패 상태, CI/토큰 비노출 | 실제 Chromium 375×812 복원·미인증 결과 처리·취소·복귀 완료. native 실기기는 대기 |
 | 본인 신분증 앱 승인 | 실제 보유자 | verified/transaction correlation/CI 및 성인 결과 확인 | 사람의 승인 필요 |
-| 완료/미완료 문서 업데이트 | root | 재현 경로·최종 배포·검사 결과·남은 조건 | 로컬 검수 결과와 배포 차단 사유 반영 |
+| 완료/미완료 문서 업데이트 | root | 재현 경로·최종 배포·검사 결과·남은 조건 | 9/26 실제 검수와 사람/외부 시스템 의존성 반영 |
 
 ## 중요한 검수 경계
 
@@ -116,4 +118,4 @@
 
 ### 아직 주장하지 않는 것
 
-9/26 후속 실행으로 실제 앱 Redis canary 및 CX-only 환경변수 등록 확인은 완료했다. **새 Preview 배포, 실제 CX transaction/QR 생성, 신분증 앱 승인 및 최종 검증**은 아직 미완료다. 공개 Production과 Harvey 별도 환경은 변경하지 않는다.
+9/26 후속 실행으로 실제 앱 Redis canary, CX-only 환경변수 등록, 새 Preview 배포, 실제 CX QR/app handoff 및 미인증 결과 처리·취소 검수는 완료했다. **신분증 앱 승인 및 verified 최종 검증, native 왕복, 새 Sui/OmniOne 연계 실행**은 아직 미완료다. 실제 결과 조회의 `identity_failed`를 인증 성공으로 세지 않는다. 공개 Production과 Harvey 별도 환경은 변경하지 않았다. [최신 상세 검수](./CX_LIVE_PREVIEW_2026-09-26.md).

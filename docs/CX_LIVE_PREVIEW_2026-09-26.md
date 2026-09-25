@@ -1,5 +1,21 @@
 # CX 실제 Preview 검증 — 2026-09-26
 
+## 최신 결론
+
+**실제 서울 Preview에서 CX QR/app handoff와 미인증 결과 처리·복원·취소·장소 복귀를 확인했다. 본인인증 성공은 아직 확인하지 않았다.** 공개 Production, megan, Harvey 별도 배포는 유지했다.
+
+- 검수 링크: [CX-only Preview](https://ondo-58rpahn56-jaewook-9643s-projects.vercel.app/?venueId=mois-0021cd596bc5b2a922ad&review=0).
+- 검수한 앱 SHA: `bdc7b2afae65bff16667f7ea3ac53c299795e487`. 이후 검수 스크립트/문서 수정은 이 앱의 runtime 변경이 아니다.
+- 장소 상세의 인증 CTA → Preview access → 동의 → QR 또는 앱 선택 → 시작. **신분증 앱에서 실제 승인을 마친 다음에만 결과 확인**을 누른다.
+- 접근 코드는 `ondo` 프로젝트의 정확한 Preview 브랜치 변수 `HK_CX_PREVIEW_ACCESS_CODE`에 저장돼 있다. 채팅/Git/로컬 env 파일에 복사하지 않았다. immutable URL을 사용해야 하며 다른 배포 URL의 접근 쿠키는 재사용할 수 없다.
+- 환경 만료: **2026-09-30 23:59:59 KST**. 실제 승인·기기 왕복 검수는 해당 기간 내 별도 수행해야 한다.
+
+### 남은 사람/외부 시스템 의존성
+
+1. **실제 Mobile ID 보유자:** QR 또는 앱 링크로 본인 기기에서 동의·승인 후 결과 확인. 서버 `verified`, 거래 일치, CI 기반 동일인 결합 및 성인 결과까지 확인해야 CX 인증 완료다. 미인증 `identity_failed`의 정확한 원인도 이 단계의 실제 응답/공급자 기준으로 확인한다.
+2. **체인용 승인된 별도 환경:** 현재 CX-only의 체인 차단을 그대로 유지한다. OmniOne 인증된 RPC 접근, recorder 설정과 Sui issuer/agent/sponsor의 승인된 서버 설정·권한/gas 확인 후 신규 실제 연계 E2E가 필요하다. 비밀키를 채팅으로 보내는 방식은 사용하지 않는다. Sui 현재 객체와 OmniOne 401 관측은 [체인 읽기 검증](./CHAIN_READONLY_2026-09-26.md) 참조.
+3. **OpenDID native:** 기존 합의대로 후속이며 현재 CX/체인 완료로 대체하지 않는다.
+
 ## 완료한 기반 작업
 
 - 전용 jaewook CLI 프로필·프로젝트·작업 폴더 경계 검증. megan 및 공개 Production은 변경하지 않았다.
@@ -47,6 +63,26 @@
 - 외부 origin은 서버의 고정 배포 환경값으로만 구성한다. 이 헤더 검사는 접근 인증이 아니며 기존 접근코드·서명 쿠키·정확한 POST Origin·Fetch-Site·지역/Git/만료 가드가 여전히 필요하다. 프로젝트 ID는 배포 wrapper의 metadata 검사로 확인한다.
 - 내부 URL 호스트 불일치를 실패로 세던 진단도 제거했다. 정상 프록시 입력에서 preflight `[]`, 내부 URL의 실제 router config 200, 필수 헤더 하나라도 없으면 storage 이전 503, 다른 Origin은 403, 다른 배포의 접근 쿠키 재사용은 401을 검사한다.
 - `x-vercel-deployment-url`의 새 필수 조건이나 전역 Next `trustHostHeader` 설정은 도입하지 않았다.
+
+## 실제 요청 검증 — bdc7b2af
+
+- 소스 `bdc7b2afae65bff16667f7ea3ac53c299795e487`, 배포 `dpl_FpNR7um6pjzxpzY55cEd9yh8g7z1`.
+- 검증 URL: `https://ondo-58rpahn56-jaewook-9643s-projects.vercel.app`. 정확한 project/Preview/branch/SHA와 `icn1`을 wrapper에서 확인했다.
+- 로컬 hackathon **153/153**, CX-only build/TypeScript PASS. 설계 2명·구현 별도 리뷰 GO.
+- 실제 unauthenticated 경계 **6/6 PASS**: config/session 401, foreign Origin 403, 금지 chain 경로 403, ask/chat 503. 모두 새 cookie 없음.
+- 실제 Chromium 375×812: 접근코드 → 실제 CX config → Redis session → 동의/작업 생성 → **실제 QR handoff 생성·이미지 decode 성공** → 새로고침 → 같은 장소에서 상태 복원까지 도달했다. 캡처/QR decode payload/원본 응답 기록 없음.
+- 실제 결과 조회는 HTTP 200이었으나 검수 스크립트의 **pending-only 상태 가정**과 달라 전체 run은 실패로 기록했다. 이 최초 run의 응답 본문은 저장하지 않았으므로 세부 provider 결과를 추정해서 확정하지 않는다. 실패 후 자기 작업 취소의 ID/status/phase/identity 제거 계약을 확인했고 로그에서도 cancel 200이었다.
+- 이번 최초 run에서는 app handoff 단계까지 진행하지 않았다. QR 성공을 앱 연결 성공 또는 본인인증 완료로 확대하지 않는다.
+
+### 후속 실제 브라우저 검수 완료
+
+- pending-only 가정을 실제 서비스 계약과 맞췄다. 정확한 작업 ID의 CX 미검증 QR 대기, 또는 identity 제거 + 정확한 `identity_failed`/`identity_cancelled`/`identity_expired` + retryable 응답만 분리해 허용한다. mock·verified·다른 phase·알 수 없는 오류는 거절한다. 앱/adapter의 성공 조건은 바꾸지 않았다.
+- 분류기 반례, TypeScript, 독립 리뷰 GO 이후 같은 immutable 앱 배포에서 새 세션으로 재검수했다. 최종 로컬 hackathon **154/154 PASS**, 기존 앱 계약 **964/964 PASS**.
+- 실제 집계: access **1**, 명시적 동의 **2**, QR 생성/decode **1**, 앱 handoff 시작 **1** 및 링크 표시 **2**, 결과 조회 **1**, 대기 응답 **0**, 미인증 응답 **1**, 검증된 취소 **2**, 장소 CTA focus 복귀 **1**.
+- 관측한 미인증 상태 코드는 **`identity_failed`**다. QR 제거·재시작 컨트롤·오류 표시를 확인했으며 이를 본인인증 성공이나 원인이 확정된 정상 응답으로 기록하지 않는다. 이전 최초 run의 원인도 이 결과로 소급 단정하지 않는다.
+- 금지 요청 **0**, 동의 전 시작 **0**, page error **0**. QR payload/CI/토큰/접근 코드·원본 응답은 검수 로그·로컬 아티팩트에 저장하지 않았고 스크린샷/trace/HAR도 생성하지 않았다. 정상 동작에 필요한 Vercel 환경변수 및 서버 Redis의 제한된 임시 상태 저장과는 구분한다. Native 링크를 클릭하거나 실제 사용자 승인·서명을 수행하지 않았다.
+- 기존 최초 실패 run도 자기 작업 취소를 검증했다. 이번 두 작업 역시 앱 원장에서 cancelled/identity=null을 확인했다. 공급자 자체의 서버 거래를 삭제했다고 주장하지 않는다.
+- 마무리 읽기 확인에서도 전용 jaewook 프로필이 유효했고 기본 megan 로그인 및 공개 Production 배포 ID/SHA는 변경되지 않았다.
 
 ## 검수 경계
 
