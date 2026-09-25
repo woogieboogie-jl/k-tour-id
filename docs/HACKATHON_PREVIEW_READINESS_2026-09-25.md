@@ -75,6 +75,7 @@
 - `/trans`, QR/app 실행, `/result`, token claims, CI 수집, 실제 인증·AI·체인 실행은 하지 않는다. 원격 결과에도 `authenticated:false`, `identityVerified:false`를 명시한다.
 - 작성자와 다른 검토자가 고정 URL·경계·만료·필드 제한을 검사했다. 응답 대기 중 만료 및 GET body 선언의 반례를 보완한 뒤 독립 fixture 7개가 통과했다.
 - 실제 icn1 관측 결과는 [CX 연결 점검 기록](./CX_CONNECTIVITY_2026-09-25.md)에 기록한다.
+- 후속 Preview 앱 `4450d2c0` / GitHub `6654110098`에서 **14:05 KST icn1 → CX 공개 provider 목록 HTTP 200**을 확인했다. 동일 UI/BFF·실행 지역을 대조했으며 인증 거래나 신원 검증을 수행한 것은 아니다.
 
 ## 재현
 

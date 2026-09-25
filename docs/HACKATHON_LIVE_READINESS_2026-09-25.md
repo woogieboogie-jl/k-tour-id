@@ -2,6 +2,8 @@
 
 후속 작업: [UI + API 읽기 전용 Preview 준비·검증 기록](./HACKATHON_PREVIEW_READINESS_2026-09-25.md). 기존 Production을 보존하며 진행 중이며, CX 실인증 완료와는 구분한다.
 
+후속 관측(14:05 KST): Vercel 연결 접근이 해결됐고, 동일 UI/BFF Preview의 **서울 icn1 서버에서 CX 공개 provider 목록 HTTP 200**을 확인했다. 이 프로젝트의 서버 저장소·seed 준비와 실제 기기 인증은 남았다. 아래 초기 감사와 후속 실증 범위를 구분한다. [CX 연결 점검](./CX_CONNECTIVITY_2026-09-25.md).
+
 ## 먼저 읽을 결론
 
 **Harvey 코드 통합과 공개 UX 배포는 실연동 완주와 다르다.** 기존 구현을 다시 만드는 것이 아니라, 같은 통합 revision을 실제 환경에서 실행하고 남은 OpenDID 구현을 채워야 한다.

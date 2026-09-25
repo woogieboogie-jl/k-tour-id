@@ -117,7 +117,20 @@ test("read-only Preview sanitizes a fake zkLogin callback and returns to map", a
     sessionStorage.setItem("ondo-b.hackathon.pending.v1", JSON.stringify({ venueId, locale: "en", resumeOperationId: "preview-op", savedAt: Date.now() }))
     sessionStorage.setItem("ondo-b.hackathon.signer.v1:preview-op", JSON.stringify({ kind: "zklogin", address: "", ephemeralSecretKey: "fixture", maxEpoch: 1, randomness: "fixture", inputs: null, nonce: "fixture", jwtPending: true, oauthState: "fixture-state" }))
   }, { venueId: VENUE_ID })
-  const beforeSession = await page.evaluate(() => Object.fromEntries(Object.entries(sessionStorage)))
+  // These exact hosting-toolbar markers were observed in the remote failure
+  // trace. Do not ignore prefixes: unexpected app keys must still fail equality.
+  const hostingSessionKeys = new URL(baseURL!).hostname.endsWith(".vercel.app")
+    ? ["__vtkb-hide-key", "vc-dt-src", "vc-mfe-session-cleared"] : []
+  const readSession = async () => {
+    const storage = await page.evaluate(() => ({
+      session: Object.fromEntries(Object.entries(sessionStorage)),
+      local: Object.fromEntries(Object.entries(localStorage)),
+    }))
+    // Inspect ALL values, including excluded hosting keys and localStorage.
+    expect(JSON.stringify(storage)).not.toContain("fixture.payload.signature")
+    return Object.fromEntries(Object.entries(storage.session).filter(([key]) => !hostingSessionKeys.includes(key)))
+  }
+  const beforeSession = await readSession()
   await page.goto(`${baseURL}/hackathon/zklogin/callback#state=fixture-state&id_token=fixture.payload.signature`, { waitUntil: "domcontentloaded" })
   await expect(page.getByTestId("hackathon-login-return")).toBeVisible()
   await expect(page.getByRole("heading", { name: /sign-in wasn't completed/i })).toBeVisible()
@@ -125,7 +138,7 @@ test("read-only Preview sanitizes a fake zkLogin callback and returns to map", a
     const url = new URL(page.url())
     return { pathname: url.pathname, hash: url.hash, state: url.searchParams.get("state"), idToken: url.searchParams.get("id_token") }
   }).toEqual({ pathname: "/hackathon/zklogin/callback", hash: "", state: null, idToken: null })
-  await expect.poll(() => page.evaluate(() => Object.fromEntries(Object.entries(sessionStorage)))).toEqual(beforeSession)
+  await expect.poll(readSession).toEqual(beforeSession)
   await page.getByTestId("hackathon-login-return").click()
   await expect(page.getByTestId("ondo-b-root")).toBeVisible()
   await expect(page.getByTestId("hackathon-layer")).toHaveCount(0)
