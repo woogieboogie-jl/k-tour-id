@@ -11,6 +11,7 @@ import { proveZkLogin, zkLoginConfigured } from "@/lib/hackathon/adapters/zklogi
 import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
 import { isReadinessPreview, previewReadOnlyResponse } from "@/lib/hackathon/preview-readiness"
 import { cxReadinessResponse } from "@/lib/hackathon/cx-readiness"
+import { redisReadinessResponse } from "@/lib/hackathon/redis-readiness"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -78,7 +79,13 @@ export async function GET(req: Request, ctx: Ctx) {
 }
 
 export async function POST(req: Request, ctx: Ctx) {
-  if (isReadinessPreview()) return previewReadOnlyResponse()
+  if (isReadinessPreview()) {
+    const { path } = await ctx.params
+    // Temporary operator-authenticated smoke: isolated TTL keys only. No app
+    // session, provider, journey ledger, or signing/chain code is reachable.
+    if (path.length === 2 && path[0] === "readiness" && path[1] === "redis") return redisReadinessResponse(req)
+    return previewReadOnlyResponse()
+  }
   if (process.env.HK_API_ENABLED !== "1" || process.env.NEXT_PUBLIC_HK_ENABLED !== "1") return json({ error: { code: "not_found" } }, 404)
   const { path } = await ctx.params
   try {

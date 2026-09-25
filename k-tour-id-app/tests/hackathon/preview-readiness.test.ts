@@ -92,6 +92,13 @@ test("read-only hackathon POST rejects before same-origin, cookies, body parsing
   const diagnosticPost = await route.POST(new Request("http://localhost/api/hackathon/v1/readiness/cx", { method: "POST" }), ctx(["readiness", "cx"]))
   assert.equal(diagnosticPost.status, 503)
   assert.equal((await json(diagnosticPost)).error?.code, "preview_read_only")
+
+  const redis = await route.POST(new Request("http://localhost/api/hackathon/v1/readiness/redis", { method: "POST" }), ctx(["readiness", "redis"]))
+  assert.equal(redis.status, 404, "operator diagnostic must be disabled outside its exact remote profile")
+  for (const path of [["readiness", "redis", "extra"], ["operations", "sentinel", "reconcile"], ["operations", "sentinel", "credential", "issue"]]) {
+    const denied = await route.POST(new Request("http://localhost/api/hackathon/v1/" + path.join("/"), { method: "POST" }), ctx(path))
+    assert.equal(denied.status, 503)
+  }
 })
 
 test("ask and chat reject preview POSTs before reading a live-looking body", async () => {

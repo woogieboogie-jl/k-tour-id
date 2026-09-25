@@ -1,5 +1,7 @@
 # CX 연결 점검 — 2026-09-25
 
+> 후속 상태: 사용자 입력 후 두 KV 변수를 검증 브랜치 전용으로 수정했고, 로컬 실제 Redis primitive 11개 검사와 테스트 키 정리를 통과했다. 서울 Preview runtime 검증과 최종 배포 기록은 [Redis 검증 기록](./REDIS_PREVIEW_VERIFICATION_2026-09-25.md)을 따른다. 아래 변수 미등록/생성 대기 문구는 각 시점의 이력이다.
+
 ## 범위
 
 사용자의 Vercel 재연결 후 동일 UI/BFF Preview에서 서울 서버 → CX 공개 provider catalogue 통신을 확인하는 단계다. 공개 Production, Harvey의 기존 환경, 실제 인증·서명·체인 실행은 변경하지 않는다.

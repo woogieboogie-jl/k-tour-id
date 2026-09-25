@@ -1,5 +1,7 @@
 # UI + API 통합 검증 Preview — 2026-09-25
 
+> 9/25 후속: 검증 브랜치 전용 Redis 변수를 연결했고 인증된 임시 infrastructure smoke를 준비했다. [최신 Redis 검증 기록](./REDIS_PREVIEW_VERIFICATION_2026-09-25.md)에 범위/결과/진단 정리를 별도로 기록한다. 앱 본인인증·서명·체인 차단은 그대로이며 아래 무변경 POST 원칙은 임시 operator 진단을 제외한 앱 경로에 적용된다.
+
 ## 목적과 한계
 
 최신 UI와 Harvey의 BFF를 **같은 커밋·같은 origin**에서 배포할 첫 단계다.

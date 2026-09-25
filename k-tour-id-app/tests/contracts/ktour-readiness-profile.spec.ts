@@ -42,9 +42,14 @@ test("all mutating endpoints guard before provider and session work; no new endp
   expect(readdirSync("app/api", { recursive: true }).map(String).filter(path => path.endsWith("/route.ts")).sort()).toEqual([
     "ask/route.ts", "chat/route.ts", "hackathon/v1/[...path]/route.ts", "ondo/venues/[venueId]/route.ts",
   ])
-  for (const path of ["app/api/ask/route.ts", "app/api/chat/route.ts", "app/api/hackathon/v1/[...path]/route.ts"]) {
+  for (const path of ["app/api/ask/route.ts", "app/api/chat/route.ts"]) {
     expect(read(path)).toMatch(/export async function POST\([^)]*\) \{\s*if \(isReadinessPreview\(\)\) return previewReadOnlyResponse\(\)/)
   }
+  const route = read("app/api/hackathon/v1/[...path]/route.ts")
+  const post = route.slice(route.indexOf("export async function POST"))
+  expect(post).toMatch(/if \(isReadinessPreview\(\)\) \{\s*const \{ path \} = await ctx.params/)
+  expect(post).toContain('if (path.length === 2 && path[0] === "readiness" && path[1] === "redis") return redisReadinessResponse(req)')
+  expect(post.indexOf("return previewReadOnlyResponse()")).toBeLessThan(post.indexOf("await assertSameOrigin()"))
   expect(read("app/labs/header-preview/page.tsx")).toContain("if (isReadinessPreview()) notFound()")
   expect(read("app/hackathon/zklogin/callback/page.tsx")).toContain("if (isReadinessPreview()) { setFailed(true); return }")
   const layer = read("features/ondo/hackathon-b/hackathon-layer-b.tsx")

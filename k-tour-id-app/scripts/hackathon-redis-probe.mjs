@@ -6,24 +6,32 @@ const TIMEOUT = 10_000
 const URL_ENV = "UPSTASH_REDIS_REST_URL"
 const TOKEN_ENV = "UPSTASH_REDIS_REST_TOKEN"
 
-/** @param {Record<string, string | undefined>} [env] @param {string[]} [args] */
-export function validateRedisProbeEnv(env = process.env, args = []) {
+/** Credentials only; callers must apply their own execution gate first. @param {Record<string, string | undefined>} env */
+export function redisProbeCredentials(env) {
   const upstashUrl = env[URL_ENV] ?? ""
   const upstashToken = env[TOKEN_ENV] ?? ""
   const kvUrl = env.KV_REST_API_URL ?? ""
   const kvToken = env.KV_REST_API_TOKEN ?? ""
   const upstashAny = Boolean(upstashUrl || upstashToken)
   const kvAny = Boolean(kvUrl || kvToken)
-  if (args.length || (upstashAny && Boolean(upstashUrl) !== Boolean(upstashToken)) || (kvAny && Boolean(kvUrl) !== Boolean(kvToken)) || (upstashAny && kvAny)) return { ok: false, reason: "configuration" }
+  if ((upstashAny && Boolean(upstashUrl) !== Boolean(upstashToken)) || (kvAny && Boolean(kvUrl) !== Boolean(kvToken)) || (upstashAny && kvAny)) return { ok: false, reason: "configuration" }
   const url = upstashUrl || kvUrl
   const token = upstashToken || kvToken
   if (!url) return { ok: false, reason: "configuration" }
-  if (env.HK_REDIS_PROBE_ALLOW_WRITE !== "1" || env.VERCEL_ENV === "production" || env.NODE_ENV === "production") return { ok: false, reason: "execution_gate" }
   try {
     const parsed = new URL(url)
     if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) return { ok: false, reason: "configuration" }
   } catch { return { ok: false, reason: "configuration" } }
   return { ok: true, url, token }
+}
+
+/** @param {Record<string, string | undefined>} [env] @param {string[]} [args] */
+export function validateRedisProbeEnv(env = process.env, args = []) {
+  if (args.length) return { ok: false, reason: "configuration" }
+  const config = redisProbeCredentials(env)
+  if (!config.ok) return config
+  if (env.HK_REDIS_PROBE_ALLOW_WRITE !== "1" || env.VERCEL_ENV === "production" || env.NODE_ENV === "production") return { ok: false, reason: "execution_gate" }
+  return config
 }
 
 function summary(ok, checks, cleanup, failures = 0) { return { ok, checks, cleanup, failures } }
@@ -32,6 +40,15 @@ function summary(ok, checks, cleanup, failures = 0) { return { ok, checks, clean
 export async function runRedisProbe({ env = process.env, fetchImpl = globalThis.fetch, uuid = randomUUID(), args = [] } = {}) {
   const config = validateRedisProbeEnv(env, args)
   if (!config.ok) return summary(false, 0, false, 1)
+  return runRedisProbeCore({ url: config.url, token: config.token, fetchImpl, uuid })
+}
+
+/**
+ * Own-key primitives only: no app store, session, provider, or file fallback.
+ * The CLI and temporary Preview handler retain separate execution gates.
+ * @param {{ url: string, token: string, fetchImpl?: typeof fetch, uuid?: string, workTimeoutMs?: number, cleanupTimeoutMs?: number }} options
+ */
+export async function runRedisProbeCore({ url, token, fetchImpl = globalThis.fetch, uuid = randomUUID(), workTimeoutMs = 25_000, cleanupTimeoutMs = 8_000 }) {
   const base = `ktour:probe:${uuid}`
   const lock = `${base}:lock`
   const value = `${base}:value`
@@ -42,16 +59,44 @@ export async function runRedisProbe({ env = process.env, fetchImpl = globalThis.
   let acquired = false
   let cleanupOk = true
   let knownValue
+  let phaseSignal = AbortSignal.timeout(Math.max(1, Math.min(25_000, workTimeoutMs)))
   const command = async (name, args = []) => {
-    const response = await fetchImpl(config.url, {
-      method: "POST", redirect: "error", cache: "no-store",
-      headers: { authorization: `Bearer ${config.token}`, "content-type": "application/json" },
-      body: JSON.stringify([name, ...args]), signal: AbortSignal.timeout(TIMEOUT),
+    const signal = AbortSignal.any([phaseSignal, AbortSignal.timeout(TIMEOUT)])
+    signal.throwIfAborted()
+    // Race the entire fetch AND body read. A lost response remains an uncertain
+    // write even if a transport ignores cancellation; never claim it was undone.
+    const pending = (async () => {
+      const response = await fetchImpl(url, {
+        method: "POST", redirect: "error", cache: "no-store",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify([name, ...args]), signal,
+      })
+      if (!response.ok) { await response.body?.cancel(); throw new Error("redis_probe_upstream") }
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error("redis_probe_response")
+      const chunks = []
+      let size = 0
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          size += value.byteLength
+          if (size > 16_384) { await reader.cancel(); throw new Error("redis_probe_response") }
+          chunks.push(value)
+        }
+      } finally { reader.releaseLock() }
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+      if (!body || Object.prototype.hasOwnProperty.call(body, "error") || !Object.prototype.hasOwnProperty.call(body, "result")) throw new Error("redis_probe_response")
+      if ((name === "SET" && body.result !== "OK" && body.result !== null) ||
+        (name === "EVAL" && body.result !== 0 && body.result !== 1)) throw new Error("redis_probe_response")
+      return body.result
+    })()
+    return await new Promise((resolve, reject) => {
+      const abort = () => reject(new Error("redis_probe_timeout"))
+      signal.addEventListener("abort", abort, { once: true })
+      pending.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort))
+      if (signal.aborted) abort()
     })
-    if (!response.ok) throw new Error("redis_probe_upstream")
-    const body = await response.json()
-    if (!body || Object.prototype.hasOwnProperty.call(body, "error") || !Object.prototype.hasOwnProperty.call(body, "result")) throw new Error("redis_probe_response")
-    return body.result
   }
   const check = async (work, mayWrite = false) => {
     try { const result = await work(); checks += 1; return result }
@@ -98,6 +143,7 @@ export async function runRedisProbe({ env = process.env, fetchImpl = globalThis.
       }
     }
   } finally {
+    phaseSignal = AbortSignal.timeout(Math.max(1, Math.min(8_000, cleanupTimeoutMs)))
     if (acquired) {
       for (const key of keys) {
         const expected = key === lock ? owner : knownValue
