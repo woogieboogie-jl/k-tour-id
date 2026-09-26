@@ -26,6 +26,6 @@ export async function POST(req: Request) {
   }
 
   const out = await geminiGenerate({ key: gemini, system: SYSTEM, message, maxOutputTokens: 256, temperature: 0.7 })
-  if (out.error) return Response.json({ error: out.error }, { status: 502 })
+  if (out.error) return Response.json({ error: "AI provider unavailable" }, { status: 502 })
   return Response.json({ reply: out.reply })
 }

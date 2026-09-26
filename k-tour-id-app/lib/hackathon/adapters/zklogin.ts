@@ -24,7 +24,7 @@ export function zkLoginConfigured() {
 export function deriveSalt(jwt: string): bigint {
   const c = hkConfig().sui
   if (!c.zkSaltSeed) throw new HkError("zklogin_unconfigured", "HK_ZKLOGIN_SALT_SEED missing", 503)
-  const d = decodeJwt(jwt)
+  const d = decodeClaims(jwt)
   const mac = createHmac("sha256", c.zkSaltSeed).update(`${d.iss}|${d.aud}|${d.sub}`).digest()
   // salt must be < 2^128 for zkLogin
   return BigInt("0x" + mac.subarray(0, 16).toString("hex"))
@@ -41,22 +41,72 @@ const ENOKI_API = process.env.ENOKI_API_URL || "https://api.enoki.mystenlabs.com
 export function enokiConfigured() { return !hkConfig().isolatedMock && Boolean(process.env.ENOKI_API_KEY) }
 export function zkLoginProverLabel() { return enokiConfigured() ? "enoki" : "dev-prover" }
 
+function decodeClaims(jwt: string) {
+  try { return decodeJwt(jwt) }
+  catch { throw new HkError("zklogin_jwt", "Invalid login token", 400) }
+}
+
+const MAX_PROVIDER_BYTES = 128 * 1024
+type ProviderCode = "zklogin_enoki" | "zklogin_prover"
+const providerFailure = (code: ProviderCode, retryable = true) => new HkError(code, "zkLogin provider request could not be completed", 502, retryable)
+
+/** Do not expose provider bodies or transport exceptions (they can echo JWTs,
+ * API keys and request URLs). Bound successful responses as well as failures. */
+async function providerJson(url: string, init: RequestInit, code: ProviderCode): Promise<Record<string, unknown>> {
+  const signal = AbortSignal.timeout(60_000)
+  const pending = (async () => {
+    const res = await fetch(url, { ...init, redirect: "error", cache: "no-store", signal })
+    if (!res.ok) {
+      void res.body?.cancel().catch(() => undefined)
+      throw providerFailure(code, res.status === 429 || res.status >= 500)
+    }
+    const reader = res.body?.getReader()
+    if (!reader) throw providerFailure(code)
+    const chunks: Uint8Array[] = []
+    let bytes = 0
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        bytes += value.byteLength
+        if (bytes > MAX_PROVIDER_BYTES) {
+          void reader.cancel().catch(() => undefined)
+          throw providerFailure(code)
+        }
+        chunks.push(value)
+      }
+    } finally { reader.releaseLock() }
+    const json: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+    if (!json || typeof json !== "object" || Array.isArray(json)) throw providerFailure(code)
+    return json as Record<string, unknown>
+  })()
+  try {
+    return await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const abort = () => reject(providerFailure(code))
+      signal.addEventListener("abort", abort, { once: true })
+      pending.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort))
+      if (signal.aborted) abort()
+    })
+  } catch (error) {
+    // Preserve only our fixed message; never forward an upstream exception.
+    throw providerFailure(code, error instanceof HkError ? error.retryable : true)
+  }
+}
+
 async function enoki<T>(path: string, init: { method?: string; jwt: string; body?: unknown }): Promise<T> {
-  const res = await fetch(`${ENOKI_API}${path}`, {
+  const json = await providerJson(`${ENOKI_API}${path}`, {
     method: init.method ?? "GET",
     headers: { authorization: `Bearer ${process.env.ENOKI_API_KEY}`, "zklogin-jwt": init.jwt, ...(init.body ? { "content-type": "application/json" } : {}) },
     body: init.body ? JSON.stringify(init.body) : undefined,
-    signal: AbortSignal.timeout(60_000),
-  })
-  const text = await res.text()
-  if (!res.ok) throw new HkError("zklogin_enoki", `enoki ${path} ${res.status}: ${text.slice(0, 200)}`, 502, res.status >= 500)
-  try { return (JSON.parse(text) as { data: T }).data } catch { throw new HkError("zklogin_enoki", `enoki ${path}: bad json`, 502, true) }
+  }, "zklogin_enoki")
+  if (!json.data || typeof json.data !== "object" || Array.isArray(json.data)) throw providerFailure("zklogin_enoki")
+  return json.data as T
 }
 
 export async function proveZkLogin(opts: { jwt: string; extendedEphemeralPublicKey: string; maxEpoch: number; jwtRandomness: string }): Promise<{ address: string; salt: string; inputs: ZkProofInputs; sub: string; aud: string }> {
   assertExternalServicesEnabled("zkLogin provider authentication")
   const c = hkConfig().sui
-  const decoded = decodeJwt(opts.jwt)
+  const decoded = decodeClaims(opts.jwt)
   if (!decoded.sub || !decoded.aud || !decoded.iss) throw new HkError("zklogin_jwt", "jwt missing claims", 400)
   const aud = Array.isArray(decoded.aud) ? decoded.aud[0] : decoded.aud
   if (c.googleClientId && aud !== c.googleClientId) throw new HkError("zklogin_aud", "jwt audience mismatch", 400)
@@ -69,14 +119,13 @@ export async function proveZkLogin(opts: { jwt: string; extendedEphemeralPublicK
     return { address: who.address, salt: who.salt, inputs: proof, sub: decoded.sub, aud }
   }
   const salt = deriveSalt(opts.jwt)
-  const address = jwtToAddress(opts.jwt, salt, false)
-  const res = await fetch(c.zkProverUrl, {
+  let address: string
+  try { address = jwtToAddress(opts.jwt, salt, false) }
+  catch { throw new HkError("zklogin_jwt", "Invalid login token", 400) }
+  const proof = await providerJson(c.zkProverUrl, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ jwt: opts.jwt, extendedEphemeralPublicKey: opts.extendedEphemeralPublicKey, maxEpoch: opts.maxEpoch, jwtRandomness: opts.jwtRandomness, salt: salt.toString(), keyClaimName: "sub" }),
-    signal: AbortSignal.timeout(60_000),
-  })
-  if (!res.ok) throw new HkError("zklogin_prover", `prover ${res.status}: ${(await res.text()).slice(0, 200)}`, 502, true)
-  const proof = (await res.json()) as Omit<ZkProofInputs, "addressSeed">
+  }, "zklogin_prover") as Omit<ZkProofInputs, "addressSeed">
   const addressSeed = genAddressSeed(salt, "sub", decoded.sub, aud).toString()
   return { address, salt: salt.toString(), inputs: { ...proof, addressSeed }, sub: decoded.sub, aud }
 }

@@ -14,6 +14,20 @@ export interface GeminiResult {
   error?: string
 }
 
+// Provider responses can contain credentials, request URLs, prompts, or other
+// sensitive diagnostics. Keep the public result deliberately code-like; the
+// server route and rule fallback only need to know that generation failed.
+function providerError(code: "http" | "network" | "empty", status?: number): string {
+  if (code === "http") return `gemini_provider_http_${status ?? "unknown"}`
+  if (code === "empty") return "gemini_provider_empty_response"
+  return "gemini_provider_unavailable"
+}
+
+function discardProviderBody(res: Response): void {
+  // Do not await cancellation: a broken provider stream may never settle.
+  void res.body?.cancel().catch(() => undefined)
+}
+
 export async function geminiGenerate(opts: {
   key: string
   system: string
@@ -54,14 +68,17 @@ export async function geminiGenerate(opts: {
           cachedModel = model // remember the working model → no repeat 404s
           return { reply }
         }
-        lastErr = `empty reply from ${model}`
+        lastErr = providerError("empty")
         continue
       }
-      const body = await res.text().catch(() => "")
-      lastErr = `${res.status} ${model}: ${body.slice(0, 180)}`
+      // Do not read or propagate provider bodies: they may echo the API key,
+      // request URL, prompt, or vendor-internal diagnostics.
+      lastErr = providerError("http", res.status)
+      discardProviderBody(res)
       if (res.status !== 404) break // 400/403/429/5xx won't be fixed by another model
     } catch (e) {
-      lastErr = `${model}: ${e instanceof Error ? e.message : "fetch failed"}`
+      void e
+      lastErr = providerError("network")
     }
   }
   return { error: lastErr }
