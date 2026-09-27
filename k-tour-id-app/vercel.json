@@ -4,5 +4,10 @@
   "buildCommand": "pnpm build:vercel:cx-preview",
   "installCommand": "pnpm install --frozen-lockfile",
   "outputDirectory": ".next",
+  "git": {
+    "deploymentEnabled": {
+      "integration/autonomous-finish-20260927": false
+    }
+  },
   "regions": ["icn1"]
 }
