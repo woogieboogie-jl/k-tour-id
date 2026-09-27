@@ -7,8 +7,12 @@ test.use({ serviceWorkers: "block" })
 async function openSeoul(page: Page, baseURL: string) {
   const origin = new URL(baseURL).origin
   const config = await page.request.get(`${origin}/api/hackathon/v1/config`)
-  expect(config.ok()).toBe(true)
-  expect(await config.json()).toMatchObject({ isolatedMock: true })
+  if (process.env.KTOUR_QA_PUBLIC_PROFILE === "1") {
+    expect(config.status(), "Public UI must not expose hackathon APIs").toBe(404)
+  } else {
+    expect(config.ok()).toBe(true)
+    expect(await config.json()).toMatchObject({ isolatedMock: true })
+  }
   const forbidden: string[] = []
   await page.route("**/*", async route => {
     const request = route.request()

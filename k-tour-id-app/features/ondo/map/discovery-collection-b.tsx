@@ -3,7 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react"
 import type { Map as MapLibreMap, Marker } from "maplibre-gl"
 import { ArrowUpRight, BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Flame, Info, List, MapPin, Sparkles, Sun, X } from "lucide-react"
-import type { Story } from "../discovery-preview/fixtures"
+import { CITIES, STORIES, type Story } from "../discovery-preview/fixtures"
 import { SheetB } from "../shared/ui/sheet-b"
 import {
   DISCOVERY_COLLECTION_COPY_B,
@@ -260,7 +260,7 @@ export function DiscoveryStoryCarouselB({ stories, locale, selectedId, onPreview
       if (event.pointerType !== "touch") cancelPreview()
     }} onTouchEnd={event => { event.stopPropagation(); if (event.touches.length === 0) { pointerDown.current = false; settle() } }} onTouchCancel={event => { event.stopPropagation(); cancelPreview() }} onWheel={event => { event.stopPropagation(); if (event.deltaX || event.shiftKey) { navigationTarget.current = null; setNavigationIndex(null); userScroll.current = true; settle() } }} onScroll={() => { if (userScroll.current) { suppressClick.current = true; settle() } }}>
       {stories.map((story, index) => {
-        const city = story.city === "seoul" ? { ko: "서울", en: "Seoul", ja: "ソウル" }[locale] : { ko: "제주", en: "Jeju", ja: "済州" }[locale]
+        const city = CITIES[story.city][locale]
         const count = locale === "ko" ? `장소 ${story.places.length}곳` : locale === "ja" ? `${story.places.length}か所` : `${story.places.length} ${story.places.length === 1 ? "place" : "places"}`
         return <article key={story.id} className={styles.storySlide} data-story-id={story.id} data-selected={visibleId === story.id} aria-roledescription={locale === "ko" ? "이야기" : locale === "ja" ? "物語" : "slide"} aria-label={`${index + 1}/${stories.length}`}>
           <button type="button" className={styles.storyCard} data-testid="map-discovery-story" data-collection={story.id} aria-label={`${story.title[locale]} · ${city} · ${count}. ${story.intro[locale]}`} disabled={suspended} onClick={event => { event.stopPropagation(); if (event.detail > 0 && suppressClick.current) { suppressClick.current = false; return } if (isDiscoveryCollectionIdB(story.id)) onOpen(story.id) }}>
@@ -532,12 +532,20 @@ export function DiscoveryMarketDetailB({ place, locale, onClose }: {
   place: DiscoveryPlaceB; locale: Locale; onClose(): void
 }) {
   const copy = DISCOVERY_COLLECTION_COPY_B[locale]
+  const story = STORIES.find(candidate => candidate.places.includes(place.id))
+  const isMarket = place.id === "lab-seoul-jungbu-market" || story?.id === "busan-market"
+  const heading = isMarket ? READING[locale].market : { ko: "방문 전에", en: "Before you go", ja: "訪問の前に" }[locale]
+  const note = place.id === "lab-seoul-jungbu-market" ? READING[locale].marketNote : isMarket ? {
+    ko: "시장 구역을 가리키는 대표 핀이에요. 개별 점포의 위치나 현재 영업 여부는 방문 전 확인해 주세요.",
+    en: "This is a representative pin for the market area, not an individual stall. Check shop locations and opening details before visiting.",
+    ja: "市場エリアの代表地点です。個々のお店の位置や営業状況は、訪問前にご確認ください。",
+  }[locale] : { ko: "장소와 방문 정보는 원문에서 확인해 주세요.", en: "Check the original source for place and visit details.", ja: "場所や訪問情報は元の案内をご確認ください。" }[locale]
   return <SheetB locale={locale} label={place.name[locale]} variant="detail" header={<span>{copy.source}</span>} onClose={onClose}
     footer={<div className={styles.detailFooter}><button type="button" data-testid="map-discovery-market-on-map" onClick={onClose}><MapPin size={19} aria-hidden="true" />{copy.map}</button></div>}>
     <article className={styles.marketDetail} data-testid="map-discovery-market-detail" data-place-id={place.id}>
       <DiscoveryPictureB key={place.image} src={place.image} alt={place.imageAlt[locale]} illustration={place.illustration} locale={locale} fullLabel />
       <div className={styles.marketCopy}><small>{place.area[locale]}</small><h2>{place.name[locale]}</h2><p>{place.reason[locale]}</p></div>
-      <section className={styles.marketVisit}><h3>{READING[locale].market}</h3><p>{discoveryCollectionStoryB("sesame")?.paragraphs[0]?.[locale]}</p><p>{READING[locale].marketNote}</p></section>
+      <section className={styles.marketVisit}><h3>{heading}</h3><p>{story?.stopNotes[place.id]?.[locale] ?? story?.paragraphs[0]?.[locale]}</p><p>{note}</p></section>
       <details className={styles.marketSource}><summary>{copy.source}<ChevronRight size={17} aria-hidden="true" /></summary><p>{place.credit}</p><a href={place.source} target="_blank" rel="noopener noreferrer" data-testid="map-discovery-market-source">{copy.source}<ArrowUpRight size={15} aria-hidden="true" /></a>{place.photoSource ? <a href={place.photoSource} target="_blank" rel="noopener noreferrer">{LABELS[locale].photo}<ArrowUpRight size={15} aria-hidden="true" /></a> : null}{place.licenseUrl ? <a href={place.licenseUrl} target="_blank" rel="noopener noreferrer">{LABELS[locale].license}<ArrowUpRight size={15} aria-hidden="true" /></a> : null}</details>
     </article>
   </SheetB>

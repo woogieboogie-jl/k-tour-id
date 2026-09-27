@@ -23,7 +23,7 @@ import { researchedFoodByIdB } from "../../features/ondo/map/researched-food-b"
 import { editorialPlaceById } from "../../features/ondo/pulse-b/japan-first-pulse-model-b"
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
-const collections: DiscoveryCollectionIdB[] = ["hot", "warm", "cool", "sesame", "screen", "seoul-cafes", "seoul-table", "jeju-kpop"]
+const collections: DiscoveryCollectionIdB[] = ["hot", "warm", "cool", "sesame", "screen", "seoul-cafes", "seoul-table", "jeju-kpop", "jeju-table", "busan-market", "busan-coffee", "busan-table"]
 const base = { city: "seoul", category: "all", editorialCategory: "all", after19: false, balanceOnly: false, query: "" }
 const hotIds = ["research-seoul-onion-anguk", "research-seoul-geumdwaeji-sikdang", "research-seoul-london-bagel-dosan"]
 const coolIds = ["research-seoul-hakrim-dabang", "research-seoul-gosari-express", "research-seoul-okdongsik"]
@@ -45,9 +45,11 @@ test("COLLECTION-MODEL-001 collection IDs and story cities are bounded; moods do
   expect(discoveryCollectionCityB("seoul-cafes")).toBe("seoul")
   expect(discoveryCollectionCityB("seoul-table")).toBe("seoul")
   expect(discoveryCollectionCityB("jeju-kpop")).toBe("jeju")
+  expect(discoveryCollectionCityB("jeju-table")).toBe("jeju")
+  for (const id of ["busan-market", "busan-coffee", "busan-table"] as const) expect(discoveryCollectionCityB(id)).toBe("busan")
   expect(discoveryStoryForCityB("seoul")?.id).toBe("sesame")
   expect(discoveryStoryForCityB("jeju")?.id).toBe("screen")
-  expect(discoveryStoryForCityB("busan")).toBeUndefined()
+  expect(discoveryStoryForCityB("busan")?.id).toBe("busan-market")
   expect(discoveryStoryForCityB("unknown")).toBeUndefined()
 })
 
@@ -126,7 +128,10 @@ test("COLLECTION-MODEL-007 no collection silently changes cities or returns a cr
   for (const id of ["sesame", "seoul-cafes", "seoul-table"] as const) expect(ids(id, { city: "jeju" })).toEqual([])
   expect(ids("jeju-kpop", { city: "seoul" })).toEqual([])
   for (const id of collections) {
-    expect(ids(id, { city: "busan" })).toEqual([])
+    const storyCity = discoveryCollectionCityB(id)
+    for (const city of ["seoul", "busan", "jeju"]) {
+      if (city !== (storyCity ?? "seoul")) expect(ids(id, { city })).toEqual([])
+    }
     expect(ids(id, { city: "unknown" })).toEqual([])
   }
 })
@@ -214,10 +219,10 @@ test("COLLECTION-MODEL-012 selectors do not mutate context or records, and every
   expect(DISCOVERY_COLLECTION_COPY_B.ja.truth).toContain("静かさを保証しません")
 })
 
-test("COLLECTION-MODEL-013 city carousels expose three Seoul and two Jeju stories without changing the legacy first story", () => {
+test("COLLECTION-MODEL-013 city carousels expose three stories each without changing the legacy first stories", () => {
   expect(discoveryStoriesForCityB("seoul").map(story => story.id)).toEqual(["sesame", "seoul-cafes", "seoul-table"])
-  expect(discoveryStoriesForCityB("jeju").map(story => story.id)).toEqual(["screen", "jeju-kpop"])
-  expect(discoveryStoriesForCityB("busan")).toEqual([])
+  expect(discoveryStoriesForCityB("jeju").map(story => story.id)).toEqual(["screen", "jeju-kpop", "jeju-table"])
+  expect(discoveryStoriesForCityB("busan").map(story => story.id)).toEqual(["busan-market", "busan-coffee", "busan-table"])
   expect(discoveryStoriesForCityB("__proto__")).toEqual([])
   const stories = discoveryStoriesForCityB("seoul")
   stories.pop()
@@ -226,7 +231,7 @@ test("COLLECTION-MODEL-013 city carousels expose three Seoul and two Jeju storie
 })
 
 test("COLLECTION-MODEL-014 every story has complete localized prose, source links and notes for actual same-city stops", () => {
-  for (const city of ["seoul", "jeju"]) for (const story of discoveryStoriesForCityB(city)) {
+  for (const city of ["seoul", "busan", "jeju"]) for (const story of discoveryStoriesForCityB(city)) {
     expect(discoveryCollectionStoryB(story.id)).toBe(story)
     expect(story.paragraphs).toHaveLength(2)
     expect(new Set(story.places).size).toBe(story.places.length)

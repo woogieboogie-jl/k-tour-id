@@ -183,6 +183,9 @@ export const SOURCE_FILES = Object.freeze([
   // Shared editorial data only; the development-only preview route, component,
   // map and independent navigation state are deliberately not packaged.
   "features/ondo/discovery-preview/fixtures.ts",
+  "features/ondo/discovery-preview/discovery-content-types.ts",
+  "features/ondo/discovery-preview/busan-stories.ts",
+  "features/ondo/discovery-preview/jeju-stories.ts",
   "features/ondo/map/canonical-venue-capsule-b.module.css",
   "features/ondo/map/canonical-venue-capsule-b.tsx",
   "features/ondo/map/map-b.module.css",
