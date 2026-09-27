@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - integration/autonomous-finish-20260927
+    paths-ignore:
+      - 'docs/**'
 
 permissions:
   contents: read

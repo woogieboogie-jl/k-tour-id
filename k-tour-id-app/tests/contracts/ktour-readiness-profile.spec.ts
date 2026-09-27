@@ -62,7 +62,11 @@ test("all mutating endpoints guard before provider and session work; no new endp
   }
   expect(read("app/api/hackathon/v1/[...path]/route.ts")).not.toContain("redisReadinessResponse")
   expect(read("app/labs/header-preview/page.tsx")).toContain("if (isReadinessPreview()) notFound()")
-  expect(read("app/hackathon/zklogin/callback/page.tsx")).toContain("if (isReadinessPreview()) { setFailed(true); return }")
+  const callback = read("app/hackathon/zklogin/callback/page.tsx")
+  for (const guard of ["isReadinessPreview", "isCxPreview"]) {
+    expect(callback).toContain(`if (${guard}()) { setFailed(true); scheduleScrub(); return }`)
+    expect(callback.indexOf(`if (${guard}())`)).toBeLessThan(callback.indexOf("const pending = readPendingHackathon()"))
+  }
   const layer = read("features/ondo/hackathon-b/hackathon-layer-b.tsx")
   expect(layer).toContain("isReadinessPreview() ? HackathonReadinessB : Journey")
   const notice = read("features/ondo/hackathon-b/hackathon-readiness-b.tsx")

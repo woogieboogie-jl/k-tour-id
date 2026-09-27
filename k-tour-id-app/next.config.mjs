@@ -1,4 +1,11 @@
 import { withSumsubSandboxHeaders } from "./lib/kyc/sumsub-security.mjs"
+import { withQaOutputIgnored } from "./lib/dev-qa-watch.mjs"
+import { fileURLToPath } from "node:url"
+
+// Tailwind's directory dependencies reach artifacts even when its content
+// scanner respects .gitignore. Next watches those directories recursively,
+// so recording QA video/trace there must not trigger a dev rebuild loop.
+const qaOutputDirectory = fileURLToPath(new URL("./artifacts/qa", import.meta.url))
 
 const productionSecurityHeaders = withSumsubSandboxHeaders([
   {
@@ -34,6 +41,13 @@ const nextConfig = {
   },
   images: {
     unoptimized: true,
+  },
+  webpack(config, { dev }) {
+    if (dev) config.watchOptions = {
+      ...config.watchOptions,
+      ignored: withQaOutputIgnored(config.watchOptions?.ignored, qaOutputDirectory),
+    }
+    return config
   },
   async headers() {
     return [

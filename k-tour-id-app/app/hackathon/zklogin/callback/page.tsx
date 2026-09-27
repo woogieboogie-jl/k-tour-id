@@ -25,11 +25,22 @@ export default function ZkLoginCallbackPage() {
     if (handled.current) return
     handled.current = true
     const fragment = window.location.hash, query = window.location.search
-    // Strip credentials even on cancelled, malformed or unrelated callbacks.
-    window.history.replaceState(null, "", window.location.pathname)
+    // Scrub after parent effects initialize, while validating the captured
+    // return immediately. Use the router-aware history API so a later render
+    // cannot restore its previous canonical URL containing the OAuth fragment.
+    const scheduleScrub = (afterScrub?: () => void) => window.setTimeout(() => {
+      try {
+        window.history.replaceState(null, "", window.location.pathname)
+        // Even a stalled return navigation must leave no token in this URL.
+        // Persist/consume an accepted return only after scrubbing succeeds.
+        afterScrub?.()
+      } catch {
+        setFailed(true)
+      }
+    }, 0)
     // This preview must not accept or store even a well-formed OAuth return.
-    if (isReadinessPreview()) { setFailed(true); return }
-    if (isCxPreview()) { setFailed(true); return }
+    if (isReadinessPreview()) { setFailed(true); scheduleScrub(); return }
+    if (isCxPreview()) { setFailed(true); scheduleScrub(); return }
     try {
       const pending = readPendingHackathon()
       if (pending) setLocale(pending.locale)
@@ -46,14 +57,16 @@ export default function ZkLoginCallbackPage() {
       const result = readOAuthReturn(fragment, query, signer?.kind === "zklogin" && signer.jwtPending ? signer.oauthState : undefined)
       if (!id || !signer || signer.kind !== "zklogin" || result.status !== "accepted") {
         if (id) clearZkLoginOAuthAttempt(id)
-        setFailed(true)
+        setFailed(true); scheduleScrub()
         return
       }
-      window.sessionStorage.setItem(`ondo-b.hackathon.jwt:${id}`, result.token)
-      writeSigner(id, { ...signer, oauthState: undefined }) // one return per login attempt
-      window.location.replace(target)
+      scheduleScrub(() => {
+        window.sessionStorage.setItem(`ondo-b.hackathon.jwt:${id}`, result.token)
+        writeSigner(id, { ...signer, oauthState: undefined }) // one return per login attempt
+        window.location.replace(target)
+      })
     } catch {
-      setFailed(true)
+      setFailed(true); scheduleScrub()
     }
   }, [])
   const copy = COPY[locale]
