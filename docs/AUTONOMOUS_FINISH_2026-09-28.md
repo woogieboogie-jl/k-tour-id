@@ -1,8 +1,16 @@
 # 자동 진행 결과 — 2026-09-28
 
-이 문서가 이전 9월 27일 로컬 인계 문서보다 최신이다. 코드 구현, 실제 제공자 통신,
+최신 야간 후속과 사용자에게 남은 행동은 [아침 인계](./MORNING_HANDOFF_2026-09-28.md)를 먼저 본다.
+이 문서는 이전 9월 27일 로컬 인계보다 최신인 중간 기록이다. 코드 구현, 실제 제공자 통신,
 브라우저 fixture 검수, 사람의 신원 승인을 구분한다. 실제 승인·서명 없이 해커톤
 전체 실연동 완료라고 표기하지 않는다.
+
+9/28 01시 후속: 사용자가 제공한 OmniOne RPC로 현재 registry 배포·recorder 권한·배포 receipt
+읽기 검사 **4/4**, 앱과 같은 ethers client 조회 **3/3**을 통과했다.
+RPC 토큰은 더 이상 미확보 항목이 아니다. 새 기록에는 기존 recorder 서명 수단이 필요하다.
+OpenDID는 취소/생략이 아니라 별도 병렬 workflow다. 기존 credential/VP 검사를 우회하지 않는다.
+해당 workflow의 연결과 최종 실환경 검수가 남으므로 설정 인계만으로 전체 연동이 끝나지는 않는다.
+[최신 확인 결과·Gateway 규격·남은 작업](./OMNIONE_GATEWAY_VERIFIED_2026-09-28.md)을 함께 따른다.
 
 ## 완료한 범위
 
@@ -45,14 +53,15 @@ Sumsub 관리 API는 webhook 목록 조회 200이지만 생성 요청은 **403**
 | 담당 | 필요한 행동 | 왜 자동 완료할 수 없나 |
 | --- | --- | --- |
 | 모바일 신분증 보유 팀원 | 9/29 화요일, 본인 휴대폰에서 CX 요청 승인 | 본인 정보 제출 동의는 대행 불가. [순서와 통과 기준](./TUESDAY_MOBILE_ID_CHECK_2026-09-29.md) 준비 완료 |
-| Harvey/설정 보유자 | 기존 Testnet issuer·agent, Google OAuth/prover/salt, OmniOne 인증 RPC·recorder, AI 모델 키의 안전한 인계 | 코드·공개 계약 주소는 있지만 실행 비밀값은 승인된 현재 환경에 없음. [정확한 설정 표](./HARVEY_ENV_HANDOFF_2026-09-26.md) 참고 |
-| Sumsub 계정 관리자 | Sandbox webhook 관리 권한 또는 아래 안내대로 webhook 등록 | 실제 관리 API 403 확인. 기존 SDK 키 재전달은 필요 없음 |
-| 인증/서명 당사자 | 설정 완료 후 자기 기기에서 여권·얼굴 확인, Google 로그인 및 명시적 서명 | 개인정보 업로드와 본인 동의/서명은 대행하지 않음. 지금 임의 서명할 필요 없음 |
+| Harvey/설정 보유자 | 기존 Testnet issuer·agent, Google OAuth/prover/salt, OmniOne recorder 서명 수단, AI 모델 키의 안전한 인계 | OmniOne RPC는 9/28 제공·읽기 검증 완료. 나머지 실행 설정은 별도 인계 필요. [정확한 설정 표](./HARVEY_ENV_HANDOFF_2026-09-26.md) 참고 |
+| Sumsub 계정 관리자 | 실제 provider webhook 배달 검증을 위한 Sandbox webhook 관리 권한 또는 안내대로 등록 | 실제 관리 API 403 확인. SDK·상태 재조회·CX→체인의 필수 선행 조건은 아님. 기존 SDK 키 재전달 불필요 |
+| 인증/서명 당사자 | 설정 완료 후 자기 기기에서 Google 로그인 및 명시적 서명 | 본인 동의/서명은 대행하지 않음. Sumsub Sandbox에는 실제 여권·얼굴 자료를 요구하지 않으며 승인된 테스트 자료만 사용 |
 
 권한/설정 인계 뒤에는 내가 읽기 전용 환경 대조→별도 통합 배포→같은 operation의
 Sui 발급·위임·실행→서버 최종 판정→OmniOne 확정→장소 복귀→제출 증거 갱신을 진행한다.
 새 signer나 새 계약으로 기존 Harvey 권한을 임의 교체하지 않는다.
-OpenDID의 실제 issuer/holder/verifier는 기존 합의대로 native 후속 범위이며 완료 아님.
+OpenDID의 실제 issuer/holder/verifier는 별도 진행 중인 workflow이며 완료 아님.
+[연결 계약·네이티브 작업 인계](./OPENDID_WORKFLOW_BOUNDARY_2026-09-28.md)를 준비했다.
 
 ## 확인 문서
 
@@ -62,7 +71,7 @@ OpenDID의 실제 issuer/holder/verifier는 기존 합의대로 native 후속 �
 - [로그인 복귀·개발 서버 수정](./ZKLOGIN_RETURN_REVIEW_2026-09-27.md)
 - [화요일 모바일 신분증 안내](./TUESDAY_MOBILE_ID_CHECK_2026-09-29.md)
 
-## 최종 검수 증거
+## 이전 완료 시점의 검수 증거
 
 구현 revision: `ce5b07c6c01daf0dec54a827bd6b398958458621`.
 
@@ -85,7 +94,7 @@ OpenDID의 실제 issuer/holder/verifier는 기존 합의대로 native 후속 �
 **success / 66 passed(5.0분)**로 완료됐다. [CI 보고서](./WEBKIT_CI_2026-09-27.md)에
 정확한 revision과 범위를 확정했다.
 
-로컬 <http://127.0.0.1:3139/?review=0&city=seoul>은 최신 Sumsub 로컬 빌드로
-복구했고, 일반 지도 애니메이션 설정의 검수 창을 다시 열었다. 로컬 화면 fixture와
+당시 로컬 <http://127.0.0.1:3139/?review=0&city=seoul>은 최신 Sumsub 로컬 빌드로
+복구했고 검수 창을 열었다. 항상 실행 중인 주소는 아니므로 현재 접속 가능 여부는 별도다. 로컬 화면 fixture와
 위 실제 Sumsub Preview는 구분한다. 공개 주소·기존 CX immutable 주소·로컬은
 최종 HTTP 200 확인. 원격 main `a037f9f` / CX branch `e8628cf`는 그대로 유지했다.

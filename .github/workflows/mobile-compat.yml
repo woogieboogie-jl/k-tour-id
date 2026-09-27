@@ -40,6 +40,10 @@ jobs:
         run: npm install --global pnpm@10.8.0
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Verify provider boundaries without real credentials
+        run: pnpm test:harvey:unit
+      - name: Verify cancellation, expiry, legacy errors and transaction recovery
+        run: pnpm test:harvey:verification
       - name: Verify the isolated CI runner and report accounting
         run: node --test tests/ci/mobile-compat-runner.test.mjs
       - name: Install Chromium and WebKit with Linux dependencies

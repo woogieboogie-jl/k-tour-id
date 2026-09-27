@@ -3,7 +3,8 @@
 import { NextResponse } from "next/server"
 import { hkPublicConfig, HK_CONSENT_VERSION } from "@/lib/hackathon/config"
 import { assertSameOrigin, ensureSession, requireSession } from "@/lib/hackathon/session"
-import { HkError, digestOf } from "@/lib/hackathon/util"
+import { digestOf } from "@/lib/hackathon/util"
+import { safeHkError } from "@/lib/hackathon/public-error"
 import { readStore } from "@/lib/hackathon/store"
 import * as svc from "@/lib/hackathon/service"
 import { currentEpoch, suiKeys } from "@/lib/hackathon/adapters/sui"
@@ -12,6 +13,7 @@ import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
 import { isCxPreview, isReadinessPreview, previewReadOnlyResponse } from "@/lib/hackathon/preview-readiness"
 import { cxReadinessResponse } from "@/lib/hackathon/cx-readiness"
 import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewBody, cxPreviewRouteAllowed, grantCxPreviewAccess, requireCxPreviewAccess } from "@/lib/hackathon/cx-preview-access"
+import { assertIntegrationPreviewBody, assertIntegrationPreviewOrigin, assertIntegrationPreviewTarget, grantIntegrationPreviewAccess, integrationPreviewBody, integrationPreviewRouteAllowed, requireIntegrationPreviewAccess, requiresIntegrationPreviewAccess } from "@/lib/hackathon/integration-preview-access"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -35,11 +37,8 @@ function cxProjection(data: unknown): unknown {
 }
 function json(data: unknown, status = 200) { return NextResponse.json(cxProjection(data), { status, headers: { "cache-control": "no-store" } }) }
 function err(e: unknown) {
-  if (e instanceof HkError) return json({ error: { code: e.code, message: e.message, retryable: e.retryable } }, e.status)
-  if (isCxPreview()) return json({ error: { code: "cx_preview_unavailable", message: "Identity verification is temporarily unavailable.", retryable: true } }, 503)
-  const message = e instanceof Error ? e.message : "unknown"
-  console.error("[hackathon]", e)
-  return json({ error: { code: "internal", message: message.slice(0, 300), retryable: true } }, 500)
+  const failure = safeHkError(e, { cxPreview: isCxPreview() })
+  return json({ error: failure.error }, failure.status)
 }
 async function body(req: Request): Promise<Record<string, unknown>> {
   try { const b = await req.json(); return b && typeof b === "object" ? b : {} } catch { return {} }
@@ -53,6 +52,16 @@ function venueCtx(venueId: string, loc: "ko" | "en" | "ja") {
 }
 
 export async function GET(req: Request, ctx: Ctx) {
+  // The integration branch is locked even if its public flag was omitted.
+  // This boundary must precede every other profile/session/provider branch.
+  if (requiresIntegrationPreviewAccess()) {
+    try {
+      assertIntegrationPreviewTarget(req)
+      const { path } = await ctx.params
+      if (!integrationPreviewRouteAllowed(req.method, path) || new URL(req.url).search || new URL(req.url).hash) return json({ error: { code: "integration_preview_scope" } }, 403)
+      requireIntegrationPreviewAccess(req)
+    } catch (e) { return err(e) }
+  }
   if (isCxPreview()) {
     try {
       assertCxPreviewTarget(req)
@@ -101,8 +110,25 @@ export async function GET(req: Request, ctx: Ctx) {
 }
 
 export async function POST(req: Request, ctx: Ctx) {
-  if (isReadinessPreview()) return previewReadOnlyResponse()
   let checkedBody: Record<string, unknown> | undefined
+  const integrationPreview = requiresIntegrationPreviewAccess()
+  if (integrationPreview) {
+    try {
+      assertIntegrationPreviewTarget(req)
+      const { path } = await ctx.params
+      if (!integrationPreviewRouteAllowed(req.method, path) || new URL(req.url).search || new URL(req.url).hash) return json({ error: { code: "integration_preview_scope" } }, 403)
+      assertIntegrationPreviewOrigin(req)
+      if (path[0] === "integration") {
+        const b = await integrationPreviewBody(req)
+        assertIntegrationPreviewBody(path, b)
+        return grantIntegrationPreviewAccess(req, b.accessCode)
+      }
+      requireIntegrationPreviewAccess(req)
+      checkedBody = await integrationPreviewBody(req)
+      assertIntegrationPreviewBody(path, checkedBody)
+    } catch (e) { return err(e) }
+  }
+  if (isReadinessPreview()) return previewReadOnlyResponse()
   if (isCxPreview()) {
     try {
       assertCxPreviewTarget(req)
@@ -127,10 +153,11 @@ export async function POST(req: Request, ctx: Ctx) {
   if (process.env.HK_API_ENABLED !== "1" || process.env.NEXT_PUBLIC_HK_ENABLED !== "1") return json({ error: { code: "not_found" } }, 404)
   const { path } = await ctx.params
   try {
-    await assertSameOrigin()
+    // Integration already required exact Origin + immutable proxy agreement.
+    if (!integrationPreview) await assertSameOrigin()
     if (path[0] === "sessions") { const s = await ensureSession(); return json({ ok: true, sessionId: s.sessionId.slice(0, 8) + "…" }) }
     if (path[0] === "zklogin" && path[1] === "prove") {
-      const b = await body(req)
+      const b = checkedBody ?? await body(req)
       const out = await proveZkLogin({ jwt: str(b.jwt, 8192), extendedEphemeralPublicKey: str(b.extendedEphemeralPublicKey, 512), maxEpoch: Number(b.maxEpoch), jwtRandomness: str(b.jwtRandomness, 128) })
       return json({ address: out.address, inputs: out.inputs, maxEpoch: Number(b.maxEpoch) })
     }
@@ -165,7 +192,7 @@ export async function POST(req: Request, ctx: Ctx) {
         case "cancel": return json(await svc.cancel(s.sessionId, id))
         case "reconcile": return json(await svc.reconcile(s.sessionId, id))
         case "sui/agent-address": return json({ agent: suiKeys().agentAddress })
-        default: return json({ error: { code: "not_found", message: action } }, 404)
+        default: return json({ error: { code: "not_found", message: "The requested action could not be found." } }, 404)
       }
     }
     return json({ error: { code: "not_found" } }, 404)

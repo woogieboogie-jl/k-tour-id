@@ -2,7 +2,11 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 
 export function nowIso() { return new Date().toISOString() }
 export function plusMs(ms: number, from = Date.now()) { return new Date(from + ms).toISOString() }
-export function isPast(iso: string | undefined | null, now = Date.now()) { return !iso || Date.parse(iso) <= now }
+export function isPast(iso: string | undefined | null, now = Date.now()) {
+  const timestamp = iso ? Date.parse(iso) : NaN
+  // An invalid deadline is not an unlimited authorization window.
+  return !Number.isFinite(timestamp) || !Number.isFinite(now) || timestamp <= now
+}
 
 export function randomId(prefix: string, bytes = 12) { return `${prefix}_${randomBytes(bytes).toString("base64url")}` }
 export function randomHex32() { return "0x" + randomBytes(32).toString("hex") }

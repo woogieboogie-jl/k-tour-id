@@ -58,7 +58,24 @@ test("all mutating endpoints guard before provider and session work; no new endp
   expect(sandbox).toContain("NEXT_PUBLIC_HK_PREVIEW_READ_ONLY")
   expect(sandbox).toContain("NEXT_PUBLIC_HK_CX_PREVIEW")
   for (const path of ["app/api/ask/route.ts", "app/api/chat/route.ts", "app/api/hackathon/v1/[...path]/route.ts"]) {
-    expect(read(path)).toMatch(/export async function POST\([^)]*\) \{\s*if \(isReadinessPreview\(\)\) return previewReadOnlyResponse\(\)/)
+    const source = read(path)
+    if (!path.includes("hackathon/v1")) {
+      expect(source).toMatch(/export async function POST\([^)]*\) \{\s*if \(isReadinessPreview\(\)\) return previewReadOnlyResponse\(\)/)
+      continue
+    }
+    // A stricter integration-branch gate now precedes the legacy readonly gate.
+    // Preserve both boundaries rather than requiring the old literal first line.
+    const post = source.slice(source.indexOf("export async function POST("))
+    const readonly = post.indexOf("if (isReadinessPreview()) return previewReadOnlyResponse()")
+    expect(readonly).toBeGreaterThan(0)
+    for (const protectedStep of ["const integrationPreview = requiresIntegrationPreviewAccess()", "assertIntegrationPreviewTarget(req)", "requireIntegrationPreviewAccess(req)"]) {
+      expect(post.indexOf(protectedStep)).toBeGreaterThanOrEqual(0)
+      expect(post.indexOf(protectedStep)).toBeLessThan(readonly)
+    }
+    expect(post.indexOf("requireIntegrationPreviewAccess(req)")).toBeLessThan(post.indexOf("checkedBody = await integrationPreviewBody(req)"))
+    for (const businessStep of ["await assertSameOrigin()", "await ensureSession()", "await proveZkLogin(", "await svc.createOperation("]) {
+      expect(post.indexOf(businessStep)).toBeGreaterThan(readonly)
+    }
   }
   expect(read("app/api/hackathon/v1/[...path]/route.ts")).not.toContain("redisReadinessResponse")
   expect(read("app/labs/header-preview/page.tsx")).toContain("if (isReadinessPreview()) notFound()")

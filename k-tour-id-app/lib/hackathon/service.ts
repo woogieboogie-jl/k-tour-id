@@ -18,6 +18,22 @@ import { getRedemption, omnioneConfigured, receiptStatus, submitRedemption } fro
 import { credentialEligibility, presentationEligibility, redemptionEligibility, delegationExpectation, executionExpectation, executionManifest } from "./operation-evidence"
 import { verifyGrantEvidence } from "./sui-evidence"
 import { prepareDelegationOnce } from "./delegation-preparation"
+import { safeHkError } from "./public-error"
+
+/** SDK/provider errors may contain authenticated URLs or signed bytes. */
+function safeServiceError(error: unknown, code: string): HkError {
+  const projected = safeHkError(error instanceof HkError ? error : new HkError(code, "Chain request could not be completed.", 502, true))
+  return new HkError(projected.error.code, projected.error.message, projected.status, projected.error.retryable)
+}
+const PUBLIC_CHAIN_ERRORS = new Set([
+  "legacy_confirmation_requires_evidence", "isolated_mock_external_disabled", "omnione_unconfigured",
+  "registry_recorded_receipt_unavailable", "duplicate_eventKey_payload_mismatch", "submission_unresolved_check_only",
+  "submission_in_progress", "receipt_block_unavailable", "omnione_evidence_mismatch", "receipt_status_0", "omnione_request_failed",
+])
+function safeChainError(error: string | null): string | null {
+  return error === null ? null : PUBLIC_CHAIN_ERRORS.has(error) ? error
+    : safeHkError(new HkError("omnione_evidence_unavailable", "", 503, true)).error.message
+}
 
 function chainBindingConfig() {
   const t = suiTargets()
@@ -39,7 +55,14 @@ function zkLoginGraphqlUrl(): string | null {
 export function toResult(op: OperationRecord): OperationResult {
   const { secrets: _s, audit: _a, sessionId: _id, ...rest } = op
   const { allowedActions, safeNextAction } = allowed(op)
-  return { ...rest, allowedActions, safeNextAction }
+  // Older ledgers can contain SDK error strings saved before redaction. Project
+  // fixed public copy without modifying history or transaction recovery state.
+  return { ...rest, allowedActions, safeNextAction,
+    error: op.error ? safeHkError(new HkError(op.error.code, "", op.error.retryable ? 503 : 409, op.error.retryable)).error : null,
+    delegation: op.delegation ? { ...op.delegation, error: op.delegation.error === null ? null : safeHkError(new HkError("sui_delegate", "", 502, true)).error.message } : null,
+    agent: op.agent ? { ...op.agent, error: op.agent.error === null ? null : safeHkError(new HkError("sui_consume", "", 502, true)).error.message } : null,
+    chain: op.chain ? { ...op.chain, lastError: safeChainError(op.chain.lastError) } : null,
+  }
 }
 
 function allowed(op: OperationRecord): { allowedActions: AllowedAction[]; safeNextAction: NextAction } {
@@ -269,11 +292,19 @@ export async function credentialIssue(sessionId: string, operationId: string, ho
 
 export async function credentialHolderAck(sessionId: string, operationId: string, ack: { signatureB64: string }) {
   const op = await loadOperation(sessionId, operationId)
-  assert(op.status === "pending" && op.phase === "issuance" && op.credential && op.secrets.holderPublicKeyPem && op.secrets.holderKeyAlg, "phase", "credential not issued", 409)
+  const assertAcknowledgable = (o: OperationRecord) => {
+    assert(o.status === "pending" && o.phase === "issuance" && o.credential && o.secrets.holderPublicKeyPem && o.secrets.holderKeyAlg, "phase", "credential not issued", 409)
+    assert(!isPast(o.expiresAt) && o.identity?.personVerified === true && !isPast(o.identity.expiresAt), "evidence_expired", "identity evidence expired", 409)
+    assert(o.credential.status === "active" && !isPast(o.credential.validUntil) && Number.isFinite(Date.parse(o.credential.validFrom)) && Date.parse(o.credential.validFrom) <= Date.now(), "credential_expired", "credential is not currently active", 409)
+  }
+  assertAcknowledgable(op)
+  assert(op.credential && op.secrets.holderPublicKeyPem && op.secrets.holderKeyAlg, "phase", "credential not issued", 409)
   const payload = canonicalJson({ typ: "ondo-kpass-holder-ack/v1", credentialRef: op.credential.credentialRef, vcId: op.credential.vcId, holderBinding: op.credential.holderBinding })
   const ok = verifyHolderSignature({ alg: op.secrets.holderKeyAlg, publicKeyPem: op.secrets.holderPublicKeyPem, payload, signatureB64: ack.signatureB64 })
   assert(ok, "holder_ack_invalid", "holder acknowledgement signature invalid", 400)
   return mutate(sessionId, operationId, (o) => {
+    assertSnapshot(o, op)
+    assertAcknowledgable(o)
     o.credential!.holderAckAt = nowIso()
     o.phase = "presentation"
     touch(o, "credential.holder_ack")
@@ -360,11 +391,16 @@ export async function proposalCreate(sessionId: string, operationId: string, ctx
   const op = await loadOperation(sessionId, operationId)
   assert(op.status === "pending" && op.phase === "proposal" && op.presentation?.decision === "allow", "phase", "allow decision required", 409)
   assert(!isPast(op.presentation.decisionExpiresAt), "decision_expired", "decision expired; present again", 409)
+  assert(credentialEligibility(op) === null && presentationEligibility(op) === null, "eligibility", "current credential and presentation required", 409)
   if (op.proposal) return toResult(op)
   const hour = new Date().getUTCHours() + 9
   const timeOfDay = hour % 24 < 11 ? "morning" : hour % 24 < 17 ? "afternoon" : "evening"
   const proposal = await proposePerk({ venueId: op.venueId, campaignId: op.campaignId, venueName: ctx.venueName, category: ctx.category, district: ctx.district, language: ctx.locale, timeOfDay, policyVersion: op.policyVersion })
   return mutate(sessionId, operationId, (o) => {
+    assertSnapshot(o, op)
+    assert(o.status === "pending" && o.phase === "proposal" && o.presentation?.decision === "allow", "phase", "allow decision required", 409)
+    assert(!isPast(o.expiresAt) && !isPast(o.presentation.decisionExpiresAt), "decision_expired", "decision expired; present again", 409)
+    assert(credentialEligibility(o) === null && presentationEligibility(o) === null, "eligibility", "current credential and presentation required", 409)
     o.proposal = proposal
     o.phase = "delegation"
     touch(o, "proposal.created", { mode: proposal.mode, model: proposal.model, guard: proposal.guard })
@@ -390,8 +426,7 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
   assert(input.signer === "zklogin" ? signatureScheme === "ZkLogin" : signatureScheme === "ED25519", "wallet_proof", "signer label does not match the signature scheme", 400)
   try {
     await verifyPersonalMessageSignature(new TextEncoder().encode(expectedMsg), input.walletProof.signature, { address: input.userAddress, client: suiClient() })
-  } catch (e) {
-    let detail = e instanceof Error ? e.message : "unknown"
+  } catch {
     let accepted = false
     if (input.signer === "zklogin") {
       // The fullnode gRPC SignatureVerificationService has been observed to pick the wrong
@@ -405,20 +440,18 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
             query: "query($b:Base64!,$s:Base64!,$a:SuiAddress!){ verifySignature(message:$b, signature:$s, intentScope:PERSONAL_MESSAGE, author:$a){ success } }",
             variables: { b: toBase64(new TextEncoder().encode(expectedMsg)), s: input.walletProof.signature, a: input.userAddress },
           }) })
-          const j = (await res.json()) as { data?: { verifySignature?: { success: boolean } }; errors?: Array<{ message: string }> }
+          const j = (await res.json()) as { data?: { verifySignature?: { success: boolean } } }
           const v = j.data?.verifySignature
           if (v?.success === true) accepted = true
-          else detail += ` · graphql: ${v ? `success=${String(v.success)}` : (j.errors ?? []).map((x) => x.message).join("; ")}`.slice(0, 400)
-        } catch (e2) { detail += ` · graphql: ${e2 instanceof Error ? e2.message.slice(0, 200) : "?"}` }
+        } catch { /* Retry the existing verification cross-check without exposing transport errors. */ }
       }
       if (!accepted) {
         try {
-          const r = await suiClient().core.verifyZkLoginSignature({ bytes: toBase64(new TextEncoder().encode(expectedMsg)), signature: input.walletProof.signature, intentScope: "PersonalMessage", address: input.userAddress })
-          detail += ` · grpc: success=${String(r.success)}${r.errors.length ? " " + r.errors.join("; ").slice(0, 300) : ""}`
-        } catch (e2) { detail += ` · grpc: ${e2 instanceof Error ? e2.message.slice(0, 300) : "?"}` }
+          await suiClient().core.verifyZkLoginSignature({ bytes: toBase64(new TextEncoder().encode(expectedMsg)), signature: input.walletProof.signature, intentScope: "PersonalMessage", address: input.userAddress })
+        } catch { /* Diagnostic cross-check only; preserve the existing acceptance policy. */ }
       }
     }
-    if (!accepted) throw new HkError("wallet_proof", `wallet proof invalid: ${detail}`, 400)
+    if (!accepted) throw new HkError("wallet_proof", "Wallet ownership proof could not be verified.", 400)
   }
   if (op.delegation?.status === "awaiting_signature" && op.secrets.lastTxBytesB64 && op.delegation.userAddress === input.userAddress) {
     assert(op.delegation.expiresAtMs > Date.now(), "grant_window_expired", "delegation window expired", 409)
@@ -459,7 +492,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
   let error: HkError | null = null
   try {
     executed = await executeDelegation({ txBytesB64: op.secrets.lastTxBytesB64, userSignature: input.userSignature, sponsorSignature, expected })
-  } catch (e) { error = e instanceof HkError ? e : new HkError("sui_delegate", e instanceof Error ? e.message : "unknown", 502, true) }
+  } catch (e) { error = safeServiceError(e, "sui_delegate") }
   return mutate(sessionId, operationId, (o) => {
     if (o.delegation?.status === "delegated" && o.delegation.userTxDigest === expectedTxDigest) return toResult(o)
     assertSnapshot(o, dispatch)
@@ -523,7 +556,7 @@ export async function agentRun(sessionId: string, operationId: string) {
         return o
       })
     } })
-  } catch (e) { error = e instanceof HkError ? e : new HkError("sui_consume", e instanceof Error ? e.message : "unknown", 502, true) }
+  } catch (e) { error = safeServiceError(e, "sui_consume") }
   return mutate(sessionId, operationId, (o) => {
     if (o.agent?.status === "executed" && o.agent.txDigest && o.agent.txDigest === dispatch.agent?.txDigest) return toResult(o)
     assertSnapshot(o, dispatch)
@@ -710,7 +743,7 @@ export async function processOutbox(outboxId: string) {
       // Read failures before dispatch leave a fresh pending item retryable.
       r.status = r.txHash ? "submitted" : r.status
       // SDK transport errors can embed an authenticated RPC URL or signed bytes.
-      r.lastError = e instanceof HkError ? e.message.slice(0, 200) : "omnione_request_failed"
+      r.lastError = e instanceof HkError ? safeHkError(e).error.message : "omnione_request_failed"
     })
   } finally {
     await withStore((db) => {
@@ -792,7 +825,7 @@ export function evidence(op: OperationRecord) {
       agent: op.agent ? { status: op.agent.status, tx: op.agent.txDigest, txUrl: op.agent.txDigest ? explorerTx(op.agent.txDigest) : null, recordId: op.agent.recordId, recordUrl: op.agent.recordId ? explorerObject(op.agent.recordId) : null, decisionCommitment: op.agent.decisionCommitment, manifestCommitment: op.agent.manifestCommitment, manifest: op.agent.manifest, verified: op.agent.verified } : null,
     } : null,
     fulfillment: op.fulfillment,
-    omnione: op.chain ? { chainId: cfg.omnione.chainId, registry: cfg.omnione.registryAddress, eventKey: op.chain.eventKey, payloadCommitment: op.chain.payloadCommitment, status: op.chain.status, txHash: op.chain.txHash, blockNumber: op.chain.blockNumber, confirmedAt: op.chain.confirmedAt, lastError: op.chain.lastError } : null,
+    omnione: op.chain ? { chainId: cfg.omnione.chainId, registry: cfg.omnione.registryAddress, eventKey: op.chain.eventKey, payloadCommitment: op.chain.payloadCommitment, status: op.chain.status, txHash: op.chain.txHash, blockNumber: op.chain.blockNumber, confirmedAt: op.chain.confirmedAt, lastError: safeChainError(op.chain.lastError) } : null,
     provenanceCheck: op.agent?.manifest ? { recomputedManifestCommitment: digestOf(op.agent.manifest), storedManifestCommitment: op.agent.manifestCommitment, matches: digestOf(op.agent.manifest) === op.agent.manifestCommitment } : null,
     boundaries: {
       note: "Sui consume ≠ benefit used. DB redemption is the ledger; OmniOne is the audit anchor; neither chain carries PII.",

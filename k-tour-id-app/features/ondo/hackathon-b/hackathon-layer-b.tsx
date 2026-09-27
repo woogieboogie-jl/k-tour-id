@@ -19,6 +19,7 @@ import { journeyStepIndex } from "./hackathon-navigation"
 import { isCxPreview, isReadinessPreview } from "@/lib/hackathon/preview-readiness"
 import { HackathonReadinessB } from "./hackathon-readiness-b"
 import { HackathonCxPreviewB } from "./hackathon-cx-preview-b"
+import { HackathonIntegrationPreviewGate } from "./hackathon-integration-preview-b"
 
 type Locale = "ko" | "en" | "ja"
 const T = {
@@ -84,7 +85,8 @@ export function HackathonEntitlementLayerB() {
   }, [])
   if (!HACKATHON_ENABLED) return null
   if (!open) return null
-  const JourneyView = isCxPreview() ? HackathonCxPreviewB : isReadinessPreview() ? HackathonReadinessB : Journey
+  const JourneyView = process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1" ? IntegrationJourney
+    : isCxPreview() ? HackathonCxPreviewB : isReadinessPreview() ? HackathonReadinessB : Journey
   return <JourneyView key={open.resumeOperationId ?? open.venueId} detail={open} onClose={() => {
     setOpen(null)
     window.setTimeout(() => {
@@ -93,6 +95,10 @@ export function HackathonEntitlementLayerB() {
       target?.focus({ preventScroll: true })
     }, 100)
   }} />
+}
+
+function IntegrationJourney(props: { detail: HackathonOpenDetail; onClose: () => void }) {
+  return <HackathonIntegrationPreviewGate {...props}><Journey {...props} /></HackathonIntegrationPreviewGate>
 }
 
 /** Optional demo-menu slot. Never competes with the first map experience. */

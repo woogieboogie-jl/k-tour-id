@@ -5,8 +5,8 @@
 //             Upstash DB). Enabled when UPSTASH_REDIS_REST_URL/TOKEN (or the Vercel KV
 //             aliases KV_REST_API_URL/TOKEN) are present. Multi-instance safe: every
 //             read-modify-write holds a short NX lock and always re-reads the blob.
-//   • file  — atomic JSON file (tmp + rename) for single-process local demos. On Vercel
-//             without Redis the file falls back to /tmp (per-instance, non-durable).
+//   • file  — atomic JSON file (tmp + rename) for single-process local/isolated demos.
+//             Full hosted integration requires dedicated Redis; no /tmp fallback.
 // Unique constraints: one redemption per subjectRef+campaignId, one intent per
 // operation, idempotency keys per (operation, action). The service layer only depends
 // on this module's API (withStore / readStore), so swapping to PostgreSQL stays local.
@@ -17,6 +17,7 @@ import type { OperationResult } from "./types"
 import { HkError } from "./util"
 import { parseStoredJourney } from "./store-integrity"
 import { previewRedisConfig, storeRedisCommand, type StoreCanaryOwnership } from "./redis-config"
+import { hostedIntegrationRedisConfig, requiresHostedIntegrationRedis } from "./hosted-store-config"
 
 export type OperationRecord = OperationResult & {
   sessionId: string
@@ -73,6 +74,17 @@ function backend(): Backend {
     if (backendSingleton && (backendSingleton.kind !== "redis" || backendSingleton.url !== config.url ||
       backendSingleton.token !== config.token || backendSingleton.key !== config.key ||
       backendSingleton.canary?.ownerToken !== config.canary?.ownerToken)) {
+      throw new HkError("store_configuration", "Journey storage configuration changed; restart the instance.", 503)
+    }
+    backendSingleton ??= { kind: "redis", ...config }
+    return backendSingleton
+  }
+  if (requiresHostedIntegrationRedis(process.env, hkConfig().isolatedMock)) {
+    // Validate before the cache: removing/changing a branch's settings must not
+    // reuse an old ledger or downgrade a provider journey to per-instance files.
+    const config = hostedIntegrationRedisConfig(process.env)
+    if (backendSingleton && (backendSingleton.kind !== "redis" || backendSingleton.canary ||
+      backendSingleton.url !== config.url || backendSingleton.token !== config.token || backendSingleton.key !== config.key)) {
       throw new HkError("store_configuration", "Journey storage configuration changed; restart the instance.", 503)
     }
     backendSingleton ??= { kind: "redis", ...config }

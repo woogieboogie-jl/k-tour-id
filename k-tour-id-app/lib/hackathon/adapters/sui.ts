@@ -83,7 +83,7 @@ async function executeSigned(bytes: Uint8Array, signatures: string[]) {
   const txn = res.Transaction ?? res.FailedTransaction
   if (!txn) throw new HkError("sui_execute", "no transaction result", 502, true)
   if (txn.digest !== transactionDigest(bytes)) throw new HkError("sui_evidence_mismatch", "transaction response digest differs from submitted bytes", 502)
-  if (!txn.status.success) throw new HkError("sui_execute_failed", `Sui execution failed: ${JSON.stringify(txn.status.error).slice(0, 300)}`, 502)
+  if (!txn.status.success) throw new HkError("sui_execute_failed", "The chain rejected this transaction", 502)
   // executeTransaction returns on validator certification; the fullnode we read from
   // may lag by a checkpoint. Wait until it has indexed this tx so the follow-up
   // getObject / gas-coin lookups never see stale state ("Object … not found").
@@ -106,12 +106,11 @@ async function waitForIndexed(digest: string, timeoutMs = 15_000) {
 /** getObject with a short retry: a freshly created object can trail the tx by a moment. */
 async function getObjectRetry(objectId: string, include?: { json?: boolean }, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs
-  let lastErr: unknown = null
   while (Date.now() < deadline) {
-    try { return (await suiClient().getObject(include ? { objectId, include } : { objectId })).object } catch (e) { lastErr = e }
+    try { return (await suiClient().getObject(include ? { objectId, include } : { objectId })).object } catch { /* bounded read retry; provider text is never retained */ }
     await new Promise((r) => setTimeout(r, 400))
   }
-  throw lastErr instanceof Error ? lastErr : new HkError("sui_read", `object ${objectId} not readable`, 502, true)
+  throw new HkError("sui_read", "The chain object is not available yet", 502, true)
 }
 
 type Executed = Awaited<ReturnType<typeof executeSigned>>

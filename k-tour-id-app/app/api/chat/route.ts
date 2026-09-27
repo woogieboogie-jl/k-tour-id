@@ -4,6 +4,7 @@
 
 import { geminiGenerate } from "@/lib/gemini"
 import { isCxPreview, isReadinessPreview, previewReadOnlyResponse } from "@/lib/hackathon/preview-readiness"
+import { requiresIntegrationPreviewAccess } from "@/lib/hackathon/integration-preview-access"
 
 export const runtime = "nodejs"
 
@@ -13,6 +14,10 @@ const SYSTEM =
 export async function POST(req: Request) {
   if (isReadinessPreview()) return previewReadOnlyResponse()
   if (isCxPreview()) return previewReadOnlyResponse()
+  // Integration AI is available only through the protected, operation-bound proposal route.
+  if (requiresIntegrationPreviewAccess()) return Response.json({ error: {
+    code: "integration_preview_scope", message: "This endpoint is unavailable in the private integration preview.", retryable: false,
+  } }, { status: 403, headers: { "cache-control": "no-store" } })
   const gemini = process.env.GEMINI_API_KEY
   if (!gemini) {
     return Response.json({ error: "No AI key configured (set GEMINI_API_KEY)" }, { status: 503 })

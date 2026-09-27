@@ -1,8 +1,14 @@
 # 실제 연동 인계 · 본인 승인 안내 — 2026-09-26
 
+9/28 후속: OmniOne 인증 RPC가 제공됐고 현재 체인 ID·registry 코드·recorder 권한·배포 receipt를
+실제 확인했다. **RPC 토큰/계약 주소 재요청은 불필요**하며 신규 거래용 기존 recorder 서명 수단만 남는다.
+[최신 아침 인계](./MORNING_HANDOFF_2026-09-28.md)를 우선한다. OpenDID는 별도 workflow로 진행 중이다.
+RPC·공개 체인 설정·기존 Redis pair·CX 연결값·새 통합 전용 가명화 seed는
+통합 브랜치 전용 서버 설정으로 준비했다. **기존 CX seed 이전은 더 이상 사용자 작업이 아니다.**
+
 ## 현재 상태와 범위
 
-- Harvey 구현 코드는 통합돼 있지만, 코드와 Vercel의 서버 비밀 설정은 별개다. 이번 확인에서 `ondo` 프로젝트의 환경변수 메타데이터에 아래 Sui/zkLogin/OmniOne/AI 설정 이름이 없었다. Harvey 별도 서비스의 실패를 뜻하는 것은 아니다.
+- Harvey 구현 코드는 통합돼 있지만, 코드와 Vercel의 서버 비밀 설정은 별개다. **9/28 준비 전 스냅샷**에서는 `ondo` 프로젝트 환경변수 메타데이터에 아래 Sui/zkLogin/OmniOne/AI 설정 이름이 없었다. 이후 공개 Sui/OmniOne 값·제공된 RPC·독립 가명화 seed 등 14개를 통합 branch에 준비했다. 서명키·Google/prover·AI 키 미확보와는 구분한다. Harvey 별도 서비스의 실패를 뜻하는 것은 아니다.
 - 현재 검수 배포는 **CX-only Preview**다. 실제 QR 생성·앱 연결 링크 반환·미인증 처리·복원·취소까지 검수했으며, 실제 소지자 승인 성공은 아직 확인하지 않았다.
 - Preview에서 체인·Google 로그인·AI 실행을 막아 놓은 것은 의도한 경계다. 설정을 받더라도 이 검수 환경에 한꺼번에 기능을 켜지 않고 별도 보호된 통합 검수 환경을 준비한다.
 - 공개 Production, Harvey 배포, megan 계정과 다른 프로젝트는 변경하지 않는다.
@@ -36,18 +42,36 @@ Vercel에서 **jaewook 팀 → ondo 프로젝트 → Settings → Environment Va
 
 ## 2. Harvey에게 받을 설정
 
-비밀값은 **승인된 Vercel 서버 환경변수 등록 또는 별도 보안 인계**로 받는다. 채팅·PR·Markdown·프런트엔드 코드에 넣지 않는다. 기존 정상 동작 형식을 그대로 유지하며 키/주소/솔트를 임의 재생성하지 않는다.
+비밀값은 **승인된 Vercel 서버 환경변수 등록 또는 별도 보안 인계**로 받는다. 채팅·PR·Markdown·프런트엔드 코드에 넣지 않는다. 아래 기존 signer·provider 키·주소·Google/zkLogin salt는 정상 동작 형식을 그대로 유지하며 임의 재생성하지 않는다.
+
+등록 대상: **jaewook-9643 / ondo → Settings → Environment Variables → Preview →
+branch `integration/autonomous-finish-20260927`**. 기존 CX branch나 Production에 추가하지 않는다.
+서버 키는 sensitive로 보관한다. 자동 배포는 비활성화해 두었으므로 등록 후에는 변수 이름과
+완료 여부만 알려주면 된다. 사용자가 전체 배포/테스트를 직접 수행할 필요는 없다.
 
 | 구분 | 필요한 인계 | 이유 / 주의 |
 | --- | --- | --- |
 | Sui 서버 서명 | `HK_SUI_ISSUER_SECRET_KEY`, `HK_SUI_AGENT_SECRET_KEY`; 별도 sponsor를 사용했다면 `HK_SUI_SPONSOR_SECRET_KEY` | 기존 Campaign 역할과 일치해야 한다. sponsor 미설정 시 코드는 issuer 키를 사용하므로 신규 sponsor 키를 무조건 요구할 필요는 없다. 반드시 데모용 Testnet 권한만 인계한다. |
 | Google + zkLogin | `NEXT_PUBLIC_GOOGLE_CLIENT_ID`, 기존 `HK_ZKLOGIN_SALT_SEED`; **기존 증명 경로에 따라** Enoki의 `ENOKI_API_KEY`(custom URL 사용 시 `ENOKI_API_URL`) **또는** 승인된 `HK_ZKLOGIN_PROVER_URL`과 접근 조건 | Google client ID는 공개 식별자이며 비밀 키/seed는 서버 전용이다. 두 증명 경로를 모두 요구하지 않는다. 키가 있으면 코드가 Enoki를 우선한다. Enoki 경로라면 해당 Google client 등록/사용 권한도 필요하다. seed는 현재 config/UI gate에 필요하지만 Enoki가 관리하는 사용자 salt 자체가 아니다. Testnet 호환성을 확인하고 기존 솔트/증명 경로를 임의로 바꾸지 않는다. |
 | OAuth 관리 권한 | Google OAuth client의 redirect URI 추가 가능 담당자/접근, Enoki 프로젝트 설정 담당자/접근 | 새 검수 origin의 `/hackathon/zklogin/callback`을 정확히 허용해야 한다. API key만 복사해서 끝나는 작업이 아니다. Google 로그인·최종 사용자 서명은 사용자 승인 단계로 남는다. |
-| OmniOne Chain | 인증된 전체 `HK_OMNIONE_RPC_URL`, `HK_OMNIONE_PRIVATE_KEY`(기존 승인된 recorder) | 저장소의 URL 규격은 `https://stage-chainapi.omnione.net/?token=<API_KEY>`. 토큰 포함 URL 전체가 비밀이다. 현재 adapter는 그 URL을 직접 지원하며 별도 `HK_OMNIONE_RPC_TOKEN` 변수는 없다. 키는 registry의 recorder 권한과 맞아야 한다. |
+| OmniOne Chain | `HK_OMNIONE_PRIVATE_KEY`(기존 승인된 recorder의 서명 수단) | `HK_OMNIONE_RPC_URL`은 9/28 읽기 검증 및 통합 branch 설정 완료, 재요청하지 않는다. 정식 주소는 `https://stage-chainapi.omnione.net/?token=<API_KEY>`. URL 전체가 서버 비밀값이다. 별도 `HK_OMNIONE_RPC_TOKEN` 변수는 없다. 서명키는 registry의 recorder 권한과 맞아야 한다. |
 | AI 모델 | `GEMINI_API_KEY`, 실제 사용한 `GEMINI_MODEL`·`HK_AI_MODE` 설정 | 앞서 조회한 Harvey 공개 mode는 `rule`이었다. 명시적 `HK_AI_MODE=rule`이면 키만 추가해도 Gemini로 전환되지 않는다. 실제 모델 키가 없는 경우 기존 rule 동작을 실제 AI 제공자 호출 성공으로 간주하지 않는다. 키가 없다면 별도 승인된 데모용 키 준비가 필요하다. |
 | CX 서비스 조건 | 일반 앱/테스트베드 앱 여부, `comdl`에 맞는 신분증 조건, `AdultVerify` 결과의 CI 제공 여부; 별도 서비스 키가 있었다면 설정명/안전한 인계 | 현재 서울 Preview에서 QR/app 요청 자체는 성공했다. 국내망 문제로 추정해 호스팅을 다시 바꾸기 전에 승인·자격증명/클레임 조건을 확인한다. |
 
 추가 개발 요청이 아니라 **동작하던 배포의 실행 설정을 새 환경으로 이전하는 요청**이다. 전체 Vercel 계정 비밀번호나 다른 서비스의 키는 필요 없다. 기존 테스트용 signer의 인계가 불가하다면 신규 역할 위임은 별도 설계/승인 작업이며 자동으로 계약을 교체하지 않는다.
+
+### 통합 가명화 seed — 이미 처리했으므로 인계 불필요
+
+전용 ledger `ktour:integration-preview:autonomous-20260928:v1`와 그 lock key가 모두 없음을
+`EXISTS` 한 번으로 읽어 확인했다(Redis 쓰기 없음). 새 32바이트 난수 seed를 한 번 생성해
+`HK_ISSUER_SIGNING_SEED`로 **통합 Preview branch에만 sensitive 등록**하고 scope/type을 재확인했다.
+기존 CX seed의 ID·수정 시각과 ledger는 그대로다. 원본 보관자에게 이전을 요청하지 않는다.
+
+이는 독립 가명 영역의 최초 설정이다. 새 seed는 통합 ledger 수명 동안 모든 instance/재배포에서
+같이 유지하며 배포마다 재생성하지 않는다. 옛 session·subjectRef·credential·redemption·outbox는
+가져오지 않고, 두 ledger 사이 동일인 결합이나 1회 사용 연속성을 주장하지 않는다.
+기존 Sui·OmniOne·실제 OpenDID 서명키나 Google/zkLogin salt를 교체한 것이 아니며,
+실제 OpenDID 제공자 구현·승인 검사가 완료됐다는 뜻도 아니다.
 
 ### 이미 확보했으므로 다시 요청하지 않아도 되는 공개값
 
@@ -57,7 +81,7 @@ Vercel에서 **jaewook 팀 → ondo 프로젝트 → Settings → Environment Va
 | `HK_SUI_PACKAGE_ID` | `0xc5d26326ffd5267bb5b54625c1e2b9c03f7cca4753232d0b042c62ee74fd975d` |
 | `HK_SUI_CAMPAIGN_ID` | `0xe3fce96c9c9e1086ff20dd7453e16ff2c52d3d3324e6e4e34446c7d0dc2ecf16` |
 | `HK_SUI_CAMPAIGN_INITIAL_VERSION` | `349181955` |
-| `HK_OMNIONE_CHAIN_ID` | `201210` (배포 기록값; 인증된 현재 RPC 재확인 필요) |
+| `HK_OMNIONE_CHAIN_ID` | `201210` (9/28 인증된 현재 RPC로 확인 완료) |
 | `HK_OMNIONE_REGISTRY_ADDRESS` | `0x696bc4e29c8f8079b6d3cd49d310a09577550e4c` |
 
 OmniOne 앱용 계약은 `DemoEntitlementRegistry`이며 옛 `KTourAnchor`가 아니다. 저장소 공개 recorder 주소는 `0x003403Cb95c2FFd66BC5748738d96C4A5B48b4ba`다. 주소를 안다고 그 서명 권한을 보유한 것은 아니다. 이 stage 기록은 gasPrice=0이므로 잔액이 반드시 양수여야 한다고 가정하지 않는다.
@@ -76,6 +100,6 @@ SDK 키의 관리 권한 부족(403)으로 [별도 관리자 인계](./SUMSUB_LI
 3. Sui 현재 Campaign·역할·가스 읽기 확인, OmniOne 인증된 read-only chain ID·code·recorder·기존 receipt 확인.
 4. 별도 보호된 통합 검수 환경에서 Testnet 발급 → 사용자 승인·위임 → 실행 → 서버 최종 판정 → OmniOne receipt와 payload commitment → 장소 복귀를 1회 시나리오로 검수한다.
 5. demo signer 테스트와 **실제 Google zkLogin 사용자 서명** 테스트를 구분한다. 성공 증빙뿐 아니라 중복 사용·취소·만료·OmniOne 지연/재시도도 확인한다.
-6. 실제 결과에 맞춰 제출 스펙/잔여 항목을 갱신한다. OpenDID native는 기존 합의대로 별도 후속이며 완료로 표시하지 않는다.
+6. 실제 결과에 맞춰 제출 스펙/잔여 항목을 갱신한다. OpenDID native는 별도 진행 workflow이며 완료로 표시하지 않는다.
 
 참조: [CX 실배포 검수](./CX_LIVE_PREVIEW_2026-09-26.md), [공개 체인 읽기 검수](./CHAIN_READONLY_2026-09-26.md).
