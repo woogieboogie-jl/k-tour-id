@@ -16,8 +16,12 @@ test.beforeEach(async ({ page, context, baseURL, request }) => {
   const origin = new URL(baseURL!).origin
   expect(["127.0.0.1", "localhost", "[::1]"]).toContain(new URL(origin).hostname)
   const config = await request.get(`${origin}/api/hackathon/v1/config`)
-  expect(config.ok(), "Read-only isolation check must succeed").toBe(true)
-  expect(await config.json()).toMatchObject({ isolatedMock: true })
+  if (process.env.KTOUR_QA_PUBLIC_PROFILE === "1") {
+    expect(config.status(), "Public UI must not expose hackathon APIs").toBe(404)
+  } else {
+    expect(config.ok(), "Read-only isolation check must succeed").toBe(true)
+    expect(await config.json()).toMatchObject({ isolatedMock: true })
+  }
   const forbidden: string[] = []
   forbiddenRequests.set(page, forbidden)
   const diagnostics = { pageErrors: [] as string[], failedRequests: [] as string[] }
@@ -94,7 +98,7 @@ test.describe("manual story carousel and editorial spectrum", () => {
     const previews = page.getByTestId("map-discovery-story-carousel")
     await expect(previews).toBeVisible()
     const cards = previews.locator("[data-story-id]")
-    await expect(cards).toHaveCount(2)
+    await expect(cards).toHaveCount(3)
     expect(await cards.evaluateAll(nodes => nodes.every(node => node.querySelector("[data-testid='map-discovery-story']")?.getAttribute("aria-label")?.includes("Jeju")))).toBe(true)
 
     const first = cards.first().getByTestId("map-discovery-story")

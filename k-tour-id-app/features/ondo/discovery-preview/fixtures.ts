@@ -1,29 +1,14 @@
 import { RESEARCHED_FOOD_B, researchFoodMediaB } from "../map/researched-food-b"
 import { JEJU_EDITORIAL_PLACES } from "../pulse-b/japan-first-pulse-model-b"
 
-export type Locale = "ko" | "en" | "ja"
-export type City = "seoul" | "jeju"
-export type Mood = "hot" | "warm" | "cool"
-export type StoryId = "sesame" | "screen" | "seoul-cafes" | "seoul-table" | "jeju-kpop"
-export type Kind = "all" | "cafe" | "food"
-export type Words = Record<Locale, string>
-export const words = (ko: string, en: string, ja: string): Words => ({ ko, en, ja })
-export type Place = {
-  id: string; city: City; name: Words; area: Words; reason: Words
-  latitude: number; longitude: number; kind: "cafe" | "food" | "bar" | "sight"
-  image: string; imageAlt: Words; illustration: boolean; credit: string; source: string
-  photoSource?: string; licenseUrl?: string
-}
-export type Story = {
-  id: StoryId; city: City; title: Words; image: string; places: string[]; source: string
-  sources?: { label: string; url: string }[]
-  intro: Words; paragraphs: Words[]; stopNotes: Record<string, Words>
-}
-export type Scope = { city: City; mode: "explore" | "story" | Mood | "search" | "saved"; story?: string; query?: string }
+import { words, type Words, type Place, type Story, type Mood, type Scope, type Kind } from "./discovery-content-types"
+import { BUSAN_STORY_PLACES, BUSAN_STORIES } from "./busan-stories"
+import { JEJU_ADDITIONAL_PLACES, JEJU_ADDITIONAL_STORIES } from "./jeju-stories"
+export * from "./discovery-content-types"
 
 function food(id: string, reason: Words, fallback: string, source?: string): Place {
   const place = RESEARCHED_FOOD_B.find(p => p.id === id)
-  if (!place || place.city === "busan") throw new Error(`Invalid discovery fixture: ${id}`)
+  if (!place) throw new Error(`Invalid discovery fixture: ${id}`)
   const media = researchFoodMediaB(place)
   return {
     id, city: place.city, name: place.name, area: place.district, reason,
@@ -108,7 +93,7 @@ export const PLACES: Place[] = [...foodPlaces, {
   imageAlt: words("참기름 시장 여행 일러스트", "Sesame-oil market illustration", "ゴマ油と市場のイラスト"),
   illustration: true, credit: "K-Tour ID · Editorial illustration",
   source: "https://english.visitkorea.or.kr/svc/contents/contentsView.do?vcontsId=86289",
-}, ...jejuPlaces, ...jejuKpopPlaces]
+}, ...jejuPlaces, ...jejuKpopPlaces, ...BUSAN_STORY_PLACES, ...JEJU_ADDITIONAL_PLACES]
 
 export const STORIES: Story[] = [{
   id: "sesame", city: "seoul", title: words("참기름 따라, 시장으로", "Follow the sesame oil", "ゴマ油を探しに市場へ"),
@@ -240,8 +225,8 @@ export const STORIES: Story[] = [{
     "jeju-donsadon": words("K-pop 미식 안내에 등장하는 제주시의 흑돼지 식당이에요.", "The Jeju City black-pork stop in the K-pop food guide.", "K-popグルメ案内に登場する、済州市の黒豚料理店。"),
     "jeju-oneunjeong-gimbap": words("같은 안내 속 서귀포 김밥집이에요. 주문 방식은 매장에 확인해 주세요.", "The guide’s Seogwipo gimbap stop; check ordering with the shop.", "同じ案内の西帰浦キンパ店。注文方法はお店に確認を。"),
   },
-}]
-export const CITIES = { seoul: words("서울", "Seoul", "ソウル"), jeju: words("제주", "Jeju", "済州") }
+}, ...BUSAN_STORIES, ...JEJU_ADDITIONAL_STORIES]
+export const CITIES = { seoul: words("서울", "Seoul", "ソウル"), busan: words("부산", "Busan", "釜山"), jeju: words("제주", "Jeju", "済州") }
 export function searchMood(query: string): Mood | null {
   const q = query.trim().toLocaleLowerCase()
   return ["hot", "핫", "ホット"].includes(q) ? "hot" : ["warm", "웜", "ウォーム"].includes(q) ? "warm" : ["cool", "쿨", "クール"].includes(q) ? "cool" : null
