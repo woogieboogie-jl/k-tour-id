@@ -9,10 +9,19 @@ export const SESSION_TTL_MS = 30 * 60 * 1000
 export const RECOVERY_TTL_MS = 7 * 24 * 60 * 60 * 1000
 export const SESSION_COOKIE = "ktour_sumsub_sandbox"
 export const RECOVERY_COOKIE = "ktour_sumsub_sandbox_recovery"
+export const SUMSUB_PREVIEW_EXPIRY_CUTOFF = Date.parse("2026-09-30T14:59:59.000Z")
 export class SandboxError extends Error { constructor(public code: string, public status = 503) { super(code) } }
 
-export function readSandboxConfig(env: Record<string, string | undefined> = process.env): SandboxConfig | null {
+export function isPreviewExpiryValid(value: string | undefined, now = Date.now()): boolean {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false
+  const expiry = Date.parse(value)
+  if (!Number.isFinite(expiry) || expiry <= now) return false
+  return expiry <= Math.min(now + 30 * 24 * 60 * 60 * 1000, SUMSUB_PREVIEW_EXPIRY_CUTOFF)
+}
+
+export function readSandboxConfig(env: Record<string, string | undefined> = process.env, now = Date.now()): SandboxConfig | null {
   if (env.SUMSUB_MODE !== "sandbox" || env.NEXT_PUBLIC_ONDO_SUMSUB_SANDBOX !== "1" || env.NEXT_PUBLIC_HK_PREVIEW_READ_ONLY === "1" || env.NEXT_PUBLIC_HK_CX_PREVIEW === "1" || env.VERCEL_ENV === "production") return null
+  if (env.VERCEL_ENV === "preview" && !isPreviewExpiryValid(env.SUMSUB_PREVIEW_EXPIRES_AT, now)) return null
   const appToken = env.SUMSUB_APP_TOKEN, secretKey = env.SUMSUB_SECRET_KEY, webhookSecret = env.SUMSUB_WEBHOOK_SECRET, sessionSecret = env.SUMSUB_SESSION_SECRET, accessCode = env.SUMSUB_PREVIEW_ACCESS_CODE, levelName = env.SUMSUB_LEVEL_NAME
   if (!appToken?.startsWith("sbx:") || !secretKey || !sessionSecret || sessionSecret.length < 32 || !accessCode || accessCode.length < 16 || accessCode.length > 256 || !levelName || !/^[A-Za-z0-9_-]{1,100}$/.test(levelName)) return null
   const origins = (env.SUMSUB_ALLOWED_ORIGINS ?? "").split(",").filter(Boolean).flatMap(value => {

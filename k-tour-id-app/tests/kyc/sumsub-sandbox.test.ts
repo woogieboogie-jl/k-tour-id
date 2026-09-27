@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { createHmac } from "node:crypto"
 import test from "node:test"
 import { createSumsubRecord, mutateSumsubRecord, readSumsubRecord } from "../../lib/kyc/sumsub-store"
-import { createSession, normalizeReview, readVerifiedSandboxStatus, verifyWebhookSignature } from "../../lib/kyc/sumsub-sandbox"
+import { createSession, isPreviewExpiryValid, normalizeReview, readVerifiedSandboxStatus, verifyWebhookSignature } from "../../lib/kyc/sumsub-sandbox"
 
 process.env.SUMSUB_LOCAL_MEMORY = "1"
 const secret = "fixture-session-secret-012345678901234567890123"
@@ -52,4 +52,18 @@ test("CX/read-only preview guards exclude the Sumsub surface", async () => {
   const base = { SUMSUB_MODE: "sandbox", NEXT_PUBLIC_ONDO_SUMSUB_SANDBOX: "1", SUMSUB_APP_TOKEN: "sbx:x", SUMSUB_SECRET_KEY: "s", SUMSUB_WEBHOOK_SECRET: "w", SUMSUB_SESSION_SECRET: secret, SUMSUB_PREVIEW_ACCESS_CODE: "access-code-fixture-1234", SUMSUB_LEVEL_NAME: "id-and-liveness", SUMSUB_ALLOWED_ORIGINS: "http://localhost:3000" }
   assert.equal(readSandboxConfig({ ...base, NEXT_PUBLIC_HK_PREVIEW_READ_ONLY: "1" }), null)
   assert.equal(readSandboxConfig({ ...base, NEXT_PUBLIC_HK_CX_PREVIEW: "1" }), null)
+})
+
+test("protected Preview requires a short, future expiry while local fixtures remain unchanged", async () => {
+  const { readSandboxConfig } = await import("../../lib/kyc/sumsub-sandbox")
+  const now = Date.parse("2026-09-27T00:00:00.000Z")
+  const expiry = "2026-09-30T14:59:59.000Z"
+  const base = { SUMSUB_MODE: "sandbox", NEXT_PUBLIC_ONDO_SUMSUB_SANDBOX: "1", VERCEL_ENV: "preview", VERCEL: "1", VERCEL_URL: "preview.example.vercel.app", SUMSUB_APP_TOKEN: "sbx:x", SUMSUB_SECRET_KEY: "s", SUMSUB_WEBHOOK_SECRET: "w", SUMSUB_SESSION_SECRET: secret, SUMSUB_PREVIEW_ACCESS_CODE: "access-code-fixture-1234", SUMSUB_LEVEL_NAME: "id-and-liveness", SUMSUB_ALLOWED_ORIGINS: "https://preview.example.vercel.app" }
+  assert.equal(isPreviewExpiryValid(expiry, now), true)
+  assert.equal(readSandboxConfig({ ...base, SUMSUB_PREVIEW_EXPIRES_AT: expiry }, now)?.levelName, "id-and-liveness")
+  for (const value of [undefined, "not-a-date", "2026-09-26T23:59:59.000Z", "2026-10-01T00:00:00.000Z", "2026-09-30T14:59:59Z"])
+    assert.equal(isPreviewExpiryValid(value, now), false)
+  assert.equal(readSandboxConfig({ ...base }, now), null)
+  const localBase = { ...base, VERCEL_ENV: "", VERCEL: undefined, VERCEL_URL: undefined, SUMSUB_ALLOWED_ORIGINS: "http://localhost:3000" }
+  assert.equal(readSandboxConfig(localBase, now)?.levelName, "id-and-liveness")
 })
