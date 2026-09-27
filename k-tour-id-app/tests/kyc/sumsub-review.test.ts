@@ -82,6 +82,8 @@ test("provider lookup binds external user, sandbox and level before accepting an
   for (const patch of [
     { applicant: { externalUserId: "foreign-user" } },
     { applicant: { sandboxMode: false } },
+    { applicant: { sandboxMode: null } },
+    { applicant: { sandboxMode: "true" } },
     { applicant: { id: "../../foreign?token=secret" } },
     { review: { levelName: "foreign-level" } },
   ]) {
@@ -96,6 +98,22 @@ test("provider lookup binds external user, sandbox and level before accepting an
       return true
     })
   }
+})
+
+test("real applicant GET shape omits the webhook-only sandbox marker without weakening environment or identity binding", async () => {
+  const session = createSession(config, origin)
+  for (const status of ["init", "completed"]) {
+    let calls = 0
+    const fetcher: typeof fetch = async () => ++calls === 1
+      ? Response.json({ id: "fixture_applicant", externalUserId: session.externalUserId })
+      : Response.json({ levelName: config.levelName, reviewStatus: status, reviewResult: { reviewAnswer: "GREEN" } })
+    assert.equal(await readVerifiedSandboxStatus(config, session, fetcher, "fixture_applicant"), status === "init" ? "in_progress" : "approved")
+    assert.equal(calls, 2)
+  }
+  let calls = 0
+  const fetcher: typeof fetch = async () => { calls++; throw new Error("must not call production") }
+  await assert.rejects(readVerifiedSandboxStatus({ ...config, appToken: "prd:fixture" }, session, fetcher), error => error instanceof SandboxError && error.code === "provider_binding_mismatch")
+  assert.equal(calls, 0)
 })
 
 test("provider status returns only a bounded status, never full applicant or review payloads", async () => {
@@ -321,6 +339,22 @@ test("webhooks cannot seed an unknown user, use production/manual samples, wrong
     const alias = await webhook(eventFor(session.externalUserId), { aliasHeader: true })
     assert.equal(alias.status, 401)
     assert.equal((await readSumsubRecord(session.externalUserId, config.sessionSecret))?.needsRefresh, undefined)
+  } finally { restore() }
+})
+
+test("webhook re-query accepts the actual marker-free GET shape but not contradictory environment data", async () => {
+  const restore = setup({ SUMSUB_LOCAL_MEMORY: "1" })
+  try {
+    for (const marker of [false, null, "true", "omitted"] as const) {
+      const session = await seedRecord()
+      globalThis.fetch = async () => Response.json({ id: "fixture_applicant", externalUserId: session.externalUserId,
+        ...(marker === "omitted" ? {} : { sandboxMode: marker }) })
+      const response = await webhook(eventFor(session.externalUserId))
+      assert.equal(response.status, marker === "omitted" ? 200 : 400)
+      const saved = await readSumsubRecord(session.externalUserId, config.sessionSecret)
+      assert.equal(saved?.needsRefresh === true, marker === "omitted")
+      assert.equal(saved?.status, "pending")
+    }
   } finally { restore() }
 })
 
