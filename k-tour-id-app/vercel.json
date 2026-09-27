@@ -1,13 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "pnpm build:vercel:cx-preview",
+  "buildCommand": "node scripts/kyc/sumsub-preview-build.mjs",
   "installCommand": "pnpm install --frozen-lockfile",
   "outputDirectory": ".next",
   "git": {
     "deploymentEnabled": {
       "integration/autonomous-finish-20260927": false,
-      "integration/sumsub-live-20260927": false
+      "integration/sumsub-live-20260927": true
     }
   },
   "regions": ["icn1"]
