@@ -5,7 +5,7 @@
 // for the pending operation and return to the map, where the journey resumes.
 import { useEffect, useRef, useState } from "react"
 import { readPendingHackathon } from "@/features/ondo/hackathon-b/hackathon-campaign"
-import { readSigner, writeSigner } from "@/features/ondo/hackathon-b/hackathon-client"
+import { clearZkLoginOAuthAttempt, readSigner, writeSigner } from "@/features/ondo/hackathon-b/hackathon-client"
 import { readOAuthReturn } from "@/features/ondo/hackathon-b/hackathon-oauth-return"
 import { isCxPreview, isReadinessPreview } from "@/lib/hackathon/preview-readiness"
 import styles from "./return.module.css"
@@ -44,7 +44,11 @@ export default function ZkLoginCallbackPage() {
       const target = id && pending ? `/?venueId=${encodeURIComponent(pending.venueId)}&detail=1&hk=${encodeURIComponent(id)}` : "/"
       setReturnTo(target)
       const result = readOAuthReturn(fragment, query, signer?.kind === "zklogin" && signer.jwtPending ? signer.oauthState : undefined)
-      if (!id || !signer || signer.kind !== "zklogin" || result.status !== "accepted") { setFailed(true); return }
+      if (!id || !signer || signer.kind !== "zklogin" || result.status !== "accepted") {
+        if (id) clearZkLoginOAuthAttempt(id)
+        setFailed(true)
+        return
+      }
       window.sessionStorage.setItem(`ondo-b.hackathon.jwt:${id}`, result.token)
       writeSigner(id, { ...signer, oauthState: undefined }) // one return per login attempt
       window.location.replace(target)
@@ -53,7 +57,7 @@ export default function ZkLoginCallbackPage() {
     }
   }, [])
   const copy = COPY[locale]
-  return <main className={styles.page} lang={locale}>
+  return <main className={styles.page} lang={locale} data-testid="hackathon-login-callback" data-state={failed ? "failed" : "checking"}>
     <section className={styles.card} aria-live="polite">
       <p className={styles.brand}>K-Tour ID</p>
       <h1>{failed ? copy.stopped : copy.waiting}</h1>

@@ -128,6 +128,27 @@ export function writeSigner(operationId: string, s: StoredSigner | null) {
   if (!s) sessionStorage.removeItem(`${SIGNER_KEY}:${operationId}`)
   else sessionStorage.setItem(`${SIGNER_KEY}:${operationId}`, JSON.stringify(s))
 }
+/** End one OAuth attempt without discarding the ephemeral key needed for a retry.
+ * A provider cancellation or malformed callback must not leave an old state
+ * value looking usable on the next return. No token or proof is created here. */
+export function clearZkLoginOAuthAttempt(operationId: string) {
+  try {
+    const signer = readSigner(operationId)
+    if (signer?.kind === "zklogin" && signer.jwtPending && signer.oauthState) {
+      writeSigner(operationId, { ...signer, oauthState: undefined })
+    }
+  } catch { /* Storage can be unavailable in a private or blocked context. */ }
+}
+const TERMINAL_ZKLOGIN_CODES = new Set(["zklogin_jwt", "zklogin_aud", "zklogin_iss", "zklogin_exp"])
+export function isTerminalZkLoginError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 400 && TERMINAL_ZKLOGIN_CODES.has(error.code)
+}
+/** Remove a rejected callback token and its one-time correlation state. The
+ * operation itself and its place-return marker remain resumable. */
+export function clearZkLoginReturn(operationId: string) {
+  try { sessionStorage.removeItem(`ondo-b.hackathon.jwt:${operationId}`) } catch { /* blocked storage */ }
+  clearZkLoginOAuthAttempt(operationId)
+}
 export function createDemoSigner(operationId: string): StoredSigner {
   const kp = Ed25519Keypair.generate()
   const s: StoredSigner = { kind: "demo", address: kp.toSuiAddress(), secretKey: kp.getSecretKey() }

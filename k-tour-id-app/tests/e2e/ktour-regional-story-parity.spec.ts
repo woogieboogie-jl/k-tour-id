@@ -6,13 +6,13 @@ test.describe.configure({ timeout: 90_000 })
 
 const networkViolations = new WeakMap<Page, string[]>()
 const pageErrors = new WeakMap<Page, string[]>()
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page, baseURL }) => {
   const violations: string[] = []
   const errors: string[] = []
   networkViolations.set(page, violations)
   pageErrors.set(page, errors)
   page.on("pageerror", error => errors.push(error.message))
-  const baseOrigin = new URL(process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3112").origin
+  const baseOrigin = new URL(baseURL ?? "http://127.0.0.1:3112").origin
   await page.route("**/*", async route => {
     const request = route.request()
     const url = new URL(request.url())

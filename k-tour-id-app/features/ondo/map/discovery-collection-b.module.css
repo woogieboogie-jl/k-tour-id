@@ -21,6 +21,10 @@
 .suggestions strong { font-size: 14px; line-height: 1.3; }
 .suggestions small { color: var(--ondo-muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .results { max-height: min(38dvh, calc(100% - 180px - env(safe-area-inset-top) - env(safe-area-inset-bottom))); overflow: auto; overscroll-behavior: contain; padding: 10px 12px 0; scrollbar-width: thin; }
+/* The sticky reader paints in a separate layer above the WebGL map. Explicitly
+   clip that layer to its rounded surface: overflow alone leaves a rectangular
+   painted strip outside the panel on Chromium. The unbounded list stays open. */
+.results[data-layout="map"] { clip-path: inset(0 round var(--discovery-panel-radius, 22px)); }
 .results[data-layout="map"][data-kind="story"][data-reading="false"] { max-height:min(56dvh, calc(100% - 180px - env(safe-area-inset-top) - env(safe-area-inset-bottom))); }
 /* Keep the expanded reader below the city header/search (116px + 12px gap)
    and above the legal lane. The map remains behind this reading surface. */
@@ -113,7 +117,7 @@
   .storyHint .picture { height: 44px; }
   .storyCopy small { font-size: 10px; }
   .storyCopy strong { font-size: 13px; }
-  .results { padding-top: 3px; border-radius: 14px; }
+  .results { --discovery-panel-radius: 14px; padding-top: 3px; border-radius: 14px; }
   .placeOpener { min-height: 76px; grid-template-columns: 58px minmax(0, 1fr) 16px; gap: 7px; }
   .placeOpener .picture { width: 58px; height: 58px; }
   .placeCopy { gap: 2px; }

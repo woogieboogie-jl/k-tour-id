@@ -13,7 +13,7 @@ import { useOndoB } from "../shared/state/ondo-b-provider"
 import { ONDO_MODAL_PRIORITY } from "../shared/ui/modal-layer-priority"
 import { useDocumentScrollLock, useModalIsolation } from "../shared/ui/use-modal-isolation"
 import { HACKATHON_ENABLED, HACKATHON_DEMO_ENTRY, HACKATHON_OPEN_EVENT_B, manualHackathonDetail, openHackathonVenueB, readPendingHackathon, writePendingHackathon, type HackathonOpenDetail } from "./hackathon-campaign"
-import { ApiError, api, beginZkLogin, canonicalJson, clearJourneySecrets, createDemoSigner, ensureHolderKey, finishZkLogin, holderSign, readSigner, sha256Hex, signPersonalMessage, signTransactionBytes, fromBase64, type EntitlementInfo, type PublicConfig, type StoredSigner } from "./hackathon-client"
+import { ApiError, api, beginZkLogin, canonicalJson, clearJourneySecrets, clearZkLoginReturn, createDemoSigner, ensureHolderKey, finishZkLogin, holderSign, isTerminalZkLoginError, readSigner, sha256Hex, signPersonalMessage, signTransactionBytes, fromBase64, type EntitlementInfo, type PublicConfig, type StoredSigner } from "./hackathon-client"
 import styles from "./hackathon-b.module.css"
 import { journeyStepIndex } from "./hackathon-navigation"
 import { isCxPreview, isReadinessPreview } from "@/lib/hackathon/preview-readiness"
@@ -232,7 +232,19 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
     if (kind === "demo") { setSigner(createDemoSigner(op.operationId)); return }
     if (config?.isolatedMock !== false) throw new Error(tr("이 체험에서는 Google 연결을 사용하지 않아요.", "Google sign-in is disabled for this isolated experience.", "この体験ではGoogle連携を使用しません。"))
     const jwt = sessionStorage.getItem(`ondo-b.hackathon.jwt:${op.operationId}`)
-    if (jwt) { setSigner(await finishZkLogin(op.operationId, jwt)); sessionStorage.removeItem(`ondo-b.hackathon.jwt:${op.operationId}`); return }
+    if (jwt) {
+      try {
+        setSigner(await finishZkLogin(op.operationId, jwt))
+        sessionStorage.removeItem(`ondo-b.hackathon.jwt:${op.operationId}`)
+        return
+      } catch (error) {
+        // A known token rejection cannot succeed on retry. Clear only this
+        // callback token/state; the next explicit click starts fresh OAuth.
+        // Transport/provider failures retain the token for a bounded retry.
+        if (isTerminalZkLoginError(error)) clearZkLoginReturn(op.operationId)
+        throw error
+      }
+    }
     const params = await api.zkParams()
     if (!params.configured) throw new Error(tr("Google 연결이 준비되지 않았어요.", "Google sign-in is not configured.", "Google連携の準備ができていません。"))
     writePendingHackathon({ ...detail, resumeOperationId: op.operationId })

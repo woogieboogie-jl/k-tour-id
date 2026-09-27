@@ -64,6 +64,19 @@ function campaignArg(tx: Transaction, mutable: boolean) {
 const clockArg = (tx: Transaction) => tx.sharedObjectRef({ objectId: "0x6", initialSharedVersion: 1, mutable: false })
 const bytes32 = (tx: Transaction, hex: string) => tx.pure.vector("u8", Array.from(hexToBytes(hex)))
 
+/** Optional operator bound; existing application callers retain their gas policy. */
+function gasBudget(tx: Transaction, mist?: number) {
+  if (mist === undefined) return
+  if (!Number.isSafeInteger(mist) || mist <= 0) throw new HkError("sui_gas_budget", "Invalid gas budget", 400)
+  tx.setGasBudget(mist)
+}
+export function assertSerializedGasBudget(bytes: Uint8Array, mist?: number) {
+  if (mist === undefined) return
+  if (!Number.isSafeInteger(mist) || mist <= 0 || Transaction.from(bytes).getData().gasData.budget !== String(mist)) {
+    throw new HkError("sui_gas_budget", "Serialized gas budget differs from approval", 400)
+  }
+}
+
 async function executeSigned(bytes: Uint8Array, signatures: string[]) {
   const client = suiClient()
   const res = await client.executeTransaction({ transaction: bytes, signatures, include: { effects: true, events: true } })
@@ -115,13 +128,15 @@ async function objectType(objectId: string) {
 }
 
 // ── issuer: mint entitlement to user (sponsored by sponsor) ───────────
-export async function issueEntitlement(opts: { intentRefHex: string; holder: string; expiresAtMs: number; beforeBroadcast?: (digest: string) => Promise<void> }) {
+export async function issueEntitlement(opts: { intentRefHex: string; holder: string; expiresAtMs: number; gasBudgetMIST?: number; beforeBroadcast?: (digest: string) => Promise<void> }) {
   const t = suiTargets(); const k = suiKeys()
   const tx = new Transaction()
   tx.setSender(k.issuerAddress)
   tx.setGasOwner(k.sponsorAddress)
+  gasBudget(tx, opts.gasBudgetMIST)
   tx.moveCall({ target: t.fn.issue, arguments: [campaignArg(tx, true), bytes32(tx, opts.intentRefHex), tx.pure.address(opts.holder), tx.pure.u64(BigInt(opts.expiresAtMs)), clockArg(tx)] })
   const bytes = await tx.build({ client: suiClient() })
+  assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
   const sigs = [(await k.issuer.signTransaction(bytes)).signature]
   if (k.sponsorAddress !== k.issuerAddress) sigs.push((await k.sponsor.signTransaction(bytes)).signature)
   await opts.beforeBroadcast?.(transactionDigest(bytes))
@@ -139,22 +154,26 @@ export async function issueEntitlement(opts: { intentRefHex: string; holder: str
 }
 
 // ── user: build sponsored delegation PTB (2 commands) ─────────────────
-export async function buildDelegationPtb(opts: { userAddress: string; entitlement: ObjRef; recipient: string; actionCommitmentHex: string; consentCommitmentHex: string; expiresAtMs: number }) {
+export async function buildDelegationPtb(opts: { userAddress: string; entitlement: ObjRef; recipient: string; actionCommitmentHex: string; consentCommitmentHex: string; expiresAtMs: number; gasBudgetMIST?: number }) {
   const t = suiTargets(); const k = suiKeys()
   const tx = new Transaction()
   tx.setSender(opts.userAddress)
   tx.setGasOwner(k.sponsorAddress)
+  gasBudget(tx, opts.gasBudgetMIST)
   const grantId = tx.moveCall({ target: t.fn.delegate, arguments: [campaignArg(tx, true), tx.objectRef(opts.entitlement), tx.pure.address(opts.recipient), bytes32(tx, opts.actionCommitmentHex), tx.pure.u64(BigInt(opts.expiresAtMs)), clockArg(tx)] })
   tx.moveCall({ target: t.fn.attestConsent, arguments: [campaignArg(tx, false), grantId, bytes32(tx, opts.consentCommitmentHex)] })
   const bytes = await tx.build({ client: suiClient() })
+  assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
   const sponsorSignature = (await k.sponsor.signTransaction(bytes)).signature
   return { txBytesB64: toBase64(bytes), txBytesDigest: sha256Hex(bytes), sponsorSignature }
 }
 
 /** Execute the delegation with the user's signature (zkLogin or Ed25519) + the sponsor's. */
-export async function executeDelegation(opts: { txBytesB64: string; userSignature: string; sponsorSignature: string; expected: GrantExpectation }) {
+export async function executeDelegation(opts: { txBytesB64: string; userSignature: string; sponsorSignature: string; expected: GrantExpectation; gasBudgetMIST?: number; beforeBroadcast?: (digest: string) => Promise<void> }) {
   const t = suiTargets()
   const bytes = fromBase64(opts.txBytesB64)
+  assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
+  await opts.beforeBroadcast?.(transactionDigest(bytes))
   const txn = await executeSigned(bytes, [opts.userSignature, opts.sponsorSignature])
   const granted = (txn.events ?? []).find((e) => e.eventType === t.events.granted)
   if (!granted) throw new HkError("sui_delegate_verify", "GrantCreated event missing", 502)
@@ -167,15 +186,17 @@ export async function executeDelegation(opts: { txBytesB64: string; userSignatur
 }
 
 // ── agent: consume grant + attest execution (2 commands, sponsored) ───
-export async function agentConsume(opts: { grant: { objectId: string; initialSharedVersion: string }; expected: ExecutionExpectation; beforeBroadcast?: (digest: string) => Promise<void> }) {
+export async function agentConsume(opts: { grant: { objectId: string; initialSharedVersion: string }; expected: ExecutionExpectation; gasBudgetMIST?: number; beforeBroadcast?: (digest: string) => Promise<void> }) {
   const t = suiTargets(); const k = suiKeys()
   const tx = new Transaction()
   tx.setSender(k.agentAddress)
   tx.setGasOwner(k.sponsorAddress)
+  gasBudget(tx, opts.gasBudgetMIST)
   const grantArg = tx.sharedObjectRef({ objectId: opts.grant.objectId, initialSharedVersion: Number(opts.grant.initialSharedVersion), mutable: true })
   const recordId = tx.moveCall({ target: t.fn.consume, arguments: [campaignArg(tx, true), grantArg, bytes32(tx, opts.expected.decisionCommitment), clockArg(tx)] })
   tx.moveCall({ target: t.fn.attestExecution, arguments: [campaignArg(tx, false), recordId, bytes32(tx, opts.expected.manifestCommitment)] })
   const bytes = await tx.build({ client: suiClient() })
+  assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
   const sigs = [(await k.agent.signTransaction(bytes)).signature]
   if (k.sponsorAddress !== k.agentAddress) sigs.push((await k.sponsor.signTransaction(bytes)).signature)
   await opts.beforeBroadcast?.(transactionDigest(bytes))
