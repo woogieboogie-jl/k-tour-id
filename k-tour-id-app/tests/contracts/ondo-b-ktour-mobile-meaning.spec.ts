@@ -13,7 +13,7 @@ test("KTOUR-MEANING-001 method choice is the first focus owner with concise rout
   expect(method).toContain('routes.filter(route => !sampleRecovery || route.id === state.identityCredential?.method)')
   expect(setup).toContain('if (sampleRecovery && nextMethod !== state.identityCredential?.method) return')
   expect(method).not.toContain("copy.lead")
-  expect(method).toContain("<small>{note}</small>")
+  expect(method).toContain("<small>{sumsubEnabled && !sampleRecovery && !fullPassChecks && !reviewMode && id === \"passport_ekyc\" ? sandboxDisclosure.scope : note}</small>")
   for (const note of ["mobileNote", "residenceNote", "passportNote"]) expect(setup).toContain(`note: copy.${note}`)
   expect(method).not.toMatch(/mobileNote|residenceNote|passportNote|OmniOne|provider|optional/i)
   expect(method.match(/className=\{styles\.route\}/g)).toHaveLength(1)
@@ -50,7 +50,7 @@ test("KTOUR-MEANING-003 setup stays three steps and only a protected-action orig
   const visibleFacts = request.indexOf("<Disclosure rows=")
   const retentionDisclosure = request.indexOf("<Disclosure label={copy.consentDetails}")
 
-  expect(setup).toContain("[copy.chooseStep, copy.checkStep, copy.issueStep]")
+  expect(setup).toContain("[copy.chooseStep, copy.checkStep, sandboxPassport ? sandboxDisclosure.returnStep : copy.issueStep]")
   expect(setup).not.toContain("[copy.chooseStep, copy.checkStep, copy.issueStep, copy.presentStep]")
   expect(setup).toContain('origin === "action_gate" ? <button')
   expect(setup).toContain('data-testid="k-tour-id-presentation-open"')

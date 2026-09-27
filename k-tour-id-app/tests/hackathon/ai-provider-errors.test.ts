@@ -63,10 +63,14 @@ test("chat route exposes a fixed provider error while preserving success contrac
 
 test("successful Gemini replies retain the existing response contract", async () => {
   const oldFetch = globalThis.fetch
+  let usedModel = ""
   try {
-    globalThis.fetch = async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "safe reply" }] } }] }), { status: 200 })
+    globalThis.fetch = async (url) => {
+      usedModel = new URL(String(url)).pathname.split("/").at(-1)!.split(":")[0]
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "safe reply" }] } }] }), { status: 200 })
+    }
     const result = await geminiGenerate({ key: SECRET, system: "system", message: "hello" })
-    assert.deepEqual(result, { reply: "safe reply" })
+    assert.deepEqual(result, { reply: "safe reply", model: usedModel })
   } finally {
     globalThis.fetch = oldFetch
   }
@@ -76,14 +80,16 @@ test("a 404 model falls back to the next candidate without exposing its body", a
   const restore = env({ GEMINI_MODEL: "fixture-first-model" })
   const oldFetch = globalThis.fetch
   let calls = 0
+  let usedModel = ""
   try {
-    globalThis.fetch = async () => {
+    globalThis.fetch = async (url) => {
       calls += 1
       if (calls === 1) return new Response("missing model provider secret", { status: 404 })
+      usedModel = new URL(String(url)).pathname.split("/").at(-1)!.split(":")[0]
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "fallback reply" }] } }] }), { status: 200 })
     }
     const result = await geminiGenerate({ key: SECRET, system: "system", message: "hello" })
-    assert.deepEqual(result, { reply: "fallback reply" })
+    assert.deepEqual(result, { reply: "fallback reply", model: usedModel })
     assert.equal(calls, 2)
   } finally {
     globalThis.fetch = oldFetch
@@ -95,16 +101,18 @@ test("a provider stream whose cancellation never settles cannot block failure or
   const restore = env({ GEMINI_MODEL: "fixture-first-model" })
   const oldFetch = globalThis.fetch
   let calls = 0
+  let usedModel = ""
   try {
-    globalThis.fetch = async () => {
+    globalThis.fetch = async (url) => {
       calls += 1
       if (calls === 1) {
         return new Response(new ReadableStream({ cancel: () => new Promise<void>(() => {}) }), { status: 404 })
       }
+      usedModel = new URL(String(url)).pathname.split("/").at(-1)!.split(":")[0]
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "fallback after hanging cancel" }] } }] }), { status: 200 })
     }
     const result = await geminiGenerate({ key: SECRET, system: "system", message: "hello" })
-    assert.deepEqual(result, { reply: "fallback after hanging cancel" })
+    assert.deepEqual(result, { reply: "fallback after hanging cancel", model: usedModel })
     assert.equal(calls, 2)
   } finally {
     globalThis.fetch = oldFetch

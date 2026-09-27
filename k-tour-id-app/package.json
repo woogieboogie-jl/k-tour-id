@@ -30,6 +30,12 @@
     "probe:sites:ondo-b": "node scripts/ondo-b-standalone/probe-http.mjs",
     "guard:deploy:ondo-b": "node scripts/ondo-b-standalone/assert-deploy-target.mjs",
     "dev": "next dev",
+    "dev:sumsub:local": "node scripts/kyc/local-sumsub.mjs dev",
+    "review:sumsub:local": "tsx scripts/kyc/review-sumsub.mts",
+    "build:sumsub:local": "node scripts/kyc/local-sumsub.mjs build",
+    "test:sumsub:unit": "node --import tsx --test tests/kyc/*.test.ts",
+    "recover:omnione": "node --import tsx scripts/hackathon-omnione-recover.ts",
+    "test:sumsub:ui": "PLAYWRIGHT_BASE_URL=http://127.0.0.1:3139 playwright test tests/e2e/ondo-sumsub-sandbox.spec.ts --project=mobile-chromium --workers=1 --output=artifacts/qa/sumsub-ui",
     "setup": "npx --yes pnpm@10.8.0 install --frozen-lockfile",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
@@ -55,6 +61,7 @@
     "qa:b": "pnpm typecheck && pnpm exec next build --webpack && pnpm test:contracts && pnpm test:e2e:b && pnpm test:e2e:a-regression && pnpm test:visual:b && pnpm prepare:sites:ondo-b && pnpm build:sites:ondo-b && pnpm scan:sites:ondo-b && pnpm probe:sites:ondo-b && NEXT_PUBLIC_ONDO_QA_CONTROLS=0 pnpm exec next build --webpack && pnpm scan:next:ondo-b"
   },
   "dependencies": {
+    "@sumsub/websdk": "2.9.0",
     "@fontsource-variable/noto-sans-kr": "5.3.0",
     "@fontsource-variable/noto-serif-kr": "5.3.0",
     "@hookform/resolvers": "^3.10.0",

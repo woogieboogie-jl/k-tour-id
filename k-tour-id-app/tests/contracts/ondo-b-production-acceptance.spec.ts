@@ -231,6 +231,9 @@ test("PROD-B-004 sample disclosures are explicit without false provider-success 
         // This selector is not consumer copy. The option's visible label uses
         // the existing shared sample disclosure and remains sample-session gated.
         if (file === "features/ondo/map/map-options-b.tsx" && literal === "ondo-b-map-options-demo") return false
+        // Opt-in endpoint strings are not visible copy or a payment-KYC claim.
+        if (file === "features/ondo/identity-b/sumsub-passport-step-b.tsx"
+          && ["/api/kyc/sumsub/status", "/api/kyc/sumsub/session", "X-KTour-KYC"].includes(literal)) return false
         // Opt-in integration test selectors and internal mode discriminants are
         // not consumer copy. Never exempt arbitrary copy or a whole component.
         if (file === "features/ondo/hackathon-b/hackathon-layer-b.tsx") {

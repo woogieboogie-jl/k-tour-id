@@ -53,12 +53,24 @@ export async function proposePerk(input: ProposalInput): Promise<ProposalSummary
   let injectionSuspected = false, schemaValid = true
   if (c.mode === "gemini" && process.env.GEMINI_API_KEY) {
     const message = JSON.stringify({ venue: { id: input.venueId, name: input.venueName, category: input.category, district: input.district }, campaign: { id: input.campaignId, kind: "non_financial_experience_perk", usesLeft: 1 }, context: { timeOfDay: input.timeOfDay, language: input.language } })
-    const res = await geminiGenerate({ key: process.env.GEMINI_API_KEY, system: SYSTEM, message, maxOutputTokens: 400, temperature: 0.3 })
+    const res = await geminiGenerate({ key: process.env.GEMINI_API_KEY, model: c.model, system: SYSTEM, message, maxOutputTokens: 400, temperature: 0.3 })
     let parsed: unknown = null
     if (res.reply) { try { parsed = JSON.parse(res.reply.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim()) } catch { parsed = null } }
     const v = validate(parsed, input)
-    if (v.ok) output = v.output
-    else { schemaValid = false; injectionSuspected = v.reason === "guard_tripped"; output = ruleProposal(input); mode = "rule"; model = `rule-v1 (gemini rejected: ${v.reason})` }
+    if (v.ok && !res.error && res.model) {
+      output = v.output
+      model = res.model // This exact successful fallback/cache target is bound into proposalDigest.
+    } else {
+      schemaValid = false
+      injectionSuspected = !v.ok && v.reason === "guard_tripped"
+      output = ruleProposal(input)
+      mode = "rule"
+      // Keep the existing rule fallback distinction with fixed reasons only.
+      // Neither provider errors nor the configured (possibly invalid) model
+      // can become public provenance for a rule-generated proposal.
+      model = res.error || !res.reply || !res.model ? "rule-v1 (gemini unavailable)"
+        : `rule-v1 (gemini rejected: ${!v.ok ? v.reason : "provenance_missing"})`
+    }
   } else {
     output = ruleProposal(input)
     mode = "rule"; model = "rule-v1"

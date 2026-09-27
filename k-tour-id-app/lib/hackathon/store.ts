@@ -45,6 +45,7 @@ export type OutboxRecord = {
   attempts: number; lastError: string | null; createdAt: string; updatedAt: string; confirmedAt: string | null
   // Durable worker ownership; never exposed in the public chain summary.
   processingClaim?: { id: string; expiresAt: string }
+  receiptEvidenceVersion?: 1 // Same-tx receipt/event/recorder/registry binding verified.
 }
 export type IdempotencyRecord = { key: string; bodyDigest: string; responseDigest: string; createdAt: string }
 

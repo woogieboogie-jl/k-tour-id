@@ -48,7 +48,15 @@ test("preview build strips inherited credentials and freezes execution gates", (
 test("all mutating endpoints guard before provider and session work; no new endpoint is silently exposed", () => {
   expect(readdirSync("app/api", { recursive: true }).map(String).filter(path => path.endsWith("/route.ts")).sort()).toEqual([
     "ask/route.ts", "chat/route.ts", "hackathon/v1/[...path]/route.ts", "ondo/venues/[venueId]/route.ts",
-  ])
+    "kyc/sumsub/session/route.ts", "kyc/sumsub/status/route.ts", "kyc/sumsub/webhook/route.ts",
+  ].sort())
+  // Separately gated Sandbox routes never become part of readonly/CX-only.
+  for (const endpoint of ["session", "status", "webhook"]) {
+    expect(read(`app/api/kyc/sumsub/${endpoint}/route.ts`)).toContain("readSandboxConfig")
+  }
+  const sandbox = read("lib/kyc/sumsub-sandbox.ts")
+  expect(sandbox).toContain("NEXT_PUBLIC_HK_PREVIEW_READ_ONLY")
+  expect(sandbox).toContain("NEXT_PUBLIC_HK_CX_PREVIEW")
   for (const path of ["app/api/ask/route.ts", "app/api/chat/route.ts", "app/api/hackathon/v1/[...path]/route.ts"]) {
     expect(read(path)).toMatch(/export async function POST\([^)]*\) \{\s*if \(isReadinessPreview\(\)\) return previewReadOnlyResponse\(\)/)
   }

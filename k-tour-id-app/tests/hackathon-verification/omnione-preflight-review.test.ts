@@ -9,15 +9,18 @@ import http from "node:http"
 import https from "node:https"
 import { Interface, Transaction, getBytes, hexlify, keccak256, zeroPadValue } from "ethers"
 import { HkError } from "../../lib/hackathon/util"
+import { omnioneReadAbi } from "../../lib/hackathon/omnione-evidence"
 
 const directory = mkdtempSync(join(tmpdir(), "omnione-preflight-review-"))
 const commitment = "0x" + "2".repeat(64), eventKey = "0x" + "4".repeat(64)
 const registryAddress = "0x" + "3".repeat(40)
+const recorderAddress = "0x" + "5".repeat(40)
 const abi = new Interface(["function recordRedemption(bytes32 eventKey, bytes32 payloadCommitment)"])
 const env = {
   HK_ISOLATED_MOCK: "0", HK_DATA_DIR: directory,
   HK_OMNIONE_RPC_URL: "https://chain.invalid", HK_OMNIONE_PRIVATE_KEY: "fixture-never-used",
   HK_OMNIONE_REGISTRY_ADDRESS: registryAddress, HK_OMNIONE_CHAIN_ID: "201210", HK_OMNIONE_GAS_LIMIT: "300000",
+  HK_OMNIONE_RECORDER_ADDRESS: recorderAddress,
   UPSTASH_REDIS_REST_URL: "", UPSTASH_REDIS_REST_TOKEN: "", KV_REST_API_URL: "", KV_REST_API_TOKEN: "",
 }
 const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]))
@@ -30,7 +33,7 @@ let afterSign: (() => Promise<void>) | null = null
 let onBroadcast: (() => Promise<void>) | null = null
 
 mock.module("ethers", { namedExports: {
-  getBytes, hexlify, keccak256, zeroPadValue,
+  getBytes, hexlify, keccak256, zeroPadValue, Interface,
   JsonRpcProvider: class {
     async getTransactionReceipt() { return receipt }
     async broadcastTransaction(serialized: string) {
@@ -73,7 +76,26 @@ mock.module("ethers", { namedExports: {
 before(() => {
   Object.assign(process.env, env)
   const forbidden = () => { networkAttempts++; throw new Error("network forbidden in preflight review") }
-  globalThis.fetch = async () => forbidden()
+  globalThis.fetch = async (url, init) => {
+    if (String(url) !== "https://chain.invalid" || init?.method !== "POST") return forbidden()
+    const body = JSON.parse(String(init.body)) as { id: number; method: string; params: unknown[] }
+    let result: unknown
+    if (body.method === "eth_chainId") result = "0x" + (201210).toString(16)
+    else if (body.method === "eth_getTransactionReceipt") {
+      assert.equal(body.params[0], keccak256(signedFixture))
+      result = receipt ? {
+        status: "0x" + receipt.status.toString(16), blockNumber: "0x" + receipt.blockNumber.toString(16), blockHash: "0x" + "6".repeat(64),
+        transactionHash: keccak256(signedFixture), to: registryAddress, from: recorderAddress,
+        logs: [{ address: registryAddress, ...omnioneReadAbi.encodeEventLog(omnioneReadAbi.getEvent("DemoEntitlementRedeemed")!, [eventKey, commitment, 1n, recorderAddress]) }],
+      } : null
+    } else if (body.method === "eth_call") {
+      const data = (body.params[0] as { data: string }).data
+      if (data.startsWith(omnioneReadAbi.getFunction("recorders")!.selector)) result = omnioneReadAbi.encodeFunctionResult("recorders", [true])
+      else if (data.startsWith(omnioneReadAbi.getFunction("getRedemption")!.selector)) result = omnioneReadAbi.encodeFunctionResult("getRedemption", [registryExists, commitment, 1n, recorderAddress])
+      else return forbidden()
+    } else return forbidden()
+    return Response.json({ jsonrpc: "2.0", id: body.id, result })
+  }
   mock.method(http, "request", forbidden); mock.method(https, "request", forbidden)
 })
 beforeEach(() => {

@@ -1,21 +1,11 @@
 // Standalone, read-only readiness. Never imports app configuration or a signer.
 import { Interface } from "ethers"
 import { fileURLToPath } from "node:url"
+import { OMNIONE_STAGE, OMNIONE_READ_ABI, OmnioneEvidenceError, verifyOmnioneReceiptEvidence } from "../lib/hackathon/omnione-evidence"
+export { OMNIONE_STAGE }
 
 // Public deployment metadata: chain/omnione/deploy-info.stage.json.
-export const OMNIONE_STAGE = Object.freeze({
-  chainId: 201210,
-  rpcOrigin: "https://stage-chainapi.omnione.net",
-  registry: "0x696bc4e29c8f8079b6d3cd49d310a09577550e4c",
-  recorder: "0x003403cb95c2ffd66bc5748738d96c4a5b48b4ba",
-  deployTx: "0x1a82867d7608d3f473d2c2c5b4ef2995021a616de7b8d647f22544ea29e333db",
-  deployBlock: "0x1828553",
-})
-export const READINESS_ABI = [
-  "function recorders(address) view returns (bool)",
-  "function getRedemption(bytes32 eventKey) view returns (bool exists, bytes32 payloadCommitment, uint64 recordedAt, address recorder)",
-  "event DemoEntitlementRedeemed(bytes32 indexed eventKey, bytes32 payloadCommitment, uint64 recordedAt, address recorder)",
-] as const
+export const READINESS_ABI = OMNIONE_READ_ABI
 const abi = new Interface(READINESS_ABI)
 const hex32 = (value: unknown): value is string => typeof value === "string" && /^0x[0-9a-f]{64}$/i.test(value) && !/^0x0+$/i.test(value)
 const same = (a: unknown, b: string) => typeof a === "string" && a.toLowerCase() === b.toLowerCase()
@@ -141,18 +131,6 @@ function decode(name: "recorders" | "getRedemption", raw: unknown) {
   } catch { return fail("registry_response_invalid") }
 }
 
-function verifyEvent(transaction: Record<string, unknown>, evidence: Evidence, recordedAt: bigint) {
-  const expected = abi.encodeEventLog(abi.getEvent("DemoEntitlementRedeemed")!, [evidence.eventKey, evidence.payloadCommitment, recordedAt, OMNIONE_STAGE.recorder])
-  if (!Array.isArray(transaction.logs)) return fail("evidence_event_mismatch")
-  const matches = transaction.logs.filter(value => {
-    const log = value && typeof value === "object" ? value as Record<string, unknown> : {}
-    return same(log.address, OMNIONE_STAGE.registry) && log.removed !== true &&
-      same(log.data, expected.data) && Array.isArray(log.topics) && log.topics.length === expected.topics.length &&
-      log.topics.every((topic, i) => same(topic, expected.topics[i]))
-  })
-  if (matches.length !== 1) return fail("evidence_event_mismatch")
-}
-
 export async function runOmnioneReadiness(options: Options = {}) {
   const mode = options.mode ?? "offline"
   const config = configuration(options.env ?? process.env)
@@ -184,12 +162,12 @@ export async function runOmnioneReadiness(options: Options = {}) {
         const entry = decode("getRedemption", await rpc.call("eth_call", [{ to: OMNIONE_STAGE.registry, data: abi.encodeFunctionData("getRedemption", [config.evidence.eventKey]) }, "latest"]))
         if (entry[0] !== true || !same(entry[1], config.evidence.payloadCommitment) || entry[2] <= 0n || !same(entry[3], OMNIONE_STAGE.recorder)) fail("redemption_mismatch")
         checks.push("redemption_matches")
-        verifyEvent(rc, config.evidence, entry[2])
+        verifyOmnioneReceiptEvidence(rc, { exists: entry[0], payloadCommitment: entry[1], recordedAt: entry[2], recorder: entry[3] }, true, { ...config.evidence, registry: OMNIONE_STAGE.registry, recorder: OMNIONE_STAGE.recorder, chainId: OMNIONE_STAGE.chainId })
         checks.push("evidence_event_matches")
         evidenceState = "confirmed"
       }
     } catch (error) {
-      const code = error instanceof ProbeError ? error.code : "readiness_failed"
+      const code = error instanceof ProbeError || error instanceof OmnioneEvidenceError ? error.code : "readiness_failed"
       issues.push(code)
       if (code === "evidence_receipt_pending") evidenceState = "pending"
       if (code === "evidence_receipt_failed") evidenceState = "failed"

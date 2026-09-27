@@ -597,12 +597,13 @@ export async function processOutbox(outboxId: string) {
   let row = await readStore((db) => db.outbox[outboxId])
   // Old workers could confirm solely from registry presence. Reconcile that
   // evidence honestly without undoing the already-completed service benefit.
-  if (row?.status === "confirmed" && (!row.txHash || row.blockNumber == null)) {
+  if (row?.status === "confirmed" && (!row.txHash || row.blockNumber == null || row.receiptEvidenceVersion !== 1)) {
     await withStore((db) => {
       const r = db.outbox[outboxId]
-      if (r?.status !== "confirmed" || (r.txHash && r.blockNumber != null)) return
+      if (r?.status !== "confirmed" || (r.txHash && r.blockNumber != null && r.receiptEvidenceVersion === 1)) return
       r.status = r.txHash ? "submitted" : "unknown"; r.confirmedAt = null
-      r.lastError = "legacy_confirmation_missing_receipt"; r.updatedAt = nowIso(); mirror(db, r)
+      delete r.receiptEvidenceVersion
+      r.lastError = "legacy_confirmation_requires_evidence"; r.updatedAt = nowIso(); mirror(db, r)
     })
     row = await readStore((db) => db.outbox[outboxId])
   }
@@ -628,7 +629,9 @@ export async function processOutbox(outboxId: string) {
   // a newer result, even if its RPC returns after its lease expired.
   const update = (fn: (r: OutboxRecord) => void) => withStore((db) => {
     const r = db.outbox[outboxId]
-    if (!r || r.processingClaim?.id !== claimId) return null
+    if (!r || r.processingClaim?.id !== claimId || !(Date.parse(r.processingClaim.expiresAt) > Date.now()) ||
+      r.operationId !== claimed.operationId || r.eventKey !== claimed.eventKey || r.payloadCommitment !== claimed.payloadCommitment ||
+      (claimed.txHash && r.txHash !== claimed.txHash)) return null
     fn(r); r.updatedAt = nowIso(); mirror(db, r)
     return r
   })
@@ -680,17 +683,21 @@ export async function processOutbox(outboxId: string) {
     }
     const after = await readStore((db) => db.outbox[outboxId])
     if (after?.processingClaim?.id === claimId && after.txHash && after.status !== "failed") {
-      const rc = await receiptStatus(after.txHash)
+      const rc = await receiptStatus(after.txHash, { eventKey: after.eventKey, payloadCommitment: after.payloadCommitment })
       if (rc.status === "confirmed") {
-        const onchain = await getRedemption(after.eventKey)
-        const matches = onchain.exists && onchain.payloadCommitment.toLowerCase() === after.payloadCommitment.toLowerCase()
         await update((r) => {
-          r.status = matches && rc.blockNumber !== null ? "confirmed" : matches ? "submitted" : "failed"
+          // The adapter has bound tx/target/recorder/event/block AND registry.
+          if (r.txHash !== after.txHash || r.eventKey !== after.eventKey || r.payloadCommitment !== after.payloadCommitment) return
+          r.status = rc.blockNumber !== null ? "confirmed" : "submitted"
           r.blockNumber = rc.blockNumber; r.confirmedAt = r.status === "confirmed" ? nowIso() : null
-          r.lastError = !matches ? "receipt_ok_but_registry_mismatch" : rc.blockNumber === null ? "receipt_block_unavailable" : null
+          if (r.status === "confirmed") r.receiptEvidenceVersion = 1
+          else delete r.receiptEvidenceVersion
+          r.lastError = rc.blockNumber === null ? "receipt_block_unavailable" : null
         })
+      } else if (rc.status === "mismatch") {
+        await update((r) => { r.status = "failed"; r.confirmedAt = null; delete r.receiptEvidenceVersion; r.lastError = "omnione_evidence_mismatch" })
       } else if (rc.status === "failed") {
-        await update((r) => { r.status = "failed"; r.blockNumber = rc.blockNumber; r.confirmedAt = null; r.lastError = "receipt_status_0" })
+        await update((r) => { r.status = "failed"; r.blockNumber = rc.blockNumber; r.confirmedAt = null; delete r.receiptEvidenceVersion; r.lastError = "receipt_status_0" })
       } else {
         await update((r) => { r.status = "submitted"; r.lastError = null })
       }
@@ -715,7 +722,7 @@ export async function processOutbox(outboxId: string) {
 }
 function mirror(db: Parameters<Parameters<typeof withStore>[0]>[0], r: OutboxRecord) {
   const o = db.operations[r.operationId]
-  if (!o?.chain) return
+  if (!o?.chain || o.chain.outboxId !== r.outboxId || o.chain.eventKey !== r.eventKey || o.chain.payloadCommitment !== r.payloadCommitment) return
   o.chain = { outboxId: r.outboxId, eventKey: r.eventKey, payloadCommitment: r.payloadCommitment, status: r.status, txHash: r.txHash, blockNumber: r.blockNumber, attempts: r.attempts, lastError: r.lastError, confirmedAt: r.confirmedAt }
   touch(o, "chain." + r.status)
 }

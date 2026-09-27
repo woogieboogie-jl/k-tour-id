@@ -26,7 +26,16 @@ let onSubmit: (() => void) | null = null
 mock.module(new URL("../../lib/hackathon/adapters/omnione.ts", import.meta.url).href, { namedExports: {
   omnioneConfigured: () => configured,
   getRedemption: async () => { registryCalls++; if (registryError) throw new Error("fixture registry read unavailable"); return { ...registryResult } },
-  receiptStatus: async () => { receiptCalls++; return { ...receiptResult } },
+  receiptStatus: async (hash: string, binding: { eventKey: string; payloadCommitment: string }) => {
+    receiptCalls++
+    assert.equal(hash, fixtureHash); assert.equal(binding.payloadCommitment, fixtureCommitment)
+    assert.equal(binding.eventKey, "0x" + "3".repeat(64))
+    if (receiptResult.status === "confirmed") {
+      registryCalls++
+      if (!registryResult.exists || registryResult.payloadCommitment !== binding.payloadCommitment) return { status: "mismatch", blockNumber: null, code: "redemption_mismatch" }
+    }
+    return { ...receiptResult }
+  },
   submitRedemption: async (opts: { onPrepared?: (hash: string) => Promise<void> }) => {
     submitCalls++
     if (preparationError) throw new HkError("omnione_submission_not_started", "fixture preparation failed before broadcast", 503)
@@ -103,7 +112,7 @@ test("receipt success plus mismatched registry commitment is not confirmed", asy
   receiptResult = { status: "confirmed", blockNumber: 123 }
   registryResult = { ...registryResult, exists: true, payloadCommitment: "0x" + "4".repeat(64) }
   const result = await processOutbox(outboxId)
-  assert.equal(result?.status, "failed"); assert.equal(result?.lastError, "receipt_ok_but_registry_mismatch")
+  assert.equal(result?.status, "failed"); assert.equal(result?.lastError, "omnione_evidence_mismatch")
   assert.equal(result?.confirmedAt, null)
   assert.equal((await readStore((db) => db.operations[operationId])).fulfillment?.status, "redeemed")
 })
@@ -262,4 +271,19 @@ test("legacy registry-only confirmation is corrected without undoing the benefit
   assert.equal(submitCalls, 0)
   const operation = await readStore((db) => db.operations[operationId])
   assert.equal(operation.fulfillment?.status, "redeemed"); assert.equal(operation.chain?.status, "unknown")
+})
+
+test("legacy hash/block confirmation is check-only until new receipt evidence is verified", async () => {
+  const { outboxId, operationId } = await seed("confirmed")
+  await withStore(db => { db.outbox[outboxId].txHash = fixtureHash; db.outbox[outboxId].blockNumber = 123 })
+  const pending = await processOutbox(outboxId)
+  assert.equal(pending?.status, "submitted"); assert.equal(pending?.receiptEvidenceVersion, undefined)
+  assert.equal(pending?.confirmedAt, null); assert.equal(submitCalls, 0)
+  assert.equal((await readStore(db => db.operations[operationId])).fulfillment?.status, "redeemed")
+  registryResult.exists = true; receiptResult = { status: "confirmed", blockNumber: 123 }
+  const verified = await processOutbox(outboxId)
+  assert.equal(verified?.status, "confirmed"); assert.equal(verified?.receiptEvidenceVersion, 1); assert.equal(submitCalls, 0)
+  const reads = receiptCalls
+  await processOutbox(outboxId)
+  assert.equal(receiptCalls, reads)
 })

@@ -44,6 +44,7 @@ import { PassportOcrStepB } from "./passport-ocr-step-b"
 import { PassportFaceStepB } from "./passport-face-step-b"
 import { IdentityHandoffStepB } from "./identity-handoff-step-b"
 import { IdentityHolderStepB } from "./identity-holder-step-b"
+import { SumsubPassportStepB, SUMSUB_PASSPORT_DISCLOSURE, SUMSUB_PASSPORT_ENABLED, type SumsubPassportStepHandle } from "./sumsub-passport-step-b"
 import styles from "./ktour-id-setup-b.module.css"
 
 type Phase =
@@ -52,7 +53,7 @@ type Phase =
   | "holder_delivery_preview"
   | "credential_ready" | "presentation_request" | "presentation_consent"
   | "presentation_result" | "failed" | "unavailable" | "expired"
-  | "cancelled" | "manual_review" | "recovery_intro"
+  | "cancelled" | "manual_review" | "recovery_intro" | "sumsub_sandbox"
 
 type QaRuntime = {
   identitySetupOutcome?: "success" | OndoBIdentityRecoveryCode
@@ -290,6 +291,8 @@ export function KTourIdSetupB() {
   const origin = setupPresence.value
   const closing = setupPresence.phase === "closing"
   const [method, setMethod] = useState<OndoBIdentityMethod>("passport_ekyc")
+  const sumsubEnabled = SUMSUB_PASSPORT_ENABLED
+  const sumsubStepRef = useRef<SumsubPassportStepHandle>(null)
   const [phase, setPhase] = useState<Phase>("method_select")
   const [session, setSession] = useState<OndoBIdentitySetupSession | null>(null)
   const [recoveryCode, setRecoveryCode] = useState<OndoBIdentityRecoveryCode | null>(null)
@@ -330,12 +333,16 @@ export function KTourIdSetupB() {
   const finalExitActive = closing || exitRequestedRef.current || desiredOrigin === null
   const copy = COPY[state.locale]
   const sampleCopy = SAMPLE_COPY[state.locale]
-  const details = methodDetails(method, copy)
+  const sandboxPassport = sumsubEnabled && !sampleRecovery && !fullPassChecks && !reviewMode && method === "passport_ekyc" && phase !== "method_select"
+  const sandboxDisclosure = SUMSUB_PASSPORT_DISCLOSURE[state.locale]
+  const details = sandboxPassport
+    ? { title: copy.passport, note: copy.passportNote, provider: sandboxDisclosure.provider, evidence: sandboxDisclosure.evidence, retention: sandboxDisclosure.retention }
+    : methodDetails(method, copy)
   const injectedStatus = reviewMode ? readQaRuntime<QaRuntime>()?.identity?.credentialStatus ?? readQaRuntime<QaRuntime>()?.credentialStatus : undefined
   const naturalCredentialStatus = simulatedCredentialStatusB(state.identityCredential, credentialClock)
   const credentialStatus: OndoBCredentialStatus = injectedStatus ?? naturalCredentialStatus
   const returnLabel = origin === "onboarding" ? copy.returnOnboarding : origin === "action_gate" ? copy.returnAction : copy.returnTraveler
-  const steps = [copy.chooseStep, copy.checkStep, copy.issueStep]
+  const steps = [copy.chooseStep, copy.checkStep, sandboxPassport ? sandboxDisclosure.returnStep : copy.issueStep]
   const currentStep = progressStep(phase)
   const presentationPhase = phase === "presentation_request" || phase === "presentation_consent" || phase === "presentation_result"
   const reviewScopeLabel = phase === "presentation_result"
@@ -513,9 +520,17 @@ export function KTourIdSetupB() {
     return true
   }
 
-  function requestFinalDismiss() {
+  function finishFinalDismiss() {
     if (!beginFinalDismiss()) return
     actions.closeIdentitySetup()
+  }
+
+  function requestFinalDismiss() {
+    if (sumsubStepRef.current) {
+      void sumsubStepRef.current.requestExit().then(allowed => { if (allowed) finishFinalDismiss() })
+      return
+    }
+    finishFinalDismiss()
   }
 
   useEffect(() => {
@@ -636,7 +651,7 @@ export function KTourIdSetupB() {
     setMethod(nextMethod)
     setRecoveryCode(null)
     setSampleCase("success"); sampleConsumedRef.current = false; setManualReview(null)
-    if (!reviewMode) {
+    if (!reviewMode && !(sumsubEnabled && !sampleRecovery && !fullPassChecks && nextMethod === "passport_ekyc")) {
       setRetryPhase("method_select")
       setPhase("unavailable")
       return
@@ -666,6 +681,12 @@ export function KTourIdSetupB() {
   }
 
   function acceptConsent() {
+    if (sandboxPassport) {
+      setSession(null)
+      setRecoveryCode(null)
+      setPhase("sumsub_sandbox")
+      return
+    }
     if (!reviewMode) return fail("IDENTITY_METHOD_UNAVAILABLE", "method_select")
     setSession(createIdentitySetupSessionB(origin!, method))
     setRecoveryCode(null)
@@ -801,6 +822,7 @@ export function KTourIdSetupB() {
   }
 
   function goBack() {
+    if (phase === "sumsub_sandbox") { requestFinalDismiss(); return }
     holderReceiptRef.current = false
     // The saved result is terminal. Reopening method selection would promise
     // another issuance that the one-shot holder guard correctly refuses.
@@ -861,13 +883,13 @@ export function KTourIdSetupB() {
           : copy.presentationResultNotApproved
 
   const liveDialog = <section ref={dialogRef} className={styles.dialog} role="dialog" aria-modal="true" aria-label={copy.dialog} tabIndex={-1}
-      data-testid="k-tour-id-setup" data-phase={phase} data-method={method} data-origin={origin} data-environment="simulated" data-integration-status="not_configured" data-execution-mode={reviewMode ? "review" : "normal"} data-public-sample={reviewMode && sampleConsumedRef.current ? "true" : undefined} data-recovery-in-progress={sampleRecovery ? "true" : "false"} onKeyDown={handleKeyDown}>
+      data-testid="k-tour-id-setup" data-phase={phase} data-method={method} data-origin={origin} data-environment={sandboxPassport ? "sandbox" : "simulated"} data-integration-status={sandboxPassport ? "sandbox_check" : "not_configured"} data-execution-mode={reviewMode ? "review" : "normal"} data-public-sample={reviewMode && sampleConsumedRef.current ? "true" : undefined} data-recovery-in-progress={sampleRecovery ? "true" : "false"} onKeyDown={handleKeyDown}>
       <header className={styles.header}>
-        {phase === "method_select" || phase === "verified_person_consent" ? <span className={styles.brandMark}><KTourIdMark size={28} /></span> : <button type="button" className={styles.iconButton} aria-label={copy.back} onClick={goBack}><ChevronLeft size={21} aria-hidden="true" /></button>}
+        {phase === "method_select" || phase === "verified_person_consent" || phase === "sumsub_sandbox" ? <span className={styles.brandMark}><KTourIdMark size={28} /></span> : <button type="button" className={styles.iconButton} aria-label={copy.back} onClick={goBack}><ChevronLeft size={21} aria-hidden="true" /></button>}
         <p data-testid="k-tour-id-environment"><span>{copy.env}</span></p>
         <button type="button" className={styles.iconButton} data-testid="k-tour-id-cancel" aria-label={copy.close} onClick={requestFinalDismiss}><X size={20} aria-hidden="true" /></button>
       </header>
-      {!presentationPhase ? <div className={styles.progress} role="list" aria-label={copy.dialog}>{steps.map((label, index) => <div key={label} role="listitem" aria-label={label} aria-current={currentStep === index + 1 ? "step" : undefined} data-current={currentStep === index + 1} data-complete={currentStep > index + 1}><span aria-hidden="true">{currentStep > index + 1 ? <Check size={12} aria-hidden="true" /> : index + 1}</span><small>{label}</small></div>)}</div> : null}
+      {!presentationPhase && phase !== "sumsub_sandbox" ? <div className={styles.progress} role="list" aria-label={copy.dialog}>{steps.map((label, index) => <div key={label} role="listitem" aria-label={label} aria-current={currentStep === index + 1 ? "step" : undefined} data-current={currentStep === index + 1} data-complete={currentStep > index + 1}><span aria-hidden="true">{currentStep > index + 1 ? <Check size={12} aria-hidden="true" /> : index + 1}</span><small>{label}</small></div>)}</div> : null}
       {reviewMode ? <p className={styles.reviewScope} data-testid="k-tour-id-review-scope" data-review-stage={phase === "presentation_result" ? "result" : presentationPhase ? "request" : "setup"}><ShieldCheck size={15} aria-hidden="true" />{reviewScopeLabel}</p> : null}
 
       {phase === "verified_person_consent" ? <div className={styles.body} data-testid="experience-pass-consent"><p className={styles.eyebrow}>{copy.mobile}</p><h1>{EXPERIENCE_COPY_B[state.locale].passTitle}</h1><p className={styles.lead}>{EXPERIENCE_COPY_B[state.locale].passBody}</p><Disclosure rows={[[copy.requester, "K-Tour ID", "identity-consent-requester"], [copy.evidence, EXPERIENCE_COPY_B[state.locale].proof, "identity-consent-evidence"]]} /><div className={styles.actions}><button type="button" data-identity-initial-focus data-testid="experience-pass-approve" className={styles.primary} onClick={acceptCheckedPerson}>{EXPERIENCE_COPY_B[state.locale].passApprove}<ChevronRight size={17} aria-hidden="true" /></button><button type="button" className={styles.secondary} onClick={requestFinalDismiss}>{copy.decline}</button></div></div> : null}
@@ -875,13 +897,14 @@ export function KTourIdSetupB() {
       {phase === "method_select" ? <div className={styles.body}>
         <h1>{copy.title}</h1>
         {fullPassChecks ? <p className={styles.lead} data-testid="identity-additional-checks-scope">{EXPERIENCE_COPY_B[state.locale].additionalBody}</p> : null}
-        <div className={styles.routes} data-testid="k-tour-id-methods">{routes.filter(route => !sampleRecovery || route.id === state.identityCredential?.method).map(({ id, icon: Icon, title, note, oldId, newId }) => <button key={id} type="button" data-identity-initial-focus={sampleRecovery || id === "mobile_id" ? true : undefined} data-testid={oldId} className={styles.route} data-availability={reviewMode ? "review" : "unavailable"} aria-label={`${title} · ${note} · ${reviewMode ? copy.methodReview : copy.methodUnavailable}`} onClick={() => chooseMethod(id)}><span data-testid={newId}><Icon size={22} aria-hidden="true" /></span><span><strong>{title}</strong><small>{note}</small></span><i><ChevronRight size={17} aria-hidden="true" /></i></button>)}</div>
+        <div className={styles.routes} data-testid="k-tour-id-methods">{routes.filter(route => !sampleRecovery || route.id === state.identityCredential?.method).map(({ id, icon: Icon, title, note, oldId, newId }) => <button key={id} type="button" data-identity-initial-focus={sampleRecovery || id === "mobile_id" ? true : undefined} data-testid={oldId} className={styles.route} data-availability={sumsubEnabled && !sampleRecovery && !fullPassChecks && !reviewMode && id === "passport_ekyc" ? "sandbox" : reviewMode ? "review" : "unavailable"} aria-label={`${title} · ${note} · ${sumsubEnabled && !sampleRecovery && !fullPassChecks && !reviewMode && id === "passport_ekyc" ? sandboxDisclosure.scope : reviewMode ? copy.methodReview : copy.methodUnavailable}`} onClick={() => chooseMethod(id)}><span data-testid={newId}><Icon size={22} aria-hidden="true" /></span><span><strong>{title}</strong><small>{sumsubEnabled && !sampleRecovery && !fullPassChecks && !reviewMode && id === "passport_ekyc" ? sandboxDisclosure.scope : note}</small></span><i><ChevronRight size={17} aria-hidden="true" /></i></button>)}</div>
         {sampleRecovery ? <p className={styles.sampleBoundary}>{sampleCopy.recoveryBoundary}</p> : null}
       </div> : null}
 
       {phase === "consent" ? <div className={styles.body} data-testid="k-tour-id-consent"><p className={styles.eyebrow}>{details.title}</p><h1>{copy.consentTitle}</h1>
+        {sandboxPassport ? <p className={styles.lead}>{sandboxDisclosure.scope}</p> : null}
         {fullPassChecks ? <p className={styles.lead} data-testid="identity-additional-checks-consent">{EXPERIENCE_COPY_B[state.locale].additionalBody}</p> : null}
-        <Disclosure rows={[[copy.requester, copy.requesterValue, "identity-consent-requester"], [copy.purpose, copy.purposeValue, "identity-consent-purpose"], [copy.evidence, details.evidence, "identity-consent-evidence"]]} />
+        <Disclosure rows={[[copy.requester, copy.requesterValue, "identity-consent-requester"], [copy.purpose, sandboxPassport ? sandboxDisclosure.purpose : copy.purposeValue, "identity-consent-purpose"], [copy.evidence, details.evidence, "identity-consent-evidence"]]} />
         <Disclosure label={copy.consentDetails} rows={[[copy.retention, details.retention, "identity-consent-retention"], [copy.provider, details.provider, "identity-consent-provider"]]} />
         {reviewMode ? <details className={styles.sampleControls} data-testid="identity-sample-controls">
           <summary><SlidersHorizontal size={16} aria-hidden="true" />{sampleCopy.controls}<ChevronRight size={16} aria-hidden="true" /></summary>
@@ -893,6 +916,7 @@ export function KTourIdSetupB() {
       </div> : null}
 
       {phase === "cx_handoff_preview" ? <IdentityHandoffStepB locale={state.locale} session={session} reviewMode={reviewMode} methodTitle={details.title} onComplete={() => advance("provider_processing_preview", "cx_handoff_preview")} onInterrupted={reason => interruptBoundary(reason, "cx_handoff_preview")} /> : null}
+      {phase === "sumsub_sandbox" ? <SumsubPassportStepB ref={sumsubStepRef} locale={state.locale} onReturn={finishFinalDismiss} /> : null}
       {phase === "document_preview" ? <div className={styles.body}><PassportOcrStepB locale={state.locale} reviewMode={reviewMode} onComplete={() => advance("face_liveness_preview", "document_preview")} /></div> : null}
       {phase === "face_liveness_preview" ? <div className={styles.body}><PassportFaceStepB locale={state.locale} reviewMode={reviewMode} onComplete={() => advance("provider_processing_preview", "face_liveness_preview")} /></div> : null}
       {phase === "provider_processing_preview" ? <Panel testId="k-tour-id-route-step" icon={<RefreshCw />} eyebrow={copy.onDevice} title={copy.processing} body={copy.processingBody} visual="processing" /> : null}
@@ -954,7 +978,7 @@ export function KTourIdSetupB() {
         <summary aria-label={copy.protocolSummary}><span>{copy.protocolSummary}</span><Info size={17} aria-hidden="true" /></summary>
         <div className={styles.protocolBody}>
           {phase === "unavailable" ? <p>{copy.unavailableTechnical}</p> : null}
-          <p className={styles.privateBoundary} data-testid="k-tour-id-technical-truth"><ShieldCheck size={15} aria-hidden="true" /><span data-testid="k-tour-id-private-boundary">{copy.boundary}</span></p>
+          <p className={styles.privateBoundary} data-testid="k-tour-id-technical-truth"><ShieldCheck size={15} aria-hidden="true" /><span data-testid="k-tour-id-private-boundary">{sandboxPassport ? sandboxDisclosure.boundary : copy.boundary}</span></p>
         </div>
       </details>
       <span className={styles.contractOnly} aria-hidden="true">{KTOUR_ID_RECOVERY_CODES.join(" ")}</span>

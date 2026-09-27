@@ -11,6 +11,8 @@ export interface GeminiTurn {
 }
 export interface GeminiResult {
   reply?: string
+  /** Successful request target, not an unverified provider-reported version. */
+  model?: string
   error?: string
 }
 
@@ -30,13 +32,21 @@ function discardProviderBody(res: Response): void {
 
 export async function geminiGenerate(opts: {
   key: string
+  /** Explicit preference takes precedence over the shared caller default/cache. */
+  model?: string
   system: string
   message: string
   history?: GeminiTurn[]
   maxOutputTokens?: number
   temperature?: number
 }): Promise<GeminiResult> {
-  const models = [process.env.GEMINI_MODEL, cachedModel, ...CANDIDATES].filter((m): m is string => !!m)
+  const preferredModel = opts.model ?? (process.env.GEMINI_MODEL || undefined)
+  // A model is a single public API resource identifier, never a URL/query or
+  // arbitrary provider diagnostic. Invalid configuration must not be echoed.
+  if (preferredModel !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(preferredModel)) {
+    return { error: "gemini_provider_model_invalid" }
+  }
+  const models = [preferredModel, cachedModel, ...CANDIDATES].filter((m): m is string => !!m)
   const seen = new Set<string>()
   const contents = [
     ...(opts.history ?? []).map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
@@ -65,8 +75,8 @@ export async function geminiGenerate(opts: {
         const reply: string =
           data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") ?? ""
         if (reply.trim()) {
-          cachedModel = model // remember the working model → no repeat 404s
-          return { reply }
+          cachedModel = model // retain the working fallback; explicit preferences still win
+          return { reply, model }
         }
         lastErr = providerError("empty")
         continue
