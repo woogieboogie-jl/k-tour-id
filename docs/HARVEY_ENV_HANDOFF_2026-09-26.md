@@ -64,6 +64,11 @@ OmniOne 앱용 계약은 `DemoEntitlementRegistry`이며 옛 `KTourAnchor`가 �
 
 ## 3. 설정을 기다리며 실행 가능한 작업과 다음 순서
 
+9/28 후속: 승인된 계정/브랜치로 Vercel 연결·Sumsub 실제 SDK·독립 Redis 저장과 재개를
+이미 검수했다. 이 설정들을 다시 준비할 필요는 없다. 다만 Sumsub webhook 등록은
+SDK 키의 관리 권한 부족(403)으로 [별도 관리자 인계](./SUMSUB_LIVE_PREVIEW_2026-09-28.md)가 필요하다.
+전체 최신 진행 상황과 사람만 할 수 있는 항목은 [최종 보고](./AUTONOMOUS_FINISH_2026-09-28.md)를 따른다.
+
 진행한 병렬 작업: Sui 무서명 리허설/검증 도구, OmniOne 읽기 전용 사전 검사 도구, AI·zkLogin 공급자 오류 비밀값 유출 차단과 회귀 테스트, 작성자와 다른 담당자의 adversarial 리뷰. 구체 실행 결과는 각 검수 문서에 따로 기록한다. 단위/fixture 통과를 실제 OAuth·체인 E2E 완료로 세지 않는다.
 
 1. 사용자 Mobile ID 승인 → 서버 CX 거래/동일인/성인 결과 확인. 승인 없이 성공으로 대체하지 않는다.

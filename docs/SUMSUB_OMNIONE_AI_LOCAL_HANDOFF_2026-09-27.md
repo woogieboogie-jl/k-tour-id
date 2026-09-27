@@ -1,5 +1,10 @@
 # 여권 / OmniOne / AI 로컬 통합 검수
 
+> 9월 28일 후속: 아래 수치는 최초 로컬 인계 기록이다. 후속 구현은
+> `integration/autonomous-finish-20260927`에 게시하며, 실제 Redis 17/17 검수와
+> 별도 Sumsub 서버 연결을 추가했다. 최신 범위와 사람만 할 수 있는 항목은
+> [최종 진행 보고](./AUTONOMOUS_FINISH_2026-09-28.md)를 기준으로 본다.
+
 작업 브랜치: `feat/hackathon-readiness-preview-20260925`
 
 작업 폴더: `/Users/woogieboogie/github/k-tour-id/.codex-worktrees/harvey-sync-20260917/k-tour-id-app`
@@ -118,7 +123,7 @@ OmniOne은 잘못된 거래·다른 commitment를 `confirmed`로 만들지 않�
 
 일본어 320px 대기 화면, 영어 다크 접속 화면, 영어 라이트 승인 화면 캡처를 직접 확인했다. 모서리·텍스트·복귀 버튼 잘림은 관찰되지 않았다. 캡처는 `k-tour-id-app/artifacts/qa/sumsub-ui/`에 있으며 검수용 로컬 생성물이다.
 
-공개 배포·CX Preview·Harvey 별도 배포·다른 worktree는 변경하지 않았다. 이 변경은 아직 커밋/푸시하지 않았다. 위 표의 실제 공급자 확인은 남아 있으며, 이 보고서로 해커톤 실연동 완료를 선언하지 않는다.
+이 문서를 처음 작성한 시점에는 커밋/푸시 전이었다. 이후 구현은 커밋되어 `integration/autonomous-finish-20260927`에 게시됐고, 공개 지도는 별도 릴리스로 배포됐다. 기존 CX Preview·Harvey 별도 배포·다른 프로젝트는 유지했다. 이 최초 로컬 검수 기록만으로 해커톤 실연동 완료를 선언하지 않는다.
 
 ## 제품 문구·검수 도구 후속 정리
 

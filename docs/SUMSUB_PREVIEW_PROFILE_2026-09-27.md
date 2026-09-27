@@ -20,3 +20,7 @@ The integration branch disables automatic deployment for this branch while
 its settings are registered. Only the dedicated deployment worktree replaces
 its own `vercel.json` with this profile, then enables that branch. Existing
 CX and public branch configuration is not replaced.
+
+Actual protected deployment and provider/Redis smoke results, the applicant
+response correction, and the remaining webhook-admin permission are recorded in
+[the live Preview report](./SUMSUB_LIVE_PREVIEW_2026-09-28.md).
