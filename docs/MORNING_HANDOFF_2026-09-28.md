@@ -13,8 +13,11 @@
   앱과 같은 ethers client 조회 3/3. 인증 RPC가 동작함을 확인했다. 새 기록은 아직 서명하지 않았다.
 - **Sui 실제 읽기 검증:** Testnet package·Campaign·역할·Clock·가스 상태 확인. 6회 읽기 요청.
   배포와 역할이 존재함을 확인한 것이며 issuer/agent 키 소유나 새 거래 성공은 아니다.
+  제공된 과거 거래 3개는 현재 Testnet SDK 조회에서 `not found`로 재검증하지 못했다.
+  과거 성공을 부정하는 판정은 아니지만 최종 제출 증거는 새 실행으로 확보해야 한다.
 - **통합 서버 설정 준비:** `jaewook-9643 / ondo`, Preview의
-  `integration/autonomous-finish-20260927`에 14개 연결/공개·서버 비밀 설정을 준비했다.
+  `integration/autonomous-finish-20260927`에 24개 설정을 준비했다
+  (연결/공개·서버 비밀 14개 + runtime profile·만료·잠금 10개).
   OmniOne RPC·Redis token·통합 전용 가명화 seed는 sensitive, 기존 Redis 인프라는 재사용하되 저장 key는
   `ktour:integration-preview:autonomous-20260928:v1`로 분리했다.
   기존 CX 및 Sumsub 설정을 덮어쓰지 않았다. 전체 실행 flag나 신규 배포는 켜지 않았다.
@@ -36,6 +39,8 @@
   접근 화면을 추가했다. 인증 전에는 session/provider를 호출하지 않으며 접근 승인은 신원/거래 동의가 아니다.
   runtime은 꺼진 상태이고 OpenDID 제공자 모드를 요구한다. 일반 `/api/ask`, `/api/chat`은
   이 통합 환경에서 차단해 모델 키를 비보호 경로로 사용할 수 없게 했다.
+  마지막 교차 리뷰에서 build 옵션만으로는 runtime 설정이 되지 않는 누락을 찾아,
+  branch별 runtime 값도 등록·재조회했다. `HK_INTEGRATION_PREVIEW_ENABLED=0`은 유지한다.
 - **설정 사전 검사:** 키 보유자의 일 / 이미 받은 설정을 연결하는 내 일 / 본인 승인 /
   OpenDID 별도 작업을 분리하는 offline 도구와 회귀 테스트를 추가했다.
   입력이 모두 있어도 실제 연결·거래를 검증했다고 표시하지 않는다.
@@ -115,7 +120,16 @@ CX API key는 현재 서비스/adapter에서 선택 사항이라 새 필수 키�
 최종 소스 기준 통합 production build도 재실행해 통과했다. 실제 production build를 띄운
 loopback 서버에서 runtime off인 `config`/`sessions`는 503, `ask`/`chat`은 403이며
 모두 `no-store`임을 확인했다. 원격 통합 배포나 제공자 요청을 수행한 검사는 아니다.
-**최종 게시 revision / Linux CI: 확인 대기.** 로컬 통과를 원격 CI 통과로 표시하지 않는다.
+**코드 revision: `dfed33bcb4d4872772745bcead75b1065b1ae39b`.**
+[`integration/autonomous-finish-20260927`](https://github.com/woogieboogie-jl/k-tour-id/tree/integration/autonomous-finish-20260927)에 게시했다.
+[동일 revision Linux CI #36336119734](https://github.com/woogieboogie-jl/k-tour-id/actions/runs/36336119734)는
+2026-09-28 02:18 KST에 성공했다. 단위 **326/326**, 상태·복구 **53/53**,
+모바일 Chromium **33/33**, WebKit **33/33**이며 실패·skip·flaky는 0이다.
+이후 인계 문서만 갱신했으며 테스트한 코드 revision은 바꾸지 않았다.
+
+같은 코드의 isolated build에서도 기존 흐름 **34/34**와 로컬 BFF **4/4**를 다시 통과했다.
+공개 배포는 `dpl_13auzoqMNbg51Fb9jfrL3Lnqi5Up` / `a037f9f` / `READY`,
+공개 URL HTTP 200을 재확인했다. 기존 CX·Sumsub branch도 변경하지 않았다.
 
 통합 전용 production build의 새 접근 화면 **5/5**
 (320px KO, 390px EN, 390px JA dark, 844px landscape dark, unavailable)와 스크린샷을 확인했다.

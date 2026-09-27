@@ -8,7 +8,7 @@ RPC·공개 체인 설정·기존 Redis pair·CX 연결값·새 통합 전용 �
 
 ## 현재 상태와 범위
 
-- Harvey 구현 코드는 통합돼 있지만, 코드와 Vercel의 서버 비밀 설정은 별개다. **9/28 준비 전 스냅샷**에서는 `ondo` 프로젝트 환경변수 메타데이터에 아래 Sui/zkLogin/OmniOne/AI 설정 이름이 없었다. 이후 공개 Sui/OmniOne 값·제공된 RPC·독립 가명화 seed 등 14개를 통합 branch에 준비했다. 서명키·Google/prover·AI 키 미확보와는 구분한다. Harvey 별도 서비스의 실패를 뜻하는 것은 아니다.
+- Harvey 구현 코드는 통합돼 있지만, 코드와 Vercel의 서버 비밀 설정은 별개다. **9/28 준비 전 스냅샷**에서는 `ondo` 프로젝트 환경변수 메타데이터에 아래 Sui/zkLogin/OmniOne/AI 설정 이름이 없었다. 이후 공개 Sui/OmniOne 값·제공된 RPC·독립 가명화 seed 등 14개와 runtime profile·만료·잠금 10개, 총 24개를 통합 branch에 준비했다. 서명키·Google/prover·AI 키 미확보와는 구분한다. Harvey 별도 서비스의 실패를 뜻하는 것은 아니다.
 - 현재 검수 배포는 **CX-only Preview**다. 실제 QR 생성·앱 연결 링크 반환·미인증 처리·복원·취소까지 검수했으며, 실제 소지자 승인 성공은 아직 확인하지 않았다.
 - Preview에서 체인·Google 로그인·AI 실행을 막아 놓은 것은 의도한 경계다. 설정을 받더라도 이 검수 환경에 한꺼번에 기능을 켜지 않고 별도 보호된 통합 검수 환경을 준비한다.
 - 공개 Production, Harvey 배포, megan 계정과 다른 프로젝트는 변경하지 않는다.

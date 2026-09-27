@@ -10,7 +10,8 @@
 - 배포 목표는 Preview/`icn1`. Production·다른 project/team/repo/branch는 거절한다.
 - branch 전용으로 OmniOne RPC/chain ID/registry, Sui network/package/Campaign/initial version,
   기존 KV pair, 전용 `HK_STORE_KEY`, CX base/provider/zkpType, 통합 전용
-  `HK_ISSUER_SIGNING_SEED`의 **14개 설정**을 저장했다.
+  `HK_ISSUER_SIGNING_SEED`의 **14개 설정**을 저장했다. 아래 runtime profile·만료·잠금
+  10개도 추가 등록·재조회해 **총 24개**다. build child 환경은 runtime 설정을 대신하지 않는다.
 - 전용 ledger key와 lock key가 모두 없음을 한 번의 `EXISTS` 읽기로 확인한 뒤(Redis 쓰기 없음),
   32바이트 난수로 새 가명화 seed를 한 번 생성해 **통합 Preview branch에만 sensitive로 등록**했다.
   설정의 scope/type을 재확인했으며 기존 CX seed의 ID·수정 시각은 변하지 않았다.
@@ -24,6 +25,26 @@
   `public:false`는 source visibility 설정이며 HTTP 접근 보호를 대신하지 않는다.
   API 접근은 별도 signed cookie/host/branch/runtime/expiry 검사로 차단한다.
 - OpenDID 실제 adapter는 병렬 구현 중. sample credential/VP로 이 빈칸을 메우지 않는다.
+
+### 이미 고정한 runtime 설정
+
+모두 위 통합 branch의 Preview에만 등록했다. 아래 값만으로는 접근·제공자 실행이 열리지 않는다.
+
+| 변수 | 고정값 |
+| --- | --- |
+| `NEXT_PUBLIC_HK_INTEGRATION_PREVIEW` | `1` |
+| `NEXT_PUBLIC_HK_CX_PREVIEW` | `0` |
+| `NEXT_PUBLIC_HK_PREVIEW_READ_ONLY` | `0` |
+| `NEXT_PUBLIC_HK_ENABLED` | `1` |
+| `HK_API_ENABLED` | `1` |
+| `HK_ISOLATED_MOCK` | `0` |
+| `HK_MODE_CX` | `cx` |
+| `HK_MODE_OPENDID` | `opendid` |
+| `HK_INTEGRATION_PREVIEW_EXPIRES_AT` | `2026-09-30T14:59:59Z` — 9월 30일 23:59:59 KST |
+| `HK_INTEGRATION_PREVIEW_ENABLED` | **`0` — 활성화 전 유지** |
+
+Vercel의 project/team/Git/region/immutable host 메타데이터도 실제 원격 배포 시 검사한다.
+메타데이터가 없다고 검사를 지우거나 값만 위조해 통과시키지 않는다.
 
 ## 활성화 전 순서
 

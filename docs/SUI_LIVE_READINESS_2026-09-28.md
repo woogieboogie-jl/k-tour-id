@@ -52,6 +52,26 @@ node --import tsx scripts/hackathon-sui-readiness.ts --offline --signer=zklogin
 
 ## 누가 무엇을 이어서 하나
 
+### 제공된 과거 거래 링크의 별도 재조회
+
+2026-09-28 02:20 KST 무렵, 사용자가 전달한 세 digest를 현재 Testnet의 설치된
+`SuiGrpcClient.getTransaction({ digest, include: { effects: true, events: true }, signal })`로
+각 10초 제한·읽기 전용으로 조회했다. 첫 독립 조회는 오류를 일반화해 분류하지 못했고,
+root의 추가 3회 조회에서 SDK의 `Transaction … not found` 분류를 확인했다.
+위 6회 객체 readiness 검사와는 별도이며 새 거래·서명은 생성하지 않았다.
+
+| 전달된 digest | 현재 조회 결과 |
+| --- | --- |
+| `4pNNdcruJvmdWyYnSamrh7vxBRCCxWUAwG58uHBP1Wy3` | `not found` — 성공·package/Campaign 결합 재검증 불가 |
+| `EATbwBKz3PqhQRdqkar1VGxVS31eBL9ex3UYjEdudM5W` | `not found` — 동일 |
+| `CisRR8SYFCxukw8WntxzkxGbrx9Xc19D2Vh96SZgfB4D` | `not found` — 동일 |
+
+현재 endpoint에서 찾지 못했다는 관측일 뿐, 과거 미실행·실패·체인 초기화·보관 정책을
+원인으로 확정하지 않는다. 제공된 옛 링크를 현재 배포 E2E 성공 증거로 승격하지 않고,
+승인된 기존 signer 확보 뒤 동일 operation의 새 receipt/effects/events를 검증한다.
+
+### 다음 담당
+
 | 담당 | 다음 조건·작업 |
 | --- | --- |
 | 우리 쪽, 추가 사용자 입력 불필요 | 고정 공개 설정·fixture·회귀·오류 비노출 검수를 유지. 승인된 실행 직전에 같은 bounded read로 상태를 재확인. package/주소를 사용자에게 다시 묻지 않음 |
