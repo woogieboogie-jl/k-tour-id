@@ -128,7 +128,25 @@ async function providerJson(url: string, init: RequestInit, code: "provider_unav
 }
 export async function sumsubRequest(config: SandboxConfig, path: string, method: "GET" | "POST" = "GET", body?: unknown, fetcher: typeof fetch = fetch): Promise<Record<string, unknown>> { if (!path.startsWith("/resources/") || /[\r\n#?]/.test(path)) throw new SandboxError("invalid_provider_path"); const payload = body === undefined ? "" : JSON.stringify(body); const timestamp = String(Math.floor(Date.now() / 1000)); return providerJson(`https://api.sumsub.com${path}`, { method, headers: { "X-App-Token": config.appToken, "X-App-Access-Ts": timestamp, "X-App-Access-Sig": signSumsubRequest(config.secretKey, timestamp, method, path, payload), ...(payload ? { "Content-Type": "application/json" } : {}) }, ...(payload ? { body: payload } : {}) }, "provider_unavailable", fetcher) }
 export function normalizeReview(value: Record<string, unknown>): SandboxStatus { const result = value.reviewResult as Record<string, unknown> | undefined; if (value.reviewStatus === "completed") { if (result?.reviewAnswer === "GREEN") return "approved"; if (result?.reviewAnswer === "RED" && result.reviewRejectType === "RETRY") return "retry"; if (result?.reviewAnswer === "RED" && result.reviewRejectType === "FINAL") return "rejected"; return "unavailable" } if (["pending", "queued", "onHold", "awaitingService"].includes(String(value.reviewStatus))) return "pending"; if (["init", "prechecked", "awaitingUser"].includes(String(value.reviewStatus))) return "in_progress"; return "unavailable" }
-export async function readVerifiedSandboxStatus(config: SandboxConfig, session: SandboxSession, fetcher: typeof fetch = fetch, expectedApplicantId?: string): Promise<SandboxStatus> { if (!config.appToken.startsWith("sbx:") || session.environment !== "sandbox") throw new SandboxError("provider_binding_mismatch"); let applicant: Record<string, unknown>; try { applicant = await sumsubRequest(config, `/resources/applicants/-;externalUserId=${encodeURIComponent(session.externalUserId)}/one`, "GET", undefined, fetcher) } catch (error) { if (error instanceof SandboxError && error.code === "applicant_not_found" && expectedApplicantId === undefined) return "in_progress"; throw error } if (applicant.externalUserId !== session.externalUserId || applicant.sandboxMode !== true || typeof applicant.id !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(applicant.id) || (expectedApplicantId !== undefined && applicant.id !== expectedApplicantId)) throw new SandboxError("provider_binding_mismatch"); const review = await sumsubRequest(config, `/resources/applicants/${encodeURIComponent(applicant.id)}/status`, "GET", undefined, fetcher); if (review.levelName !== session.levelName) throw new SandboxError("provider_binding_mismatch"); return normalizeReview(review) }
+// sandboxMode is a WEBHOOK field; authenticated GET applicant data does not
+// normally include it. The signed sbx: app token scopes these API reads to the
+// Sandbox tenant. Still reject an explicit contradictory/malformed marker.
+// Never reuse this rule for incoming webhooks, where sandboxMode:true is required.
+export function isSandboxApplicantResponse(config: SandboxConfig, applicant: Record<string, unknown>): boolean {
+  return config.appToken.startsWith("sbx:") && (!("sandboxMode" in applicant) || applicant.sandboxMode === true)
+}
+export async function readVerifiedSandboxStatus(config: SandboxConfig, session: SandboxSession, fetcher: typeof fetch = fetch, expectedApplicantId?: string): Promise<SandboxStatus> {
+  if (!config.appToken.startsWith("sbx:") || session.environment !== "sandbox") throw new SandboxError("provider_binding_mismatch")
+  let applicant: Record<string, unknown>
+  try { applicant = await sumsubRequest(config, `/resources/applicants/-;externalUserId=${encodeURIComponent(session.externalUserId)}/one`, "GET", undefined, fetcher) }
+  catch (error) { if (error instanceof SandboxError && error.code === "applicant_not_found" && expectedApplicantId === undefined) return "in_progress"; throw error }
+  if (applicant.externalUserId !== session.externalUserId || !isSandboxApplicantResponse(config, applicant)
+    || typeof applicant.id !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(applicant.id)
+    || (expectedApplicantId !== undefined && applicant.id !== expectedApplicantId)) throw new SandboxError("provider_binding_mismatch")
+  const review = await sumsubRequest(config, `/resources/applicants/${encodeURIComponent(applicant.id)}/status`, "GET", undefined, fetcher)
+  if (review.levelName !== session.levelName) throw new SandboxError("provider_binding_mismatch")
+  return normalizeReview(review)
+}
 export async function readSessionBody(request: Request): Promise<Record<string, unknown>> {
   try {
     const raw = await readBoundedRequestBody(request)

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { mutateSumsubRecord, readSumsubRecord } from "@/lib/kyc/sumsub-store"
-import { NO_STORE_HEADERS, readBoundedRequestBody, readSandboxConfig, SandboxError, sumsubRequest, verifyWebhookSignature, webhookCreatedAt, webhookEventId } from "@/lib/kyc/sumsub-sandbox"
+import { isSandboxApplicantResponse, NO_STORE_HEADERS, readBoundedRequestBody, readSandboxConfig, SandboxError, sumsubRequest, verifyWebhookSignature, webhookCreatedAt, webhookEventId } from "@/lib/kyc/sumsub-sandbox"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     const applicant = await sumsubRequest(config, `/resources/applicants/-;externalUserId=${encodeURIComponent(externalUserId)}/one`, "GET", undefined,
       (url, init) => fetch(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal }))
     assertLive()
-    if (applicant.id !== applicantId || applicant.externalUserId !== externalUserId || applicant.sandboxMode !== true) throw new SandboxError("invalid_payload", 400)
+    if (applicant.id !== applicantId || applicant.externalUserId !== externalUserId || !isSandboxApplicantResponse(config, applicant)) throw new SandboxError("invalid_payload", 400)
     const changed = await mutateSumsubRecord(externalUserId, config.sessionSecret, current => {
       assertLive()
       if (current.levelName !== config.levelName || (current.applicantId && current.applicantId !== applicantId)
