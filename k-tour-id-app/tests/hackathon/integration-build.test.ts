@@ -142,7 +142,7 @@ test("bounded build plan uses exact Node/Next executable, webpack, fixed cwd and
   assert.equal(plan.args.some(arg => /deploy|npx|vercel/.test(arg)), false)
 })
 
-test("separate Seoul Preview config disables all Git autodeploy; default CX and existing scripts remain unchanged", () => {
+test("separate Seoul Preview config and selected hosted Sui release disable Git autodeploy; CX script is preserved", () => {
   const read = (file: string) => JSON.parse(readFileSync(resolve(subject.APP_ROOT, file), "utf8"))
   const profile = read("vercel.integration.json"), current = read("vercel.json"), pkg = read("package.json")
   assert.equal(profile.buildCommand, "node scripts/hackathon-integration-build.mjs")
@@ -153,8 +153,8 @@ test("separate Seoul Preview config disables all Git autodeploy; default CX and 
   assert.deepEqual(profile.regions, ["icn1"])
   assert.equal(profile.env, undefined)
   assert.equal(profile.build?.env, undefined)
-  assert.equal(current.buildCommand, "pnpm build:vercel:cx-preview")
-  assert.equal(current.git.deploymentEnabled[subject.INTEGRATION_BRANCH], false)
+  assert.deepEqual(current, read("vercel.hosted-sui.json"))
+  assert.equal(current.git.deploymentEnabled, false)
   assert.equal(pkg.scripts["build:vercel:integration"], profile.buildCommand)
   assert.equal(pkg.scripts["build:vercel:cx-preview"], "node scripts/hackathon-preview-build.mjs --cx-only")
   assert.equal(pkg.scripts["test:harvey:verification"], "node --experimental-test-module-mocks --import tsx --test tests/hackathon-verification/*.test.ts")
