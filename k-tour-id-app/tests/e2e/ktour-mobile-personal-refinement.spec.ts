@@ -238,10 +238,10 @@ test("M12-VISIT-REVIEW explicit recording stays unique and public sample exit re
     await dismissPlace(page)
     await page.getByTestId("nav-id").click()
     await page.getByTestId("review-sample-indicator").click()
-    await page.getByText("Integration status", { exact: true }).click()
+    await page.getByTestId("product-guide-connection").locator("summary").click()
     await Promise.all([
       page.waitForURL(url => url.searchParams.get("review") === "0"),
-      page.getByRole("button", { name: "Exit sample and return to the regular app", exact: true }).click(),
+      page.getByRole("button", { name: "Turn off practice features", exact: true }).click(),
     ])
     await expect(page.getByTestId("ondo-b-root")).toHaveAttribute("data-hydrated", "true")
     const normalVisit = await openVisit(page, false)
