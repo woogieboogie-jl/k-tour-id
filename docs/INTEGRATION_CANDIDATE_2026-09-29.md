@@ -16,12 +16,22 @@
 | 오프라인 readiness/역할 비교/활성화 인계 | `78348a92` | `a4b6f119` |
 | 합산 예산·역할·gas 제한 및 migration fence | `2299c3f1` | `4ed01f38` |
 | runtime-OFF 자체 Sui 입력 준비 도구/75개 fixture | `19af5ba9` | `b1b2af6b` |
+| 명시적 zkLogin prover 선택·오프라인 거부 검증 | `9d982c97` | `f6cf27c6` |
+| zkLogin provider/salt 연속성 주석 정정(동작 변경 없음) | `f75e7eaa` | `1302077b` |
 
 `service.ts`의 예상된 merge 충돌은 두 보호를 모두 유지해 해결했다. 세 Sui 단계 진입에서
 CX mode/provider guard와 integration operation membership 검사를 모두 실행하며,
 issuer/delegation/agent의 broadcast 직전 정책 검사와 이미 발생한 거래 증거 보존을 유지한다.
 agent의 두 번째 시도 금지는 hosted와 integration 양쪽에 적용한다. 독립 read-only merge
 검토에서도 이 두 변경의 보존을 확인했다.
+
+zkLogin 선택 변경도 독립 read-only 검토 후 후보에만 반영했다. `config.ts`의 import 인접
+충돌은 integration migration/limits와 명시적 prover 선택을 모두 보존해 해결했다.
+client ID와 salt만으로 Google 준비 완료를 표시하지 않으며, 암묵적인 Devnet prover나
+잘못된 Enoki 설정에서 다른 salt/prover로 넘어가는 fallback은 없다. 현재 hosted의 Google
+거부는 그대로다. 명시적인 HTTPS endpoint도 실제 Testnet proving key·OAuth audience·
+본인 로그인 검증을 대신하지 않는다. 상세 근거와 남은 검증은
+[prover 선택 준비](ZKLOGIN_PROVER_SELECTION_2026-09-29.md)를 따른다.
 
 후보의 앱 `vercel.json`은 검토된 `vercel.integration.json`과 정확히 일치한다.
 build command는 `node scripts/hackathon-integration-build.mjs`, region은 `icn1`,
@@ -80,7 +90,7 @@ hosted를 먼저 중단하지 않는다. 제공자 준비가 되면 모든 기�
 | --- | --- |
 | 자체 Sui source·대상·서버 키 준비 | 준비됨. 새 사용자 키 요청 불필요; 활성화 직전 chain/role/gas 재확인은 우리 작업 |
 | OmniOne recorder | 현재 승인 환경에서 사용할 수 있는 signer를 찾지 못했음. 승인 recorder의 서명 수단 인계는 실제 소유자 의존. 기존 RPC token을 다시 요구하지 않음 |
-| Google/zkLogin | 승인 OAuth client/등록 및 prover 경로의 실제 인수 필요. 설정·검증은 우리 작업, 본인 로그인/동의는 사용자 수행 |
+| Google/zkLogin | 승인 OAuth client와 정확한 callback 등록은 관리자 의존. 명시적 prover 선택·설정·실제 Testnet 검증은 우리 작업이며 Enoki는 필수가 아님. 본인 로그인/동의는 사용자 수행; HTTPS 선택만으로 검증 완료를 주장하지 않음 |
 | Gemini | 사용할 승인 API credential 필요. rule fallback은 실제 Gemini 검증이 아님 |
 | CX | 문서화된 완료 binding 수정은 있음. 본인의 실제 승인·결과 재검증 필요; CI 없는 AdultVerify를 임의 동일인 증명으로 승격하지 않음 |
 | OpenDID | 별도 Claude workflow. 이 후보는 구현·검사를 제거하거나 제공자 완료를 주장하지 않음 |
@@ -91,7 +101,7 @@ hosted를 먼저 중단하지 않는다. 제공자 준비가 되면 모든 기�
 
 ## 후보 검증
 
-- 전체 TypeScript 단위 테스트: 449/449 통과.
+- 전체 TypeScript 단위 테스트: 482/482 통과.
 - 실제 service/adapter를 사용하는 mocked verification: 70/70 통과.
 - integration/hosted build plan 및 프로필 테스트: 19/19 통과.
 - 접근 순서/프로필 static contract: 4/4 통과. 두 프로필이 공유하는 body reader를 각 분기 안에서
