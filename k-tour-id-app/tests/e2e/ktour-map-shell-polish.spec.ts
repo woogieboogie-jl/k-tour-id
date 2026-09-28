@@ -2,6 +2,9 @@ import { expect, test, type Page } from "@playwright/test"
 import { CANONICAL_VENUE_ID, gotoB, prepareBPage, seedB } from "../helpers/ondo-b-qa"
 
 test.describe.configure({ timeout: 90_000 })
+// Screenshots and retained failure traces are sufficient for this geometry
+// suite; continuous video encoding competes with MapLibre on a busy QA host.
+test.use({ video: "off" })
 const browserErrors = new WeakMap<Page, string[]>()
 test.beforeEach(async ({ page, request, baseURL }) => {
   browserErrors.set(page, [])
@@ -154,4 +157,24 @@ test("nation welcome has no ambience control, is finite and reduced-motion safe"
   await expect(atlas).toHaveAttribute("data-atlas-reduced-motion", "true")
   await expect(atlas).toHaveAttribute("data-atlas-motion", "paused")
   expect(await ripple.evaluate(element => getComputedStyle(element).animationName)).toBe("none")
+})
+
+test("dark After19 search settles on loaded street-level geometry", async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await seedB(page, { locale: "ja" })
+  await page.addInitScript(() => {
+    const state = JSON.parse(localStorage.getItem("ondo-b.device.v1") ?? "{}")
+    localStorage.setItem("ondo-b.device.v1", JSON.stringify({ ...state, appearancePreference: "dark" }))
+  })
+  await openCity(page)
+  await page.getByTestId("ondo-b-map-options-open").click()
+  await page.getByTestId("ondo-b-map-options-after19-open").click()
+  await page.getByTestId("global-after19-confirm").click()
+  await expect(page.getByTestId("global-after19-prompt-layer")).toHaveCount(0)
+  await page.getByTestId("ondo-b-map-search-toggle").click()
+  await page.getByTestId("ondo-b-search").fill("Roba")
+  const map = page.getByTestId("maplibre-map")
+  await expect.poll(async () => Number(await map.getAttribute("data-map-zoom")), { timeout: 15_000 }).toBeGreaterThanOrEqual(14)
+  await expect.poll(async () => Number(await map.getAttribute("data-visible-building-relief-count")), { timeout: 15_000 }).toBeGreaterThan(0)
+  await page.screenshot({ path: info.outputPath("dark-after19-search-settled.png") })
 })
