@@ -80,8 +80,11 @@ export function assertNoHostedSuiEnvFiles(root, exists = envFileExists) {
 export function hostedSuiBuildPlan({ env, args = [], cwd = APP_ROOT, exists = envFileExists }) {
   if (args.length) fail("arguments")
   if (resolve(cwd) !== APP_ROOT) fail("cwd")
-  if (env.NODE_OPTIONS !== undefined && env.NODE_OPTIONS !== "") fail("node_options")
   const buildEnv = hostedSuiBuildEnv(env)
+  // Vercel's trusted build launcher supplies NODE_OPTIONS. Validate the remote
+  // deployment first, then strip all inherited options from the child through
+  // the positive env allowlist. Local custom loaders remain disallowed.
+  if (env.VERCEL !== "1" && env.NODE_OPTIONS !== undefined && env.NODE_OPTIONS !== "") fail("node_options")
   assertNoHostedSuiEnvFiles(APP_ROOT, exists)
   return { command: process.execPath, args: [resolve(APP_ROOT, "node_modules/next/dist/bin/next"), "build", "--webpack"],
     options: { cwd: APP_ROOT, env: buildEnv, shell: false, stdio: "inherit", timeout: BUILD_TIMEOUT_MS, killSignal: "SIGKILL" } }

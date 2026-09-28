@@ -49,6 +49,14 @@ test("build env has hosted-Sui literals, old profiles disabled, and no inherited
   assert.equal(JSON.stringify(env).includes("secret"), false)
 })
 
+test("validated Vercel launch options are stripped from the child, never inherited", () => {
+  const env = { ...metadata(), NODE_OPTIONS: "--require=/platform-loader --max-old-space-size=8192" }
+  const plan = subject.hostedSuiBuildPlan({ env, exists: () => false })
+  assert.equal(Object.hasOwn(plan.options.env, "NODE_OPTIONS"), false)
+  assert.equal(plan.options.shell, false)
+  assert.throws(() => subject.hostedSuiBuildPlan({ env: { ...env, VERCEL_PROJECT_ID: "foreign" }, exists: () => false }), { message: "hosted_sui_build_target" })
+})
+
 test("public origin inheritance accepts only HTTPS origin values", () => {
   for (const value of ["http://ktour-id.vercel.app", "https://user:pass@ktour-id.vercel.app/", "https://ktour-id.vercel.app/path", "not-a-url"]) {
     assert.throws(() => subject.hostedSuiBuildEnv({ NEXT_PUBLIC_SITE_URL: value }), { message: "hosted_sui_build_public_origin" })
