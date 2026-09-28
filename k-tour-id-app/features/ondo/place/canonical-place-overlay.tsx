@@ -470,6 +470,14 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
   if (wasClosingRef.current && !closing) exitRequestedRef.current = false
   wasClosingRef.current = closing
   const [expanded, setExpanded] = useState(() => readBDiscoveryHistory()?.level === "detail")
+  const [desktopLayout, setDesktopLayout] = useState(false)
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1024px)")
+    const sync = () => setDesktopLayout(media.matches)
+    sync()
+    media.addEventListener("change", sync)
+    return () => media.removeEventListener("change", sync)
+  }, [])
   const [detail, setDetail] = useState<CanonicalVenueDetail | null>(null)
   const [detailState, setDetailState] = useState<"idle" | "loading" | "ready" | "error">("idle")
   const [detailAttempt, setDetailAttempt] = useState(0)
@@ -600,14 +608,32 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
   const retainedRootRef = closing
     ? visualSnapshot.expanded ? layerRef : peekRef
     : expanded ? layerRef : peekRef
-  const parentModalActive = Boolean(venueId) && (closing || !after19Handoff)
+  // A desktop map preview is a non-modal companion to the map. Full details,
+  // mobile sheets and nested evidence retain their isolation/focus contract.
+  const modalPresentation = !desktopLayout || visualSnapshot.expanded
+  const parentModalActive = modalPresentation && Boolean(venueId) && (closing || !after19Handoff)
   useModalIsolation(parentModalActive, retainedRootRef)
   useDocumentScrollLock(parentModalActive)
   useModalIsolation(Boolean(closing ? visualSnapshot.openFactKey : openFactKey), evidenceLayerRef)
   useModalVisualViewport(evidenceLayerRef)
 
+  const previousDesktopLayout = useRef(desktopLayout)
+  useEffect(() => {
+    const enteringMobile = previousDesktopLayout.current && !desktopLayout
+    previousDesktopLayout.current = desktopLayout
+    if (!enteringMobile || closing || expanded) return
+    const frame = window.requestAnimationFrame(() => {
+      const peek = peekRef.current
+      // A nested sheet owns focus if it has made this preview inert.
+      if (peek && !peek.closest("[inert],[aria-hidden='true']") && !peek.contains(document.activeElement)) {
+        peek.focus({ preventScroll: true })
+      }
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [desktopLayout, closing, expanded])
+
   useLayoutEffect(() => {
-    if (!closing) return
+    if (!closing || !modalPresentation) return
     const consumeClosingKey = (event: globalThis.KeyboardEvent) => {
       const retainedLayer = visualSnapshotRef.current.expanded ? layerRef.current : peekRef.current
       if (retainedLayer?.closest("[inert],[aria-hidden='true']")) return
@@ -616,7 +642,7 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
     }
     window.addEventListener("keydown", consumeClosingKey, true)
     return () => window.removeEventListener("keydown", consumeClosingKey, true)
-  }, [closing])
+  }, [closing, modalPresentation])
 
   useLayoutEffect(() => {
     if (!closing) exitRequestedRef.current = false
@@ -938,7 +964,7 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
       close()
       return
     }
-    if (event.key !== "Tab") return
+    if (event.key !== "Tab" || !modalPresentation) return
     const focusable = Array.from(peekRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])
       .filter(isRenderedFocusable)
     const first = focusable[0]
@@ -1040,7 +1066,7 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
   }
 
   if (!visualSnapshot.expanded) return (
-    <div id="canonical-place-dialog" ref={peekRef} className={styles.peek} role="dialog" aria-modal="true" aria-label={`${name.officialName} · ${name.officialNameLabel}`} aria-busy={closing ? "true" : undefined} tabIndex={-1} data-testid="canonical-place-peek" data-place-service-scroll="true" data-modal-layer-priority={ONDO_MODAL_PRIORITY.peek} data-place-presence={presenceState} data-venue-id={venue.id} onKeyDown={handlePeekKeyDown} onClickCapture={consumeClosingInput} onPointerDownCapture={consumeClosingInput} onKeyDownCapture={consumeClosingInput}>
+    <div id="canonical-place-dialog" ref={peekRef} className={styles.peek} role="dialog" aria-modal={modalPresentation ? "true" : undefined} aria-label={`${name.officialName} · ${name.officialNameLabel}`} aria-busy={closing ? "true" : undefined} tabIndex={-1} data-testid="canonical-place-peek" data-place-service-scroll="true" data-modal-layer-priority={modalPresentation ? ONDO_MODAL_PRIORITY.peek : undefined} data-place-presence={presenceState} data-venue-id={venue.id} onKeyDown={handlePeekKeyDown} onClickCapture={consumeClosingInput} onPointerDownCapture={consumeClosingInput} onKeyDownCapture={consumeClosingInput}>
       <div className={styles.grabber} />
       <button type="button" className={styles.close} onClick={close} aria-label={copy.close}><X size={18} /></button>
       <section className={styles.peekIdentityStage} data-testid="canonical-place-identity-stage" data-pulse-level={pulse.level}>

@@ -1295,6 +1295,10 @@ function EditorialPlaceList({ places, locale, selectedPlaceId, onClear, onSelect
 export function MapEntryB() {
   const { state, actions } = useOndoB()
   const sampleEnvironment = useReviewSampleSession()
+  // Presentation is not identity authority. Live CX/Sui entry (review=0)
+  // keeps the same illustrated map; its disclosure still says it is prepared
+  // data, never live visitor counts. Review-only wallet/activity stay gated.
+  const illustratedMap = true
   const locale = state.locale
   const copy = COPY[locale]
   const cityRootNode = useRef<HTMLElement | null>(null)
@@ -2403,7 +2407,7 @@ export function MapEntryB() {
           instance.addLayer({ id: "ondo-user-location-point", type: "circle", source: "ondo-user-location", paint: { "circle-color": "#20201e", "circle-radius": 6, "circle-stroke-color": "#ffffff", "circle-stroke-width": 2 } })
 
           if (initialCity && !initialFilteredVenue && !filteredMapRef.current && cityRootNode.current) {
-            instance.fitBounds(cityOverviewBounds(initialCity, venues, editorialPlaces, sampleEnvironment), {
+            instance.fitBounds(cityOverviewBounds(initialCity, venues, editorialPlaces, illustratedMap), {
               padding: cityOverviewPadding(cityRootNode.current),
               maxZoom: CITY[initialCity].zoom,
               pitch: CITY_PERSPECTIVE_PITCH,
@@ -2897,7 +2901,7 @@ export function MapEntryB() {
     const animateCityEntry = Boolean(city && entryTransitionCity === city && !reducedMotion && !pendingHistoryCamera)
     const setFinalModeLayers = () => {
       for (const layerId of overviewLayers) if (map.getLayer(layerId)) map.setLayoutProperty(layerId, "visibility", city ? "none" : "visible")
-      for (const layerId of cityLayers) if (map.getLayer(layerId)) map.setLayoutProperty(layerId, "visibility", city && !(sampleEnvironment && SNAPSHOT_SIGNAL_LAYERS.has(layerId)) ? "visible" : "none")
+      for (const layerId of cityLayers) if (map.getLayer(layerId)) map.setLayoutProperty(layerId, "visibility", city && !(illustratedMap && SNAPSHOT_SIGNAL_LAYERS.has(layerId)) ? "visible" : "none")
     }
     if (animateCityEntry) {
       // Keep the already-painted atlas geography during the camera journey.
@@ -2924,7 +2928,7 @@ export function MapEntryB() {
       map.getContainer().dataset.cityFocusPhase = "active"
       const root = cityRootNode.current
       const camera = root
-        ? map.cameraForBounds(cityOverviewBounds(city, venues, editorialPlaces, sampleEnvironment), {
+        ? map.cameraForBounds(cityOverviewBounds(city, venues, editorialPlaces, illustratedMap), {
             padding: cityOverviewPadding(root),
             maxZoom: CITY[city].zoom,
           })
@@ -2983,16 +2987,16 @@ export function MapEntryB() {
       fitNationOverview(map, mapNode.current, reducedMotion || isInitialMode ? 0 : NATION_RETURN_DURATION_MS)
       nationProjection?.waitForMoveThenPaint()
     }
-  }, [beginNationProjection, city, editorialPlaces, entryTransitionCity, mapState, sampleEnvironment, venues])
+  }, [beginNationProjection, city, editorialPlaces, entryTransitionCity, mapState, illustratedMap, venues])
 
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapState !== "ready") return
-    const visible = Boolean(city && !collection && !sampleEnvironment && entryTransitionCity !== city)
+    const visible = Boolean(city && !collection && !illustratedMap && entryTransitionCity !== city)
     for (const layer of SNAPSHOT_SIGNAL_LAYERS) {
       if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", visible ? "visible" : "none")
     }
-  }, [city, collection, entryTransitionCity, mapState, sampleEnvironment])
+  }, [city, collection, entryTransitionCity, mapState, illustratedMap])
 
   useLayoutEffect(() => {
     const pending = pendingHistoryCameraRef.current
@@ -3662,7 +3666,7 @@ export function MapEntryB() {
           persona={state.persona}
           preferences={state.discoveryPreferences}
           mapState={mapState}
-          sampleMotion={sampleEnvironment}
+          sampleMotion={illustratedMap}
           onEditPreferences={() => {
             if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
             actions.setTab("settings")
@@ -3709,7 +3713,8 @@ export function MapEntryB() {
         data-temperature-shell="city-map"
         data-header-version={mapLayoutMode === "ultra-short" ? "short-list" : "unified-a"}
         data-compact-chrome={compactChrome ? "true" : "false"}
-        data-sample-temperature={sampleEnvironment ? "true" : "false"}
+        data-sample-temperature={illustratedMap ? "true" : "false"}
+        data-review-session={sampleEnvironment ? "true" : "false"}
         data-map-perspective={mapTilted ? "tilted" : "flat"}
         data-directory-source={city === "jeju" ? undefined : SOURCE_ID}
         data-source-date={city === "jeju" ? undefined : SOURCE_DATE}
@@ -3962,7 +3967,7 @@ export function MapEntryB() {
 
           {effectiveView === "map" && mapState !== "error" && !collection ? (
             <aside
-              className={`${styles.mapKey} ${sampleEnvironment ? styles.sampleTemperatureKey : ""}`}
+              className={`${styles.mapKey} ${illustratedMap ? styles.sampleTemperatureKey : ""}`}
               data-testid="ondo-b-map-key"
               data-pulse-key-presentation={city === "jeju" ? "compact-coverage" : "compact-gradient"}
               data-editorial-temperature-key={city === "jeju" ? "unscored" : undefined}
@@ -3971,7 +3976,7 @@ export function MapEntryB() {
                 ? `${TEMPERATURE_NAME[locale]} · ${JEJU_EDITORIAL_COVERAGE_LABEL[locale]}. ${copy.jejuTruth}`
                 : `${copy.mapKey}. ${copy.mapKeyBody} ${PULSE_DISCLOSURE[locale]}`}
             >
-              {sampleEnvironment ? <TemperatureTimelineB
+              {illustratedMap ? <TemperatureTimelineB
                 key={city}
                 map={mapState === "ready" && entryTransitionCity !== city ? mapRef.current : null}
                 city={city}

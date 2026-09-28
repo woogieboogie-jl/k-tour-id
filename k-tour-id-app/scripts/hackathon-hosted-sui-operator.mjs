@@ -80,6 +80,8 @@ const fixedValues = Object.freeze({
 })
 const dynamicKeys = ["HK_HOSTED_SUI_ACCESS_SECRET", "HK_HOSTED_SUI_ACCESS_CODE", "KV_REST_API_URL", "KV_REST_API_TOKEN", "HK_ISSUER_SIGNING_SEED", "HK_SUI_ISSUER_SECRET_KEY", "HK_SUI_AGENT_SECRET_KEY", "HK_SUI_SPONSOR_SECRET_KEY"]
 const allKeys = [...Object.keys(fixedValues), ...dynamicKeys]
+const cxValues = Object.freeze({ HK_CX_BASE_URL: "https://cx.raonsecure.co.kr:18543", HK_CX_PROVIDER: "comdl", HK_CX_ZKP_TYPE: "AdultVerify" })
+const targetKeys = state => state?.cxEnabled === true ? [...allKeys, ...Object.keys(cxValues)] : allKeys
 
 function privateJson(path) {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
@@ -157,14 +159,15 @@ function metadata(item, key, target, state, expected) {
   return { id: item.id, createdAt: item.createdAt, updatedAt: item.updatedAt }
 }
 function stateCheck(state) {
-  if (!record(state) || !NONCE.test(state.nonce ?? "") || !HASH.test(state.fingerprint ?? "") || !record(state.entries) || !record(state.deployments) || Object.keys(state.entries).some(key => !allKeys.includes(key))) stop("journal_target")
+  if (!record(state) || !NONCE.test(state.nonce ?? "") || !HASH.test(state.fingerprint ?? "") || !record(state.entries) || !record(state.deployments) || Object.keys(state.entries).some(key => !allKeys.includes(key) && !Object.hasOwn(cxValues, key))) stop("journal_target")
+  if (state.cxMigration && state.cxMigration.complete !== true) stop("cx_migration_incomplete")
 }
 function reconcile(envs, target, state, complete = false) {
   stateCheck(state)
   if (!Array.isArray(envs)) stop("environment_list")
   const missing = []
   // Validate the ENTIRE batch before persisting state or sending any POST.
-  for (const key of allKeys) {
+  for (const key of targetKeys(state)) {
     const matches = envs.filter(item => item.key === key && matchesTarget(item, target)), entry = state.entries[key]
     if (matches.length > 1 || (matches.length && !entry?.intentAt)) stop("existing_target_variable")
     if (matches.length) state.entries[key] = { ...entry, ...metadata(matches[0], key, target, state, entry) }
@@ -177,7 +180,7 @@ function reconcile(envs, target, state, complete = false) {
   }
   return missing
 }
-function environmentDigest(state) { return createHash("sha256").update(JSON.stringify(allKeys.map(key => [key, state.entries[key]]))).digest("hex") }
+function environmentDigest(state) { return createHash("sha256").update(JSON.stringify(targetKeys(state).map(key => [key, state.entries[key]]))).digest("hex") }
 function createdItem(response) {
   // Official SDK: created is one object OR an array; failed is an array.
   // https://github.com/vercel/sdk/blob/main/src/models/createprojectenvop.ts
@@ -216,7 +219,7 @@ export function createReleaseOperator(io) {
     if (item.key !== key || item.gitBranch !== CX_BRANCH || targetsOf(item).length !== 1 || targetsOf(item)[0] !== "preview" || item.decrypted !== true || typeof item.value !== "string" || !item.value) stop("source_value")
     return item.value
   }
-  async function desiredValues(envs) {
+  async function desiredValues(envs, cxEnabled = false) {
     const [kvUrl, kvToken, code] = await Promise.all(["KV_REST_API_URL", "KV_REST_API_TOKEN", "HK_CX_PREVIEW_ACCESS_CODE"].map(key => readCxValue(envs, key)))
     const privateKeys = io.readSecrets()
     if (!HASH.test(privateKeys.credentialSeed ?? "") || !/^[A-Za-z0-9_-]{32,128}$/.test(code) || ![privateKeys.issuer, privateKeys.agent, kvToken].every(value => typeof value === "string" && value.length >= 32 && value.length <= 1024 && !/[\x00-\x20\x7f]/.test(value))) stop("missing_value")
@@ -224,10 +227,12 @@ export function createReleaseOperator(io) {
     try { url = new URL(kvUrl) } catch { stop("source_value") }
     if (kvUrl !== kvUrl.trim() || /[\x00-\x20\x7f]/.test(kvUrl) || url.protocol !== "https:" || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.upstash\.io$/.test(url.hostname) || url.username || url.password || url.search || url.hash || url.pathname !== "/" || (url.port && url.port !== "443")) stop("source_value")
     const accessSecret = createHash("sha256").update(`ktour-hosted-sui-access/v1:${privateKeys.credentialSeed}`).digest("hex")
-    const values = { ...fixedValues, HK_HOSTED_SUI_ACCESS_SECRET: accessSecret, HK_HOSTED_SUI_ACCESS_CODE: code, KV_REST_API_URL: kvUrl, KV_REST_API_TOKEN: kvToken,
+    const values = { ...fixedValues, ...(cxEnabled ? { ...cxValues, HK_MODE_CX: "cx" } : {}), HK_HOSTED_SUI_ACCESS_SECRET: accessSecret, HK_HOSTED_SUI_ACCESS_CODE: code, KV_REST_API_URL: kvUrl, KV_REST_API_TOKEN: kvToken,
       HK_ISSUER_SIGNING_SEED: privateKeys.credentialSeed, HK_SUI_ISSUER_SECRET_KEY: privateKeys.issuer, HK_SUI_AGENT_SECRET_KEY: privateKeys.agent, HK_SUI_SPONSOR_SECRET_KEY: privateKeys.issuer }
-    if (Object.keys(values).length !== allKeys.length || allKeys.some(key => typeof values[key] !== "string" || !values[key])) stop("missing_value")
-    return { values, fingerprint: createHmac("sha256", privateKeys.credentialSeed).update(JSON.stringify(allKeys.map(key => [key, values[key]]))).digest("hex") }
+    const keys = targetKeys({ cxEnabled })
+    if (Object.keys(values).length !== keys.length || keys.some(key => typeof values[key] !== "string" || !values[key])) stop("missing_value")
+    return { values, fingerprint: createHmac("sha256", privateKeys.credentialSeed).update(JSON.stringify(keys.map(key => [key, values[key]]))).digest("hex"),
+      baseFingerprint: createHmac("sha256", privateKeys.credentialSeed).update(JSON.stringify(allKeys.map(key => [key, key === "HK_MODE_CX" ? "mock" : values[key]]))).digest("hex") }
   }
   function prepared(j, target, sha, envs) {
     const state = j.targets[target]
@@ -242,7 +247,7 @@ export function createReleaseOperator(io) {
     return boundDeployment(await io.api(`/v13/deployments/${intent.id}`), "preview", sha, intent, true)
   }
   return async function command(action, extra, evidenceHash) {
-    const simple = ["inspect", "prepare-preview", "prepare-production", "plan-preview", "plan-production", "deploy-preview", "deploy-production", "retry-rejected-preview"]
+    const simple = ["inspect", "prepare-preview", "prepare-production", "plan-preview", "plan-production", "deploy-preview", "deploy-production", "retry-rejected-preview", "plan-cx-preview", "plan-cx-production", "enable-cx-preview", "enable-cx-production"]
     if (!simple.includes(action) && !["status", "reconcile-deployment", "mark-preview-passed"].includes(action)) stop("arguments")
     if ((simple.includes(action) && extra !== undefined) || (action !== "mark-preview-passed" && evidenceHash !== undefined) || (!simple.includes(action) && !/^dpl_[A-Za-z0-9]+$/.test(extra ?? "")) || (action === "mark-preview-passed" && !HASH.test(evidenceHash ?? ""))) stop("arguments")
     const project = await projectCheck()
@@ -273,6 +278,44 @@ export function createReleaseOperator(io) {
         return { ...info, reconciled: true, remoteTestsAttested: action === "mark-preview-passed", mutation: "local-journal-only" }
       }
       const target = action.endsWith("production") ? "production" : "preview"
+      if (action.startsWith("plan-cx-") || action.startsWith("enable-cx-")) {
+        const state = prepared(j, target, sha, envs)
+        if (state.cxEnabled === true) return { target, identity: "cx", mutation: false, alreadyEnabled: true }
+        // No old Sui-only deployment/attestation may be reused for this SHA.
+        if (state.deployments[sha]) stop("cx_requires_new_revision")
+        for (const key of Object.keys(cxValues)) if (envs.some(item => item.key === key && matchesTarget(item, target))) stop("existing_target_variable")
+        const { fingerprint, baseFingerprint } = await desiredValues(envs, true)
+        // Both digests derive from the SAME secret/source snapshot. Migrating
+        // public CX flags cannot bless a rotation of untouched target values.
+        if (state.fingerprint !== baseFingerprint) stop("prepared_values_changed")
+        if (target === "production") {
+          await readyTestedPreview(j, sha, envs)
+          if (j.targets.preview.cxEnabled !== true || j.targets.preview.fingerprint !== fingerprint) stop("cx_preview_tests_required")
+        }
+        if (action.startsWith("plan-")) return { target, revision: sha, wouldCreate: Object.keys(cxValues), wouldUpdate: ["HK_MODE_CX"], mutation: false }
+        state.cxMigration = { startedAt: stamp(), complete: false }; state.complete = false; io.saveJournal(j)
+        // Exactly three public connection values plus the identity-mode switch.
+        // Never copy/rotate a signer, seed, Redis credential, or access code.
+        for (const [key, value] of Object.entries(cxValues)) {
+          state.entries[key] = { intentAt: stamp() }; io.saveJournal(j)
+          let response
+          try { response = await io.api(`/v10/projects/${PROJECT_ID}/env`, "POST", { key, value, type: "encrypted", target: [target], ...(target === "preview" ? { gitBranch: HOSTED_SUI_BRANCH } : {}), comment: marker(state, key) }) }
+          catch { stop("cx_migration_outcome_unknown") }
+          state.entries[key] = { ...state.entries[key], ...metadata(createdItem(response), key, target, state) }; io.saveJournal(j)
+        }
+        const prior = state.entries.HK_MODE_CX
+        state.cxMigration.modeIntentAt = stamp(); io.saveJournal(j)
+        let updated
+        try { updated = await io.api(`/v9/projects/${PROJECT_ID}/env/${prior.id}`, "PATCH", { value: "cx" }) }
+        catch { stop("cx_migration_outcome_unknown") }
+        const next = metadata(updated, "HK_MODE_CX", target, state)
+        if (next.id !== prior.id || next.createdAt !== prior.createdAt || next.updatedAt < prior.updatedAt) stop("environment_drift")
+        state.entries.HK_MODE_CX = { ...prior, ...next }
+        state.cxEnabled = true; state.cxMigration.complete = true; state.fingerprint = fingerprint
+        reconcile(await listEnvs(), target, state, true)
+        state.environmentDigest = environmentDigest(state); state.complete = true; io.saveJournal(j)
+        return { target, revision: sha, identity: "cx", updated: ["HK_MODE_CX"], created: Object.keys(cxValues), mutation: "environment-only", deploymentRequired: true }
+      }
       if (action.startsWith("deploy") || action === "retry-rejected-preview") {
         const state = prepared(j, target, sha, envs)
         if (target === "production") {
@@ -305,10 +348,10 @@ export function createReleaseOperator(io) {
         }
         const info = boundDeployment(d, target, sha, intent); intent.id = info.id; io.saveJournal(j); return info
       }
-      const { values, fingerprint } = await desiredValues(envs), state = j.targets[target] ?? { nonce: nonce(), fingerprint, entries: {}, deployments: {} }
+      const { values, fingerprint } = await desiredValues(envs, j.targets[target]?.cxEnabled === true), state = j.targets[target] ?? { nonce: nonce(), fingerprint, entries: {}, deployments: {} }
       if (state.fingerprint !== fingerprint) stop("prepared_values_changed")
       const missing = reconcile(envs, target, state)
-      if (action.startsWith("plan")) return { target, branch: target === "preview" ? HOSTED_SUI_BRANCH : null, revision: sha, wouldCreate: missing, alreadyCreated: allKeys.length - missing.length, mutation: false }
+      if (action.startsWith("plan")) return { target, branch: target === "preview" ? HOSTED_SUI_BRANCH : null, revision: sha, wouldCreate: missing, alreadyCreated: targetKeys(state).length - missing.length, mutation: false }
       j.targets[target] = state; state.complete = false; io.saveJournal(j)
       for (const key of missing) {
         state.entries[key] = { intentAt: stamp() }; io.saveJournal(j) // BEFORE each remote POST.
@@ -323,7 +366,7 @@ export function createReleaseOperator(io) {
       }
       reconcile(await listEnvs(), target, state, true)
       state.revision = sha; state.environmentDigest = environmentDigest(state); state.preparedAt = stamp(); state.complete = true; io.saveJournal(j)
-      return { target, branch: target === "preview" ? HOSTED_SUI_BRANCH : null, created: missing, reconciledCount: allKeys.length - missing.length, runtimeProfile: "sui-only", revision: sha }
+      return { target, branch: target === "preview" ? HOSTED_SUI_BRANCH : null, created: missing, reconciledCount: targetKeys(state).length - missing.length, runtimeProfile: state.cxEnabled ? "cx-sui" : "sui-only", revision: sha }
     }
     // Dry runs do not create a lock or journal; every remote request is GET.
     return action.startsWith("plan") ? work() : io.withLock(action, work)

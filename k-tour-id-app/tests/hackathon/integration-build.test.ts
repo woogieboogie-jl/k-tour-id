@@ -130,6 +130,22 @@ test("build plan rejects arguments, a foreign cwd and inherited Node preload opt
   assert.throws(() => subject.integrationBuildPlan({ ...base, env: { NODE_OPTIONS: "--import=fixture-private.mjs" } }), { message: "integration_build_node_options" })
 })
 
+test("validated Vercel launch options are stripped, while partial or foreign remote targets still fail closed", () => {
+  const options = "--require=/fixture/platform-launcher.cjs --max-old-space-size=4096"
+  const env = { ...metadata(), NODE_OPTIONS: options }
+  const plan = subject.integrationBuildPlan({ env, exists: () => false })
+  assert.equal(Object.hasOwn(plan.options.env, "NODE_OPTIONS"), false)
+  assert.equal(JSON.stringify(plan).includes(options), false)
+  assert.equal(env.NODE_OPTIONS, options, "the parent environment is never mutated")
+  for (const invalid of [
+    { VERCEL: "1", NODE_OPTIONS: options },
+    { ...env, VERCEL_ENV: "production" },
+    { ...env, VERCEL_GIT_COMMIT_REF: "deploy/sui-main-20260928" },
+    { ...env, VERCEL_ORG_ID: "unapproved-team" },
+    { ...env, VERCEL_PROJECT_ID: "unapproved-project" },
+  ]) assert.throws(() => subject.integrationBuildPlan({ env: invalid, exists: () => false }), { message: "integration_build_target" })
+})
+
 test("bounded build plan uses exact Node/Next executable, webpack, fixed cwd and no shell or deployment command", () => {
   const plan = subject.integrationBuildPlan({ env: {}, exists: () => false })
   assert.equal(plan.command, process.execPath)
@@ -148,7 +164,7 @@ test("separate Seoul Preview config and selected hosted Sui release disable Git 
   assert.equal(profile.buildCommand, "node scripts/hackathon-integration-build.mjs")
   assert.equal(profile.framework, "nextjs")
   assert.equal(profile.outputDirectory, ".next")
-  assert.equal(profile.public, false)
+  assert.equal(Object.hasOwn(profile, "public"), false, "deprecated Vercel config property must not block deployment; runtime access gates protect HTTP")
   assert.equal(profile.git.deploymentEnabled, false)
   assert.deepEqual(profile.regions, ["icn1"])
   assert.equal(profile.env, undefined)

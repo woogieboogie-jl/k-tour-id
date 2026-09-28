@@ -17,7 +17,7 @@ function fixture() {
   const envs = Object.keys(sourceValues).map((key, i) => ({ id: `source_${i}`, key, target: ["preview"], gitBranch: sourceBranch }))
   const calls = [], deployments = new Map()
   let stored = null, saves = 0, counter = 0, currentSha = SHA, locked = false
-  let postHook, createdShape = "object", deploymentHook
+  let postHook, patchHook, createdShape = "object", deploymentHook
   const api = async (path, method = "GET", body) => {
     calls.push({ path, method }) // Deliberately do not retain request values.
     if (path === "/v2/user") return { user: { username: "jaewook-9643" } }
@@ -36,6 +36,15 @@ function fixture() {
       envs.push(item)
       if (postHook) await postHook(item)
       return { created: createdShape === "object" ? copy(item) : [copy(item)], failed: [] }
+    }
+    if (path.startsWith(`/v9/projects/${PROJECT_ID}/env/`) && method === "PATCH") {
+      const item = envs.find(item => item.id === path.split("/").at(-1))
+      assert.equal(locked, true); assert.equal(item?.key, "HK_MODE_CX")
+      assert.deepEqual(body, { value: "cx" })
+      assert.ok(stored.targets[item.target[0]].cxMigration.modeIntentAt)
+      item.updatedAt = TIME + ++counter
+      if (patchHook) await patchHook(item)
+      return copy(item)
     }
     if (path === "/v13/deployments" && method === "POST") {
       assert.equal(body.gitSource.repoId, "123", "normalize only digit-validated repository ID")
@@ -56,9 +65,68 @@ function fixture() {
     withLock: async (_action, task) => { assert.equal(locked, false); locked = true; try { return await task() } finally { locked = false } } })
   return { run, envs, calls, deployments, secrets, sourceValues, journal: () => copy(stored), saves: () => saves,
     postCount: () => calls.filter(call => call.method === "POST").length,
-    shape: value => { createdShape = value }, postHook: value => { postHook = value }, deploymentHook: value => { deploymentHook = value }, sha: value => { currentSha = value } }
+    shape: value => { createdShape = value }, postHook: value => { postHook = value }, patchHook: value => { patchHook = value }, deploymentHook: value => { deploymentHook = value }, sha: value => { currentSha = value } }
 }
 const rejects = (promise, name) => assert.rejects(promise, { message: `release_${name}` })
+
+test("CX migration changes only public CX connection values, preserving all signing/access/store rows", async () => {
+  const f = fixture(); await f.run("prepare-preview")
+  const before = copy(f.envs), writes = () => f.calls.filter(c => c.method !== "GET").length
+  const count = writes(), plan = await f.run("plan-cx-preview")
+  assert.deepEqual(plan.wouldUpdate, ["HK_MODE_CX"]); assert.equal(writes(), count)
+  await f.run("enable-cx-preview")
+  assert.equal(writes() - count, 4)
+  for (const row of before.filter(row => row.key !== "HK_MODE_CX")) assert.deepEqual(f.envs.find(item => item.id === row.id), row)
+  assert.equal(f.journal().targets.preview.cxEnabled, true)
+  assert.equal(f.journal().targets.preview.cxMigration.complete, true)
+  assert.equal((await f.run("prepare-preview")).runtimeProfile, "cx-sui")
+  await f.run("enable-cx-preview"); assert.equal(writes(), count + 4)
+})
+
+test("CX production switch requires a CX-configured tested same-revision preview", async () => {
+  const f = fixture(); await f.run("prepare-preview"); await f.run("prepare-production")
+  await rejects(f.run("enable-cx-production"), "preview_tests_required")
+  await f.run("enable-cx-preview")
+  const preview = await f.run("deploy-preview"); f.deployments.get(preview.id).readyState = "READY"
+  await rejects(f.run("enable-cx-production"), "preview_tests_required")
+  await f.run("mark-preview-passed", preview.id, REPORT)
+  await f.run("enable-cx-production")
+  assert.equal((await f.run("deploy-production")).target, "production")
+})
+
+test("CX switch cannot reuse an earlier Sui-only deployment at the same revision", async () => {
+  const f = fixture(); await f.run("prepare-preview"); await f.run("deploy-preview")
+  await rejects(f.run("enable-cx-preview"), "cx_requires_new_revision")
+})
+
+test("CX provider row conflicts fail before writes; other branches are untouched", async () => {
+  const f = fixture(); await f.run("prepare-preview")
+  f.envs.push({ id: "othercx", key: "HK_CX_PROVIDER", target: ["preview"], gitBranch: HOSTED_SUI_BRANCH })
+  const count = f.postCount()
+  await rejects(f.run("enable-cx-preview"), "existing_target_variable")
+  assert.equal(f.postCount(), count)
+})
+
+test("CX migration rejects changed source access or signing seed before all writes", async () => {
+  for (const rotate of [f => { f.sourceValues.HK_CX_PREVIEW_ACCESS_CODE = "RotatedCode_".repeat(4) }, f => { f.secrets.credentialSeed = "d".repeat(64) }]) {
+    const f = fixture(); await f.run("prepare-preview"); rotate(f)
+    const count = f.calls.length
+    await rejects(f.run("enable-cx-preview"), "prepared_values_changed")
+    assert.equal(f.calls.slice(count).some(c => c.method !== "GET"), false)
+    assert.equal(f.journal().targets.preview.cxMigration, undefined)
+  }
+})
+
+test("CX switch never retries an ambiguous mode PATCH or deploys partial configuration", async () => {
+  const f = fixture(); await f.run("prepare-preview")
+  f.patchHook(() => { throw new Error("private upstream response") })
+  await rejects(f.run("enable-cx-preview"), "cx_migration_outcome_unknown")
+  const count = f.calls.length
+  await rejects(f.run("enable-cx-preview"), "target_not_prepared")
+  await rejects(f.run("deploy-preview"), "target_not_prepared")
+  assert.equal(f.calls.slice(count).some(c => c.method !== "GET"), false)
+  assert.equal(JSON.stringify(f.journal()).includes("private upstream response"), false)
+})
 
 for (const shape of ["object", "array"]) test(`handles official created ${shape} and idempotently reconciles metadata`, async () => {
   const f = fixture(); f.shape(shape)

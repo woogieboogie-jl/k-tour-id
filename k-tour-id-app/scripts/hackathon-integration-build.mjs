@@ -76,10 +76,11 @@ export function assertNoIntegrationEnvFiles(root, exists = envFileExists) {
 export function integrationBuildPlan({ env, args = [], cwd = APP_ROOT, exists = envFileExists }) {
   if (args.length !== 0) fail("arguments")
   if (resolve(cwd) !== APP_ROOT) fail("cwd")
-  // A loader may already have affected the calling Node process; never propagate
-  // it or start another build under those inherited launch conditions.
-  if (env.NODE_OPTIONS !== undefined && env.NODE_OPTIONS !== "") fail("node_options")
   const buildEnv = integrationBuildEnv(env)
+  // Match the reviewed hosted build policy: validate every remote target field
+  // first, then omit Vercel's inherited NODE_OPTIONS via the positive allowlist.
+  // Local custom loaders remain disallowed; no option reaches the build child.
+  if (env.VERCEL !== "1" && env.NODE_OPTIONS !== undefined && env.NODE_OPTIONS !== "") fail("node_options")
   assertNoIntegrationEnvFiles(APP_ROOT, exists)
   return {
     command: process.execPath,

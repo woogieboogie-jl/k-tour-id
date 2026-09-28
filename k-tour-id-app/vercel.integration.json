@@ -4,7 +4,6 @@
   "buildCommand": "node scripts/hackathon-integration-build.mjs",
   "installCommand": "pnpm install --frozen-lockfile",
   "outputDirectory": ".next",
-  "public": false,
   "git": {
     "deploymentEnabled": false
   },

@@ -53,10 +53,13 @@ test("CANONICAL-EXIT-003 the last complete visual state is frozen across async f
   ]) expect(place).toContain(token)
 })
 
-test("CANONICAL-EXIT-004 retained peek, detail and nested evidence remain modal, scroll locked and input inert", () => {
+test("CANONICAL-EXIT-004 mobile peek, detail and nested evidence retain modal protection; desktop peek leaves background usable", () => {
   const place = source("features/ondo/place/canonical-place-overlay.tsx")
 
-  expect(place).toContain("const parentModalActive = Boolean(venueId) && (closing || !after19Handoff)")
+  expect(place).toContain("const modalPresentation = !desktopLayout || visualSnapshot.expanded")
+  expect(place).toContain("const parentModalActive = modalPresentation && Boolean(venueId) && (closing || !after19Handoff)")
+  expect(place).toContain("if (!closing || !modalPresentation) return")
+  expect(place).toContain('aria-modal={modalPresentation ? "true" : undefined}')
   expect(place).toContain("useModalIsolation(parentModalActive, retainedRootRef)")
   expect(place).toContain("useDocumentScrollLock(parentModalActive)")
   expect(place).toContain("useModalIsolation(Boolean(closing ? visualSnapshot.openFactKey : openFactKey), evidenceLayerRef)")
