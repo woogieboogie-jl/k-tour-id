@@ -133,17 +133,16 @@ test("THERMAL-SAMPLE-010 native dissolve stays below the bounded sample tick and
   expect(component).toContain('if (map.getLayer(BLEND_LAYER_ID)) map.removeLayer(BLEND_LAYER_ID)')
 })
 
-test("THERMAL-SAMPLE-011 nation warmth is pausable sample decoration and the timeline trace avoids legend icon rules", () => {
+test("THERMAL-SAMPLE-011 nation warmth is finite decoration and the timeline trace avoids legend icon rules", () => {
   const source = readFileSync("features/ondo/map/map-entry-b.tsx", "utf8")
   const css = readFileSync("features/ondo/map/map-b.module.css", "utf8")
   const timeline = readFileSync("features/ondo/map/temperature-timeline-b.tsx", "utf8")
   expect(source).toContain('data-thermal-intro={sampleMotion && mapState === "ready" ? "sample" : "still"}')
   expect(source).toContain('data-thermal-intro-paused={!documentVisible || departingCity !== null}')
   expect(source).toContain('document.removeEventListener("visibilitychange", syncVisibility)')
-  expect(source).toContain('data-atlas-motion={atlasMotionPlaying ? "playing" : "paused"}')
-  expect(source).toContain('data-testid="ondo-b-atlas-motion"')
-  expect(css).toContain("animation: atlasWarmthBreath 7800ms")
-  expect(css).toContain('outline: 2px solid var(--ondo-accent, #8c244f)')
+  expect(source).toContain('data-atlas-motion={atlasIntroComplete ? "settled" : atlasMotionPlaying ? "playing" : "paused"}')
+  expect(source).not.toContain('data-testid="ondo-b-atlas-motion"')
+  expect(css).toContain("animation: atlasWarmthBreath 4200ms")
   expect(css).toContain(':global(html[lang="ko"]) .koreaAtlas .nationIntro h1 { word-break: keep-all; overflow-wrap: break-word; }')
   expect(css).toContain('@media (prefers-reduced-motion: reduce), (forced-colors: active)')
   expect(timeline).toContain('<span className={styles.thermalTrace}')

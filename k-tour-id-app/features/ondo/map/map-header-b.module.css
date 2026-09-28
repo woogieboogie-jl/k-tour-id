@@ -11,7 +11,8 @@
 .wallet > button > span { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .discovery { display:flex; align-items:center; gap:8px; min-height:44px; padding-top:0; }
 .filterDot { position:absolute; top:7px; right:7px; width:5px; height:5px; border-radius:50%; background:var(--ondo-accent); }
-.ageIndicator { position:absolute; right:1px; bottom:0; padding:1px 3px; border-radius:4px; background:var(--ondo-surface-soft); color:var(--ondo-accent); font-size:9px; font-weight:750; line-height:12px; }
+.header .optionsButton[data-after19-active="true"] { display:flex; justify-content:center; gap:4px; flex-basis:68px; width:68px; padding-inline:6px; background:var(--ondo-surface-soft); }
+.ageIndicator { flex:0 0 auto; color:var(--ondo-accent); font-size:10px; font-weight:750; line-height:14px; }
 .searchPanel { display:flex; align-items:center; gap:4px; min-height:52px; padding:3px 5px 3px 14px; border:1px solid var(--ondo-line); border-radius:18px; background:var(--ondo-surface-raised); box-shadow:0 5px 22px rgb(0 0 0 / 6%); }
 .searchPanel > svg { flex:0 0 auto; color:var(--ondo-muted); }
 .searchPanel input { width:0; min-width:0; flex:1 1 0; height:44px; border:0; outline:none; background:transparent; color:var(--ondo-ink); font:inherit; font-size:16px; }
@@ -24,5 +25,7 @@
 .srOnly { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 @media (hover:hover) { .header .iconButton:hover, .header .closeSearch:hover, .header .city:hover, .wallet > button:hover { background:var(--ondo-surface-soft); } }
 @container ondo-map-root (min-width:600px) { .header { left:24px; right:auto; width:440px; max-width:calc(100% - 48px); } }
+@container ondo-map-root (min-width:900px) { .header { left:50%; width:600px; transform:translateX(-50%); } }
+@container ondo-map-root (min-width:900px) and (max-height:520px) { .header { left:24px; width:calc(50% - 36px); max-width:440px; transform:none; } }
 @container ondo-map-root (max-width:340px) { .header { left:10px; right:10px; } .shell { padding-inline:6px; } .discovery { gap:4px; } }
 @media (forced-colors:active) { .shell, .searchPanel { border-color:CanvasText; } .filterDot { background:Highlight; forced-color-adjust:none; } }

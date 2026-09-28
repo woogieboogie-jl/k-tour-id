@@ -132,7 +132,7 @@ test("LAYOUT-BOUNDARY01 JA nation demo modal restores dock reserve, targets and 
   const demo = page.getByTestId("review-sample-indicator")
   for (let pass = 0; pass < 2; pass += 1) {
     await demo.click()
-    const modal = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "旅の流れを体験しましょう", exact: true }) })
+    const modal = page.getByRole("dialog").filter({ has: page.getByTestId("product-guide") })
     await expect(modal).toBeVisible()
     await expect(page.getByTestId("ondo-main-nav")).toBeHidden()
     await tabTo(page, modal.getByRole("button", { name: "閉じる", exact: true }))

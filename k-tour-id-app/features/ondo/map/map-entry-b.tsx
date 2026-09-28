@@ -663,7 +663,7 @@ function NationDirectory({ locale, persona, preferences, mapState, sampleMotion,
   const [documentVisible, setDocumentVisible] = useState(true)
   const [atlasInView, setAtlasInView] = useState(false)
   const [reducedAtlasMotion, setReducedAtlasMotion] = useState(true)
-  const [atlasMotionPaused, setAtlasMotionPaused] = useState(false)
+  const [atlasIntroComplete, setAtlasIntroComplete] = useState(false)
   const atlasElementRef = useRef<HTMLDivElement>(null)
   const countryName = locale === "en" ? "Korea" : locale === "ko" ? "한국" : "韓国"
   const countryIndex = copy.title.indexOf(countryName)
@@ -692,10 +692,14 @@ function NationDirectory({ locale, persona, preferences, mapState, sampleMotion,
     }
   }, [])
   const atlasMotionPlaying = sampleMotion && mapState === "ready" && documentVisible && atlasInView
-    && activeAtlasTab === "ondo" && !reducedAtlasMotion && !atlasMotionPaused && departingCity === null
-  const atlasMotionLabel = atlasMotionPaused
-    ? locale === "ko" ? "지도 움직임 재생" : locale === "ja" ? "地図のアニメーションを再生" : "Play map ambience"
-    : locale === "ko" ? "지도 움직임 일시정지" : locale === "ja" ? "地図のアニメーションを一時停止" : "Pause map ambience"
+    && activeAtlasTab === "ondo" && !reducedAtlasMotion && !atlasIntroComplete && departingCity === null
+  useEffect(() => {
+    if (!atlasMotionPlaying) return
+    // A brief decorative welcome, not live visitor activity. Settle within
+    // five seconds so an endless animation never needs a pause control.
+    const timer = window.setTimeout(() => setAtlasIntroComplete(true), 4800)
+    return () => window.clearTimeout(timer)
+  }, [atlasMotionPlaying])
   const cityNodes: Array<{
     id: CityId
     signalState: "active" | "growing" | "limited"
@@ -753,7 +757,7 @@ function NationDirectory({ locale, persona, preferences, mapState, sampleMotion,
         data-map-presentation={mapState === "error" ? "fallback" : mapState === "ready" ? "ready" : "loading"}
         data-thermal-intro={sampleMotion && mapState === "ready" ? "sample" : "still"}
         data-thermal-intro-paused={!documentVisible || departingCity !== null}
-        data-atlas-motion={atlasMotionPlaying ? "playing" : "paused"}
+        data-atlas-motion={atlasIntroComplete ? "settled" : atlasMotionPlaying ? "playing" : "paused"}
         data-atlas-reduced-motion={reducedAtlasMotion}
         data-departing-city={departingCity ?? undefined}
       >
@@ -807,21 +811,6 @@ function NationDirectory({ locale, persona, preferences, mapState, sampleMotion,
             </button>
           ))}
         </div>
-        {sampleMotion && mapState === "ready" && !reducedAtlasMotion ? <button
-          type="button"
-          className={styles.atlasMotionButton}
-          data-testid="ondo-b-atlas-motion"
-          aria-label={atlasMotionLabel}
-          title={atlasMotionLabel}
-          aria-pressed={!atlasMotionPaused}
-          disabled={departingCity !== null}
-          onClick={() => setAtlasMotionPaused(paused => !paused)}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            {atlasMotionPaused ? <path d="M5 3.5 12 8l-7 4.5Z" fill="currentColor" /> : <path d="M5.5 4v8M10.5 4v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
-          </svg>
-          <span>{locale === "ko" ? "지도 움직임" : locale === "ja" ? "地図の動き" : "Map ambience"}</span>
-        </button> : null}
         <PersonalizationLens
           locale={locale}
           persona={persona}
@@ -1073,7 +1062,9 @@ function focusCollectionPlaces(map: MapLibreMap, places: readonly { longitude: n
   const shell = node.parentElement
   const header = shell?.querySelector('[data-testid="ondo-b-city-header"]')?.getBoundingClientRect()
   const tray = shell?.querySelector('[data-testid="map-discovery-results"], [data-testid="map-discovery-dock"]')?.getBoundingClientRect()
-  const sidePanel = tray && tray.width < bounds.width * .55 && bounds.width >= 600
+  // A centered discovery dock is a bottom obstruction, even on a wide map.
+  // Only a genuinely left-docked result sheet needs asymmetric camera padding.
+  const sidePanel = tray && tray.left - bounds.left < 48 && tray.width < bounds.width * .55 && bounds.width >= 600
   const chrome = shell?.querySelector('[data-testid="ondo-b-map-chrome"]')?.getBoundingClientRect()
   const pinClearance = bounds.height < 640 ? 28 : 35
   const top = Math.max(80, (header?.bottom ?? bounds.top + 120) - bounds.top + pinClearance)

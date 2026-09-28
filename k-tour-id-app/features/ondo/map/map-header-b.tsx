@@ -45,7 +45,7 @@ export function MapHeaderB({ locale, cityLabel, cityStatus, cityStatusCode, onBa
         <small className={styles.srOnly} data-testid="ondo-b-pulse-city-status" data-pulse-city-status={cityStatusCode}>{cityStatus}</small>
         {!showSpectrum ? searchButton : null}
         <div className={styles.wallet}>{wallet}</div>
-        <button type="button" className={styles.iconButton} data-testid="ondo-b-map-options-open" aria-label={`${copy.options}${after19Active ? " · 19+" : ""}`} aria-haspopup="dialog" aria-expanded={optionsOpen} onClick={onOptions}>
+        <button type="button" className={`${styles.iconButton} ${styles.optionsButton}`} data-testid="ondo-b-map-options-open" data-after19-active={after19Active} aria-label={`${copy.options}${after19Active ? " · 19+" : ""}`} aria-haspopup="dialog" aria-expanded={optionsOpen} onClick={onOptions}>
           <MoreHorizontal size={22} aria-hidden="true" />
           {after19Active ? <span className={styles.ageIndicator} aria-hidden="true">19+</span> : filtered ? <i className={styles.filterDot} aria-hidden="true" /> : null}
         </button>

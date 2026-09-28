@@ -170,8 +170,9 @@
   .storyPosition { margin:0; }
 }
 @container ondo-map-root (min-width:900px) {
+  .storyCarousel { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:20px; }
   .storyArrow { display:flex; }
-  .storyNavigation { padding-top:8px; }
+  .storyNavigation { padding:0 0 0 16px; gap:8px; border-left:1px solid var(--ondo-line); }
   .storyPosition { min-width:38px; margin:0; padding:0; border:0; background:transparent; font-size:12px; }
   .storyRail { padding:4px 0; scroll-padding-inline:0; }
   .storySlide { flex-basis:100%; }
@@ -220,6 +221,8 @@
 @media (prefers-reduced-motion:reduce) { .storyRail { scroll-behavior:auto; } .spectrumTrigger > svg { transition:none; } }
 @container ondo-map-root (min-width:600px) and (max-height:520px) {
   .spectrumPanel { top:auto; bottom:calc(100% + 6px); }
+  .storyCarousel { display:block; }
+  .storyNavigation { padding:8px 0 0; border-left:0; }
 }
 @media (forced-colors:active) {
   .storyCard, .spectrumTrigger, .spectrumPanel { border-color:CanvasText; background:Canvas; color:CanvasText; box-shadow:none; }

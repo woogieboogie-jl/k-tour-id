@@ -130,10 +130,7 @@ for (const locale of ["en", "ko", "ja"] as const) {
       if (locale === "en" && appearance === "light") {
         await page.emulateMedia({ reducedMotion: "no-preference" })
         const ambience = page.getByTestId("ondo-b-atlas-motion")
-        await hit(ambience)
-        const nav = await box(page.getByTestId("ondo-main-nav"))
-        const control = await box(ambience)
-        expect(control.y + control.height).toBeLessThanOrEqual(nav.y - 7)
+        await expect(ambience).toHaveCount(0)
       }
     })
   }
