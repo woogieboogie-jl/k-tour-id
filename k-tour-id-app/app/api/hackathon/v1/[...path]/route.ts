@@ -14,6 +14,8 @@ import { isCxPreview, isReadinessPreview, previewReadOnlyResponse } from "@/lib/
 import { cxReadinessResponse } from "@/lib/hackathon/cx-readiness"
 import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewBody, cxPreviewRouteAllowed, grantCxPreviewAccess, requireCxPreviewAccess } from "@/lib/hackathon/cx-preview-access"
 import { assertIntegrationPreviewBody, assertIntegrationPreviewOrigin, assertIntegrationPreviewTarget, grantIntegrationPreviewAccess, integrationPreviewBody, integrationPreviewRouteAllowed, requireIntegrationPreviewAccess, requiresIntegrationPreviewAccess } from "@/lib/hackathon/integration-preview-access"
+import { isHostedSuiProfile, hostedSuiRouteAllowed, assertHostedSuiBody } from "@/lib/hackathon/hosted-sui-profile"
+import { assertHostedSuiTarget, assertHostedSuiOrigin, requireHostedSuiAccess, grantHostedSuiAccess } from "@/lib/hackathon/hosted-sui-access"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -52,6 +54,14 @@ function venueCtx(venueId: string, loc: "ko" | "en" | "ja") {
 }
 
 export async function GET(req: Request, ctx: Ctx) {
+  if (isHostedSuiProfile()) {
+    try {
+      assertHostedSuiTarget(req)
+      const { path } = await ctx.params
+      if (!hostedSuiRouteAllowed(req.method, path) || new URL(req.url).search || new URL(req.url).hash) return json({ error: { code: "hosted_sui_scope" } }, 403)
+      requireHostedSuiAccess(req)
+    } catch (e) { return err(e) }
+  }
   // The integration branch is locked even if its public flag was omitted.
   // This boundary must precede every other profile/session/provider branch.
   if (requiresIntegrationPreviewAccess()) {
@@ -111,6 +121,23 @@ export async function GET(req: Request, ctx: Ctx) {
 
 export async function POST(req: Request, ctx: Ctx) {
   let checkedBody: Record<string, unknown> | undefined
+  const hostedSui = isHostedSuiProfile()
+  if (hostedSui) {
+    try {
+      assertHostedSuiTarget(req)
+      const { path } = await ctx.params
+      if (!hostedSuiRouteAllowed(req.method, path) || new URL(req.url).search || new URL(req.url).hash) return json({ error: { code: "hosted_sui_scope" } }, 403)
+      assertHostedSuiOrigin(req)
+      if (path[0] === "hosted") {
+        const b = await integrationPreviewBody(req)
+        assertHostedSuiBody(path, b)
+        return grantHostedSuiAccess(req, b.accessCode)
+      }
+      requireHostedSuiAccess(req)
+      checkedBody = await integrationPreviewBody(req)
+      assertHostedSuiBody(path, checkedBody)
+    } catch (e) { return err(e) }
+  }
   const integrationPreview = requiresIntegrationPreviewAccess()
   if (integrationPreview) {
     try {
@@ -154,7 +181,7 @@ export async function POST(req: Request, ctx: Ctx) {
   const { path } = await ctx.params
   try {
     // Integration already required exact Origin + immutable proxy agreement.
-    if (!integrationPreview) await assertSameOrigin()
+    if (!integrationPreview && !hostedSui) await assertSameOrigin()
     if (path[0] === "sessions") { const s = await ensureSession(); return json({ ok: true, sessionId: s.sessionId.slice(0, 8) + "…" }) }
     if (path[0] === "zklogin" && path[1] === "prove") {
       const b = checkedBody ?? await body(req)

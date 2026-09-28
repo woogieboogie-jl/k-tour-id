@@ -85,7 +85,7 @@ export function HackathonEntitlementLayerB() {
   }, [])
   if (!HACKATHON_ENABLED) return null
   if (!open) return null
-  const JourneyView = process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1" ? IntegrationJourney
+  const JourneyView = process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1" ? HostedSuiJourney : process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1" ? IntegrationJourney
     : isCxPreview() ? HackathonCxPreviewB : isReadinessPreview() ? HackathonReadinessB : Journey
   return <JourneyView key={open.resumeOperationId ?? open.venueId} detail={open} onClose={() => {
     setOpen(null)
@@ -99,6 +99,10 @@ export function HackathonEntitlementLayerB() {
 
 function IntegrationJourney(props: { detail: HackathonOpenDetail; onClose: () => void }) {
   return <HackathonIntegrationPreviewGate {...props}><Journey {...props} /></HackathonIntegrationPreviewGate>
+}
+
+function HostedSuiJourney(props: { detail: HackathonOpenDetail; onClose: () => void }) {
+  return <HackathonIntegrationPreviewGate {...props} hostedSui><Journey {...props} /></HackathonIntegrationPreviewGate>
 }
 
 /** Optional demo-menu slot. Never competes with the first map experience. */
@@ -183,7 +187,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
 
   const close = useCallback((returnToPlace: boolean) => {
     closedRef.current = true
-    if (op && op.status !== "pending") { writePendingHackathon(null); clearJourneySecrets(op.operationId); try { sessionStorage.removeItem(`ondo-b.hackathon.vc:${op.operationId}`) } catch { /* ignore */ } }
+    if (op && (op.status !== "pending" || (process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1" && op.phase === "fulfillment" && op.agent?.status === "executed"))) { writePendingHackathon(null); clearJourneySecrets(op.operationId); try { sessionStorage.removeItem(`ondo-b.hackathon.vc:${op.operationId}`) } catch { /* ignore */ } }
     onClose()
     if (returnToPlace) window.setTimeout(() => requestPlaceServiceReturnB(detail.venueId, "offer"), 30)
   }, [onClose, op, detail.venueId])
@@ -300,6 +304,9 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   }
   const modes = info?.modes ?? config?.modes ?? {}
   const isolated = config?.isolatedMock !== false
+  const hostedSui = process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1"
+  const sampleIdentity = isolated || modes.cx === "mock"
+  const steps: readonly string[] = hostedSui ? [...c.steps.slice(0, 7), tr("실행 완료", "Execution complete", "実行完了")] : c.steps
   const stateOf = (i: number) => (op?.status === "cancelled" || op?.status === "failed" || op?.status === "expired" ? (i < stepIndex ? "done" : i === stepIndex ? "blocked" : "todo") : i < stepIndex ? "done" : i === stepIndex ? "current" : "todo")
   const title = useMemo(() => info?.campaign?.title?.[locale] ?? c.title, [info, locale, c.title])
 
@@ -311,9 +318,9 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             <h2>{title}</h2>
             <button type="button" className={styles.close} aria-label={c.close} data-testid="hackathon-close" onClick={() => close(true)}><X size={18} aria-hidden="true" /></button>
           </div>
-          <div className={styles.progress} role="group" aria-label={`${c.steps[stepIndex]} · ${stepIndex + 1}/${c.steps.length}`}>
-            <div className={styles.progressLabel}><span><b>{c.steps[stepIndex]}</b></span><span>{stepIndex + 1} / {c.steps.length}</span></div>
-            <div className={styles.segments} aria-hidden="true">{c.steps.map((s, i) => <span key={s} className={styles.segment} data-state={stateOf(i)} />)}</div>
+          <div className={styles.progress} role="group" aria-label={`${steps[stepIndex]} · ${stepIndex + 1}/${steps.length}`}>
+            <div className={styles.progressLabel}><span><b>{steps[stepIndex]}</b></span><span>{stepIndex + 1} / {steps.length}</span></div>
+            <div className={styles.segments} aria-hidden="true">{steps.map((s, i) => <span key={s} className={styles.segment} data-state={stateOf(i)} />)}</div>
           </div>
           <span className={styles.badge} data-tone="sample">{tr("체험용 · 실제 혜택 아님", "Preview · not a real perk", "体験用・実際の特典ではありません")}</span>
         </header>
@@ -354,8 +361,8 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             <section className={styles.card}>
               <h3>{c.steps[1]}</h3>
               {!op.identity?.handoff ? <>
-                <p>{isolated ? c.sampleNote : tr("연결된 신분증 서비스에서 확인을 시작합니다. 결과를 받은 뒤 다음 단계로 진행합니다.", "Start a check with the connected identity service, then retrieve the result.", "接続された身分証サービスで確認後、結果を取得して次に進みます。")}</p>
-                <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={identityStart} data-testid="hackathon-identity-start">{isolated ? tr("샘플 확인 시작", "Start sample check", "サンプル確認を始める") : c.startIdentity}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
+                <p>{sampleIdentity ? c.sampleNote : tr("연결된 신분증 서비스에서 확인을 시작합니다. 결과를 받은 뒤 다음 단계로 진행합니다.", "Start a check with the connected identity service, then retrieve the result.", "接続された身分証サービスで確認後、結果を取得して次に進みます。")}</p>
+                <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={identityStart} data-testid="hackathon-identity-start">{sampleIdentity ? tr("샘플 확인 시작", "Start sample check", "サンプル確認を始める") : c.startIdentity}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
               </> : op.identity.handoff.kind === "mock" ? <>
                 <div className={styles.notice}>{c.sampleNote}</div>
                 <div className={styles.actions}>
@@ -380,6 +387,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
 
           {activePhase === "issuance" && op ? <section className={styles.card}>
             <h3>{c.steps[2]}</h3>
+            {hostedSui ? <p>{tr("앱 내 체험 패스입니다. OpenDID 신분증은 발급하지 않습니다.", "An in-app sample pass, not an OpenDID identity credential.", "アプリ内の体験パスです。OpenDIDの身分証は発行しません。")}</p> : null}
             <p>{busy === "issue" ? c.issuing : tr("이 체험에서 사용할 패스를 받아 보관합니다.", "Receive and keep a pass for this experience.", "この体験で使うパスを受け取り、保存します。")}</p>
             <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={issueAndAck} data-testid="hackathon-issue">{busy === "issue" ? <span className={styles.spinner} /> : null}{tr("패스 받기", "Get pass", "パスを受け取る")}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
           </section> : null}
@@ -423,9 +431,23 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             </section>
           ) : null}
 
-          {activePhase === "agent" && op ? <section className={styles.card}><h3>{c.steps[6]}</h3><p>{op.agent?.status === "unknown" || op.agent?.status === "queued" ? tr("진행한 요청의 결과를 확인하고 있어요. 새로 실행하지 않고 기존 결과만 다시 확인합니다.", "Your request is being checked. Check its result without starting it again.", "送信したリクエストを確認中です。再実行せず、結果だけを確認します。") : tr("확인한 범위 안에서 한 번만 진행합니다. 아래 버튼을 눌러 시작해 주세요.", "Continue once within the approved scope. Tap below when ready.", "承認した範囲内で1回だけ進めます。下のボタンを押してください。")}</p><div className={styles.actions}>{op.agent?.status !== "unknown" && op.agent?.status !== "queued" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={runAgent} data-testid="hackathon-agent-run">{busy === "agent" ? <span className={styles.spinner} /> : null}{c.runAgent}</button> : null}<button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div></section> : null}
+          {activePhase === "agent" && op ? <section className={styles.card}>
+            <h3>{c.steps[6]}</h3>
+            <p>{op.agent?.status === "unknown" || op.agent?.status === "queued" ? tr("진행한 요청의 결과를 확인하고 있어요. 새로 실행하지 않고 기존 결과만 다시 확인합니다.", "Your request is being checked. Check its result without starting it again.", "送信したリクエストを確認中です。再実行せず、結果だけを確認します。") : hostedSui && op.agent?.status === "failed" ? tr("실행을 완료하지 못했어요. 같은 요청을 다시 전송하지 않습니다.", "The action could not complete. This request will not be sent again.", "実行を完了できませんでした。同じリクエストは再送信しません。") : tr("확인한 범위 안에서 한 번만 진행합니다. 아래 버튼을 눌러 시작해 주세요.", "Continue once within the approved scope. Tap below when ready.", "承認した範囲内で1回だけ進めます。下のボタンを押してください。")}</p>
+            <div className={styles.actions}>
+              {op.allowedActions.includes("run_agent") ? <button type="button" className={styles.primary} disabled={!!busy} onClick={runAgent} data-testid="hackathon-agent-run">{busy === "agent" ? <span className={styles.spinner} /> : null}{c.runAgent}</button> : null}
+              <button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button>
+              {hostedSui && op.allowedActions.includes("return") ? <button type="button" className={styles.secondary} onClick={() => close(true)} data-testid="hackathon-return">{c.back}</button> : null}
+            </div>
+          </section> : null}
 
-          {activePhase === "fulfillment" && op ? <section className={styles.card}><h3>{c.steps[7]}</h3>{op.fulfillment?.status === "blocked" ? <div className={styles.notice} data-tone="error">{c.blocked}</div> : <p>{tr("진행 결과와 이용 조건을 다시 확인한 뒤 1회 사용을 확정합니다.", "Re-check the result and eligibility before confirming a single use.", "結果と利用条件を再確認し、1回の利用を確定します。")}</p>}<div className={styles.actions}>{op.fulfillment?.status !== "blocked" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={redeem} data-testid="hackathon-redeem">{busy === "redeem" ? <span className={styles.spinner} /> : null}{c.redeem}</button> : null}<button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div></section> : null}
+          {activePhase === "fulfillment" && op && hostedSui ? <section className={styles.card} data-testid="hackathon-sui-complete">
+            <h3>{tr("승인한 실행이 완료됐어요", "Your approved action is complete", "承認した実行が完了しました")}</h3>
+            <p>{tr("Sui Testnet에서 발급·위임·실행을 확인했어요. 실제 혜택 사용과 OmniOne 기록은 아직 진행하지 않았어요.", "Issuance, delegation and execution are confirmed on Sui Testnet. No real perk was redeemed and no OmniOne record was created.", "Sui Testnetで発行・委任・実行を確認しました。実際の特典利用とOmniOneへの記録はまだ行っていません。")}</p>
+            {op.agent?.txDigest ? <a className={styles.link} href={`https://suiscan.xyz/testnet/tx/${op.agent.txDigest}`} target="_blank" rel="noreferrer">{tr("실행 기록 보기", "View execution receipt", "実行記録を見る")}</a> : null}
+            <div className={styles.actions}><button type="button" className={styles.primary} onClick={() => close(true)} data-testid="hackathon-return">{c.back}</button></div>
+          </section> : null}
+          {activePhase === "fulfillment" && op && !hostedSui ? <section className={styles.card}><h3>{c.steps[7]}</h3>{op.fulfillment?.status === "blocked" ? <div className={styles.notice} data-tone="error">{c.blocked}</div> : <p>{tr("진행 결과와 이용 조건을 다시 확인한 뒤 1회 사용을 확정합니다.", "Re-check the result and eligibility before confirming a single use.", "結果と利用条件を再確認し、1回の利用を確定します。")}</p>}<div className={styles.actions}>{op.fulfillment?.status !== "blocked" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={redeem} data-testid="hackathon-redeem">{busy === "redeem" ? <span className={styles.spinner} /> : null}{c.redeem}</button> : null}<button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div></section> : null}
 
           {op && (op.phase === "done" || op.status !== "pending") ? (
             <section className={styles.card}>

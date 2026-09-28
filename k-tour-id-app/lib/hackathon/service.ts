@@ -19,6 +19,7 @@ import { credentialEligibility, presentationEligibility, redemptionEligibility, 
 import { verifyGrantEvidence } from "./sui-evidence"
 import { prepareDelegationOnce } from "./delegation-preparation"
 import { safeHkError } from "./public-error"
+import { isHostedSuiProfile, PIN as HOSTED_SUI_PIN } from "./hosted-sui-profile"
 
 /** SDK/provider errors may contain authenticated URLs or signed bytes. */
 function safeServiceError(error: unknown, code: string): HkError {
@@ -66,6 +67,7 @@ export function toResult(op: OperationRecord): OperationResult {
 }
 
 function allowed(op: OperationRecord): { allowedActions: AllowedAction[]; safeNextAction: NextAction } {
+  if (isHostedSuiProfile() && op.phase === "fulfillment") return { allowedActions: ["check_status", "return"], safeNextAction: "return" }
   if (op.status === "cancelled" || op.status === "expired" || op.status === "failed" || op.phase === "done") return { allowedActions: ["return"], safeNextAction: "return" }
   switch (op.phase) {
     case "identity": return op.identity?.handoff ? { allowedActions: ["complete_handoff", "cancel", "check_status"], safeNextAction: "check_status" } : { allowedActions: ["open_handoff", "cancel"], safeNextAction: "wait" }
@@ -81,7 +83,10 @@ function allowed(op: OperationRecord): { allowedActions: AllowedAction[]; safeNe
       const canCancel = !d.userTxDigest || d.status === "failed"
       return { allowedActions: canCancel ? ["check_status", "reconcile", "cancel"] : ["check_status", "reconcile"], safeNextAction: "check_status" }
     }
-    case "agent": return { allowedActions: op.agent?.status === "unknown" || op.agent?.status === "queued" ? ["check_status", "reconcile"] : ["run_agent", "check_status", "reconcile"], safeNextAction: "check_status" }
+    case "agent": {
+      if (isHostedSuiProfile() && op.agent) return { allowedActions: ["check_status", "reconcile", "return"], safeNextAction: op.agent.status === "failed" ? "return" : "check_status" }
+      return { allowedActions: op.agent?.status === "unknown" || op.agent?.status === "queued" ? ["check_status", "reconcile"] : ["run_agent", "check_status", "reconcile"], safeNextAction: "check_status" }
+    }
     case "fulfillment": return op.fulfillment?.status === "blocked" ? { allowedActions: ["check_status", "return"], safeNextAction: "return" } : { allowedActions: ["redeem", "check_status", "reconcile"], safeNextAction: "check_status" }
     default: return { allowedActions: ["check_status"], safeNextAction: "check_status" }
   }
@@ -156,6 +161,9 @@ export async function createOperation(input: { sessionId: string; venueId: strin
     // one live operation per session+campaign; reuse instead of duplicating
     const live = Object.values(db.operations).find((o) => o.sessionId === input.sessionId && o.campaignId === c.campaignId && o.status === "pending")
     if (live) { expireIfNeeded(live); if (live.status === "pending") return toResult(live) }
+    // Lifetime budget, inside the same durable Redis mutation as creation.
+    // Cancelled/failed operations still consume a slot; no reset on retry.
+    if (isHostedSuiProfile()) assert(Object.keys(db.operations).length < HOSTED_SUI_PIN.maxOperations, "hosted_sui_limit", "This journey has reached its execution limit.", 429)
     const now = nowIso()
     const consentDigest = digestOf({ version: input.consentVersion, campaignId: c.campaignId, venueId: input.venueId, purpose: c.purpose, policyVersion: c.policyVersion })
     const op: OperationRecord = {
@@ -515,6 +523,10 @@ export async function agentRun(sessionId: string, operationId: string) {
   assertExternalServicesEnabled("Sui agent execution")
   const op = await loadOperation(sessionId, operationId)
   assert(op.status === "pending" && op.phase === "agent" && op.delegation?.grant && op.proposal, "phase", "delegation required", 409)
+  // Hosted gas ceiling: one durable agent attempt per operation, including
+  // chain failure or interruption before a digest was recorded. Neither proves
+  // another paid transaction is within the approved three-transaction budget.
+  if (isHostedSuiProfile() && op.agent) return toResult(op)
   if (op.agent?.status === "executed") return toResult(op)
   if (op.agent?.status === "unknown" || op.agent?.status === "queued") return toResult(op) // In-flight/unknown execution is never blindly dispatched again.
   const grantState = await readGrant(op.delegation.grant.objectId)
@@ -538,7 +550,7 @@ export async function agentRun(sessionId: string, operationId: string) {
   const manifestCommitment = digestOf(manifest)
   let dispatch = await mutate(sessionId, operationId, (o) => {
     assertSnapshot(o, op)
-    assert(!o.agent || o.agent.status === "failed", "phase", "agent already dispatched", 409)
+    assert(isHostedSuiProfile() ? !o.agent : !o.agent || o.agent.status === "failed", "phase", "agent already dispatched", 409)
     o.agent = { dispatchId: o.agent?.dispatchId ?? randomId("agt"), status: "queued", decisionCommitment, manifestCommitment, manifest, txDigest: null, recordId: null, verified: null, error: null }
     touch(o, "agent.queued")
     return o
@@ -577,6 +589,7 @@ export async function agentRun(sessionId: string, operationId: string) {
 
 // ── fulfillment (server redeem) + OmniOne outbox ──────────────────────
 export async function redeem(sessionId: string, operationId: string, input: { idempotencyKey: string; bodyDigest: string }) {
+  if (isHostedSuiProfile()) throw new HkError("hosted_sui_scope", "Benefit use is not enabled in this journey.", 403)
   const op = await loadOperation(sessionId, operationId)
   // A committed retry is valid after phase=done and must not re-query/re-write a chain.
   const prior = await readStore((db) => db.idempotency[`${operationId}:redeem:${input.idempotencyKey}`])

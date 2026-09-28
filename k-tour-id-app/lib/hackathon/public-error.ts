@@ -13,6 +13,7 @@ evidence_expired grant_expired grant_revoked grant_window_expired holder_ack_inv
 holder_key holder_mismatch idempotency_conflict identity_start_pending identity_start_failed
 identity_cancelled identity_failed identity_expired isolated_mock_external_disabled
 integration_preview_unavailable integration_preview_access_denied integration_preview_scope
+hosted_sui_unavailable hosted_sui_access_denied hosted_sui_scope hosted_sui_limit
 no_session nonce not_found omnione_evidence_unavailable omnione_submission_not_started
 omnione_transaction_mismatch omnione_unconfigured opendid_provider_unimplemented
 operation_changed operation_proof outbox_claim_lost phase presentation_mismatch
@@ -26,6 +27,10 @@ const STATUSES = new Set([400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500,
 type PublicFailure = { status: number; error: { code: string; message: string; retryable: boolean } }
 
 const FIXED: Record<string, string> = {
+  hosted_sui_unavailable: "This journey is temporarily unavailable.",
+  hosted_sui_access_denied: "Enter the journey access code to continue.",
+  hosted_sui_scope: "This action is not enabled in this journey.",
+  hosted_sui_limit: "This journey has reached its execution limit.",
   csrf: "Open this service directly to continue.",
   cx_preview_access_denied: "Enter the approved access code to continue.",
   cx_preview_scope: "Only Mobile ID verification is enabled in this preview.",
