@@ -32,7 +32,7 @@ const T = {
     sampleNote: "샘플 결과로 확인 과정을 체험합니다. 실제 신분증 확인 결과가 아니며 샘플로 기록됩니다.", issuing: "K-Tour 패스를 발급하고 보관 중…", present: "패스 제시", deny: "제시하지 않기",
     presentBody: "이 장소의 혜택에 필요한 확인 결과와 패스 유효기간만 제시합니다.", propose: "혜택 제안 받기", approveTitle: "진행 범위 확인", approveBody: "허용한 장소·혜택·횟수·기한을 확인해 주세요. 아래 범위의 1회 진행에만 동의합니다.",
     approveCheck: "이 범위에 동의하고 한 번만 진행하도록 승인합니다.", signerZk: "Google로 계속", signerDemo: "샘플 계정으로 계속", signDelegate: "한 번만 진행하도록 승인", runAgent: "혜택 진행", redeem: "확인하고 사용하기",
-    done: "혜택 사용이 확정됐어요", blocked: "사용이 확정되지 않았어요", chainPending: "기록 확인 중", chainConfirmed: "기록 확정", reconcile: "다시 확인", evidence: "기술 기록 보기", cancel: "그만두기",
+    done: "혜택 사용이 확정됐어요", blocked: "사용이 확정되지 않았어요", chainPending: "기록 확인 중", chainConfirmed: "기록 확정", chainFailed: "외부 기록을 확인하지 못했어요. 다시 확인해 주세요.", reconcile: "다시 확인", evidence: "기술 기록 보기", cancel: "그만두기",
     sample: "SAMPLE", live: "LIVE", chain: "TESTNET",
   },
   en: {
@@ -44,7 +44,7 @@ const T = {
     sampleNote: "Explore the check using a sample result. This is not a real identity check and is recorded as a sample.", issuing: "Issuing and storing your K-Tour pass…", present: "Present pass", deny: "Don't present",
     presentBody: "Share only the check result and pass validity needed for this place's perk.", propose: "Get a perk proposal", approveTitle: "Confirm the scope", approveBody: "Review the place, perk, use limit and expiry. You are approving one action within this scope.",
     approveCheck: "I agree to this scope and approve one action.", signerZk: "Continue with Google", signerDemo: "Continue with sample account", signDelegate: "Approve one action", runAgent: "Continue with perk", redeem: "Confirm and use",
-    done: "Perk use confirmed", blocked: "Use was not confirmed", chainPending: "Recording", chainConfirmed: "Recorded", reconcile: "Check again", evidence: "Show technical record", cancel: "Stop",
+    done: "Perk use confirmed", blocked: "Use was not confirmed", chainPending: "Recording", chainConfirmed: "Recorded", chainFailed: "Couldn’t confirm the external record. Check again.", reconcile: "Check again", evidence: "Show technical record", cancel: "Stop",
     sample: "SAMPLE", live: "LIVE", chain: "TESTNET",
   },
   ja: {
@@ -56,7 +56,7 @@ const T = {
     sampleNote: "サンプル結果で体験できます。実際の身分証確認ではなく、サンプルとして記録されます。", issuing: "K-Tourパスを発行・保存中…", present: "パスを提示", deny: "提示しない",
     presentBody: "この場所の特典に必要な確認結果とパスの有効期間だけを提示します。", propose: "特典の提案を受ける", approveTitle: "進める範囲の確認", approveBody: "場所・特典・回数・期限を確認してください。この範囲の1回の操作だけを承認します。",
     approveCheck: "この範囲に同意し、1回だけの操作を承認します。", signerZk: "Googleで続ける", signerDemo: "サンプルアカウントで続ける", signDelegate: "1回だけの操作を承認", runAgent: "特典を進める", redeem: "確認して利用する",
-    done: "特典の利用が確定しました", blocked: "利用は確定していません", chainPending: "記録を確認中", chainConfirmed: "記録済み", reconcile: "再確認", evidence: "技術記録を見る", cancel: "中止する", sample: "サンプル", live: "接続済み", chain: "TESTNET",
+    done: "特典の利用が確定しました", blocked: "利用は確定していません", chainPending: "記録を確認中", chainConfirmed: "記録済み", chainFailed: "外部記録を確認できませんでした。もう一度確認してください。", reconcile: "再確認", evidence: "技術記録を見る", cancel: "中止する", sample: "サンプル", live: "接続済み", chain: "TESTNET",
   },
 } as const
 const copyFor = (l: Locale) => T[l]
@@ -431,7 +431,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             <section className={styles.card}>
               <h3>{op.fulfillment?.status === "redeemed" ? isolated ? tr("샘플 체험을 마쳤어요", "Sample experience complete", "サンプル体験が完了しました") : c.done : op.status === "cancelled" ? tr("그만두었어요", "Stopped", "中止しました") : op.status === "expired" ? tr("만료됐어요", "Expired", "期限切れです") : c.blocked}</h3>
               {op.fulfillment?.redemptionRef ? <dl className={styles.kv}><dt>{tr("체험 번호", "Experience ref", "体験番号")}</dt><dd>{op.fulfillment.redemptionRef}</dd><dt>{tr("시각", "At", "時刻")}</dt><dd>{op.fulfillment.redeemedAt}</dd></dl> : null}
-              {op.chain ? <div className={styles.notice} data-tone={op.chain.status === "confirmed" ? "ok" : undefined}>{isolated ? tr("샘플 기록입니다. 실제 외부 기록은 생성하지 않았습니다.", "This is a sample record. No real external record was created.", "サンプル記録です。実際の外部記録は作成していません。") : op.chain.status === "confirmed" ? c.chainConfirmed : c.chainPending}</div> : null}
+              {op.chain ? <div className={styles.notice} data-tone={op.chain.status === "confirmed" ? "ok" : op.chain.status === "failed" ? "error" : undefined}>{isolated ? tr("샘플 기록입니다. 실제 외부 기록은 생성하지 않았습니다.", "This is a sample record. No real external record was created.", "サンプル記録です。実際の外部記録は作成していません。") : op.chain.status === "confirmed" ? c.chainConfirmed : op.chain.status === "failed" ? c.chainFailed : c.chainPending}</div> : null}
               <div className={styles.actions}>
                 {op.chain && op.chain.status !== "confirmed" ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button> : null}
                 <button type="button" className={styles.primary} onClick={() => close(true)} data-testid="hackathon-return">{c.back}</button>

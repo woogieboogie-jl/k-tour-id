@@ -1,0 +1,61 @@
+{
+  "ok": true,
+  "checkedAt": "2026-09-28T13:28:09.256Z",
+  "reproducedByRoot": { "checkedAt": "2026-09-28T13:36:58.897Z", "commandExitCode": 0, "ok": true, "readRequests": 5, "responseBytes": 23268, "privateFileReads": 0, "signaturesCreated": 0, "broadcasts": 0 },
+  "source": "independent-testnet-fullnode-read",
+  "verificationMethod": "Direct public fullnode reads; transaction digests recomputed from BCS; ED25519 signatures verified locally; linked effects, events and current objects checked.",
+  "reproduce": "node --import tsx scripts/hackathon-selfhosted-verify.ts --read-only /Users/woogieboogie/.local/share/ktour-sui-e2e/run-20260928-pukp3X/manifest.json /Users/woogieboogie/.local/share/ktour-sui-e2e/run-20260928-pukp3X/browser-public-report.json",
+  "operationId": "op_oURTVLlWjAziObXj",
+  "packageId": "0x7a28a5e59d87e385f2eb3047ca2bbe76301627343f8d88eeb0f03733d4f2389e",
+  "campaignId": "0xa273ccd96315ae187b16eb3192c822795bc2031e6f79405739daec4a52275afd",
+  "chainIdentifier": "69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD",
+  "transactions": [
+    {
+      "digest": "Ebkkj9PvNfmWG3yi3wJP7kEezzZbbwAUMizqNXeguYWn",
+      "checkpoint": "388746483",
+      "success": true,
+      "sender": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+      "gasOwner": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+      "schemes": ["ED25519"],
+      "signerAddresses": ["0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76"],
+      "cryptographicallyVerified": true
+    },
+    {
+      "digest": "Ha24iPjTYdmkJdJ5KAFMMvUonAJuuBP61orQpQbisUMc",
+      "checkpoint": "388746490",
+      "success": true,
+      "sender": "0xe6dfb0608e4ef864a07d44ba1ecc7665b6db09fdbc0b06ad419f5292299a194e",
+      "gasOwner": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+      "schemes": ["ED25519", "ED25519"],
+      "signerAddresses": [
+        "0xe6dfb0608e4ef864a07d44ba1ecc7665b6db09fdbc0b06ad419f5292299a194e",
+        "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76"
+      ],
+      "cryptographicallyVerified": true
+    },
+    {
+      "digest": "3PfGw4ffKwb13VG5EGwNDSZqMY5vg6RPRx6T7oajttKq",
+      "checkpoint": "388746497",
+      "success": true,
+      "sender": "0x17ee59f56d182c010732daaf509a2b35b221bf7ec62e4a59c3b2ceca2c3bbce4",
+      "gasOwner": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+      "schemes": ["ED25519", "ED25519"],
+      "signerAddresses": [
+        "0x17ee59f56d182c010732daaf509a2b35b221bf7ec62e4a59c3b2ceca2c3bbce4",
+        "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76"
+      ],
+      "cryptographicallyVerified": true
+    }
+  ],
+  "holder": "0xe6dfb0608e4ef864a07d44ba1ecc7665b6db09fdbc0b06ad419f5292299a194e",
+  "grantId": "0xab4216c4fe81064c06bffa51cbb45a79fbeb499befd2bf4359d9fcc447a4a363",
+  "grantUses": 1,
+  "maxUses": 1,
+  "revoked": false,
+  "recordId": "0xa7aa2463af8193cb3d4eded6fbb27ddead0b8706e9f918db20a0aad7b5e44480",
+  "recordRecipient": "0xe6dfb0608e4ef864a07d44ba1ecc7665b6db09fdbc0b06ad419f5292299a194e",
+  "linkedEffectsEventsAndObjects": true,
+  "campaignCounters": { "issued": 1, "delegated": 1, "consumed": 1 },
+  "safety": { "readRequests": 5, "responseBytes": 23267, "privateFileReads": 0, "signaturesCreated": 0, "broadcasts": 0 },
+  "limitation": "Sample identity/credential and real Testnet ED25519 receipts; not live CX/OpenDID, zkLogin, redemption, OmniOne or independent checkpoint-certificate verification. The initial result predates the reusable verifier; reproducedByRoot records the later successful execution of that verifier."
+}

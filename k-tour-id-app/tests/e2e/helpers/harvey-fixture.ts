@@ -1,5 +1,5 @@
 import { expect, test as base, type Page, type Route } from "@playwright/test"
-import type { AllowedAction, OperationResult, Phase } from "../../../lib/hackathon/types"
+import type { AllowedAction, ChainRecord, OperationResult, Phase } from "../../../lib/hackathon/types"
 import type { EntitlementInfo, PublicConfig } from "../../../features/ondo/hackathon-b/hackathon-client"
 
 /** Browser presentation fixture only. No provider verification, BFF service,
@@ -20,6 +20,7 @@ export class HarveyFixture {
   readonly pageErrors: string[] = []
   operation: OperationResult | null = null
   private failOnce = new Map<string, string>()
+  private failedChainOnce = false
   private identityResultOnce: "failed" | "expired" | null = null
   private presentationDenialOnce: string | null = null
   private readonly now = new Date().toISOString()
@@ -47,6 +48,8 @@ export class HarveyFixture {
   failNext(action: string, message = "Fixture temporary failure: retry the same step") {
     this.failOnce.set(`/operations/${OPERATION_ID}/${action}`, message)
   }
+  /** Fixture-only chain outcome control; never contacts a provider or chain. */
+  failChainNext() { this.config.isolatedMock = false; this.failedChainOnce = true }
   /** Inject DTO outcomes only; this does not test a provider or an expiry clock. */
   identityResultNext(outcome: "failed" | "expired") { this.identityResultOnce = outcome }
   denyNextPresentation(reason = "holder_signature") { this.presentationDenialOnce = reason }
@@ -273,9 +276,11 @@ export class HarveyFixture {
       }
       case "redeem": {
         requirePhase("fulfillment")
+        const chain: ChainRecord = { outboxId: "fixture-outbox", eventKey: "fixture-event", payloadCommitment: fixtureDigest, status: this.failedChainOnce ? "failed" : "pending", txHash: null, blockNumber: null, attempts: 0, lastError: this.failedChainOnce ? "fixture record failed" : null, confirmedAt: null }
+        this.failedChainOnce = false
         await send(this.advance("done", { status: "succeeded", safeNextAction: "check_status",
           fulfillment: { status: "redeemed", reason: null, redemptionRef: "fixture-use-not-real", redeemedAt: this.now, recheck: { credential: "active", presentation: "allow", sui: "fixture", campaign: "fixture" } },
-          chain: { outboxId: "fixture-outbox", eventKey: "fixture-event", payloadCommitment: fixtureDigest, status: "pending", txHash: null, blockNumber: null, attempts: 0, lastError: null, confirmedAt: null },
+          chain,
         })); return
       }
       case "reconcile": {

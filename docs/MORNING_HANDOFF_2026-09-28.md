@@ -1,5 +1,17 @@
 # 아침에 볼 인계 — 2026-09-28
 
+> **22:25 KST 후속 완료:** 사용자 승인으로 만든 독립 Sui Testnet 환경에서 현재 통합 앱의
+> 모바일 브라우저 → 실제 BFF → 발급·위임·Agent 실행 **3거래가 모두 성공**했다.
+> 사용자에게 필요한 Faucet 1회 지급도 완료됐다. 이 독립 Sui E2E에는 Harvey 키 인계가 더 필요하지 않다.
+> 아래 기존 키 인계 요청은 **Harvey의 기존 배포/역할을 그대로 운영할 경우**에 한한다.
+> [새 거래·검증 범위·재현 안내](./SUI_SELFHOSTED_E2E_2026-09-28.md).
+> 실제 Google zkLogin, CX/OpenDID, 서비스 사용 확정·OmniOne은 이번 Sui 단독 성공과 별개다.
+> 공개 서비스·기존 CX/Sumsub Preview·통합 Vercel 설정은 변경하지 않았다.
+
+> **같은 날 후속 정정:** 전달된 Sui 과거 3거래는 공식 GraphQL/탐색기에서 모두 성공으로
+> 재확인했다. fullnode의 이력 보관 범위가 원인이며 거래 부재가 아니다.
+> [재검증 근거·실제 E2E 경로](./SUI_HISTORICAL_RECHECK_2026-09-28.md).
+
 ## 먼저 결론
 
 **키·계정 권한·본인 승인 없이 가능한 구현, 환경 준비, 읽기 검증을 진행했다.**
@@ -13,8 +25,8 @@
   앱과 같은 ethers client 조회 3/3. 인증 RPC가 동작함을 확인했다. 새 기록은 아직 서명하지 않았다.
 - **Sui 실제 읽기 검증:** Testnet package·Campaign·역할·Clock·가스 상태 확인. 6회 읽기 요청.
   배포와 역할이 존재함을 확인한 것이며 issuer/agent 키 소유나 새 거래 성공은 아니다.
-  제공된 과거 거래 3개는 현재 Testnet SDK 조회에서 `not found`로 재검증하지 못했다.
-  과거 성공을 부정하는 판정은 아니지만 최종 제출 증거는 새 실행으로 확보해야 한다.
+  최초 fullnode 조회는 `not found`였지만 후속 공식 GraphQL 조회에서 과거 3건의 성공과
+  단계 연결을 재확인했다. 이 3건은 Ed25519 서명이며 현재 앱/zkLogin E2E 완료와는 구분한다.
 - **통합 서버 설정 준비:** `jaewook-9643 / ondo`, Preview의
   `integration/autonomous-finish-20260927`에 24개 설정을 준비했다
   (연결/공개·서버 비밀 14개 + runtime profile·만료·잠금 10개).
@@ -63,7 +75,7 @@
 | 누가 | 딱 필요한 행동 | 자료 / 주의 |
 | --- | --- | --- |
 | 화요일 모바일 신분증 보유 팀원 | 자기 기기에서 QR 또는 앱 연결 후 정보 제출 승인 | [한 단계씩 따라가는 안내](./TUESDAY_MOBILE_ID_CHECK_2026-09-29.md). 서비스의 일반 앱/테스트베드 허용 여부도 Harvey에게 확인. 본인 승인은 내가 대신할 수 없음 |
-| Harvey 또는 기존 키 보유자 | 기존 Sui issuer·agent, OmniOne recorder 서명키를 **통합 Preview branch**에 안전하게 등록 | [변수명·기존 주소·등록 위치](./HARVEY_ENV_HANDOFF_2026-09-26.md). sponsor는 기존 별도 키를 썼을 때만. 공개 주소와 RPC 재전달 불필요 |
+| Harvey 또는 기존 키 보유자 | OmniOne recorder 서명키를 안전하게 등록. **기존 Sui 배포를 계속 쓸 경우에만** 기존 issuer·agent도 인계 | 독립 Sui Testnet E2E는 새 전용 환경에서 이미 완료. [기존 주소·등록 위치](./HARVEY_ENV_HANDOFF_2026-09-26.md). 기존 서비스의 계약/역할을 임의 교체하지 않음 |
 | Google/Enoki 설정 관리자 | 기존 client ID·salt seed와 Enoki **또는** 승인된 prover 경로 제공, callback 등록 권한/담당자 연결 | 양쪽 prover를 동시에 요구하지 않는다. 환경 확정 후 정확한 callback 주소는 내가 전달 |
 | AI 키 보유자 | 실제 Gemini key·사용 모델 제공 | rule 제안은 실제 모델 호출 성공이 아님 |
 | Sumsub 관리자 — 별도 항목 | provider webhook 배달까지 검증하려면 Sandbox webhook 등록 또는 관리 권한 제공 | [등록 표](./SUMSUB_LIVE_PREVIEW_2026-09-28.md). SDK·상태 재조회·CX→체인의 필수 선행 조건은 아님 |

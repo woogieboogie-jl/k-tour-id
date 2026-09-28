@@ -1,5 +1,15 @@
 # Sui 공개 LIVE readiness — 2026-09-28
 
+> **최신 실행 결과:** 이 문서는 새벽의 기존 Harvey 배포 읽기 검사 기록이다.
+> 같은 날 22:25 KST에는 별도 승인된 자체 Testnet 환경에서 실제 앱/BFF의 새 3거래 E2E를 완료했다.
+> [최신 실행 증거](./SUI_SELFHOSTED_E2E_2026-09-28.md). 아래 `liveExecutionReady=false`와
+> 기존 키 인계 조건을 이 독립 환경의 현재 상태로 해석하지 않는다. 기존 Harvey 역할은 바꾸지 않았다.
+
+> **후속 정정:** 아래 과거 거래 `not found`는 fullnode 조회에 한정된 결과다.
+> 같은 날 공식 GraphQL 및 실제 탐색기에서 세 거래 모두 SUCCESS와 연결 관계를 확인했고,
+> 해당 fullnode의 이력 보관 범위 밖이라는 원인을 확인했다.
+> [최신 재검증·서명 종류·E2E 경로](./SUI_HISTORICAL_RECHECK_2026-09-28.md)를 우선한다.
+
 ## 결론과 실제 관측
 
 **2026-09-28 01:25:27 KST / 2026-09-27T16:25:27.077Z**, 고정 Sui Testnet 공개 RPC에서 현재 배포 상태를 읽어 검증했다. 결과는 `ok=true`, `mode=live-public-read-only`, **`liveExecutionReady=false`**다. 현재 객체 확인 성공이지 새 거래·서명·전체 연동 성공이 아니다.

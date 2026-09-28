@@ -14,6 +14,7 @@ import { fromBase64, toBase64 } from "@mysten/sui/utils"
 import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { hexToBytes, sha256Hex, HkError } from "../util"
 import { chainId, commitment, verifyDelegationEvidence, verifyExecutionEvidence, type ChainTransaction, type GrantExpectation, type ExecutionExpectation } from "../sui-evidence"
+import { readTransactionWithHistoricalFallback } from "../sui-historical-read"
 
 export type ObjRef = { objectId: string; version: string; digest: string }
 
@@ -214,9 +215,15 @@ export async function readGrant(objectId: string) {
 }
 
 export async function readTransaction(digest: string) {
-  const res = await suiClient().getTransaction({ digest, include: { effects: true, events: true } })
-  const txn = res.Transaction ?? res.FailedTransaction
-  return txn ? transactionEvidence(txn) : null
+  const client = suiClient()
+  return readTransactionWithHistoricalFallback({
+    digest, network: hkConfig().sui.network,
+    readFullnode: async signal => {
+      const res = await client.getTransaction({ digest, include: { effects: true, events: true }, signal })
+      const txn = res.Transaction ?? res.FailedTransaction
+      return txn ? transactionEvidence(txn) : null
+    },
+  })
 }
 
 async function verifyExecutionRecord(recordId: string, expected: ExecutionExpectation, executedAtMs: number) {
