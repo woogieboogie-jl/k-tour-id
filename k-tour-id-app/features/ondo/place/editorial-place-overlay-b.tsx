@@ -14,7 +14,8 @@ import { useDocumentScrollLock, useModalIsolation } from "../shared/ui/use-modal
 import type { SheetPresencePhase } from "../shared/ui/use-sheet-presence"
 import { ONDO_B_JEJU_TABLE } from "../connect/table-model"
 import { capturePlaceServiceMapReturnB } from "../map/place-service-map-return-b"
-import { PlacePeekActionsB, PlaceServiceActionsB } from "./place-service-actions-b"
+import { PlacePeekActionsB } from "./place-service-actions-b"
+import { PlaceDetailActionsB } from "./place-detail-actions-b"
 import styles from "./editorial-place-overlay-b.module.css"
 
 const FOCUSABLE = "a[href],button:not([disabled]),summary,[tabindex]:not([tabindex='-1'])"
@@ -140,8 +141,8 @@ export function EditorialPlaceOverlayB({ editorialPlaceId, locale: mountedLocale
   const copy = COPY[locale]
   const saved = visualSnapshot.saved
 
-  useModalIsolation(Boolean(place), expandedView ? layerRef : peekRef)
-  useDocumentScrollLock(Boolean(place))
+  useModalIsolation(Boolean(place) && expandedView, layerRef)
+  useDocumentScrollLock(Boolean(place) && expandedView)
 
   useEffect(() => {
     setSaveError(false)
@@ -183,7 +184,7 @@ export function EditorialPlaceOverlayB({ editorialPlaceId, locale: mountedLocale
   }, [closing, editorialPlaceId])
 
   useLayoutEffect(() => {
-    if (!closing) return
+    if (!closing || !expandedView) return
     const consumeClosingKey = (event: globalThis.KeyboardEvent) => {
       const activeLayer = expandedView ? layerRef.current : peekRef.current
       if (activeLayer?.closest("[inert],[aria-hidden='true']")) return
@@ -236,7 +237,7 @@ export function EditorialPlaceOverlayB({ editorialPlaceId, locale: mountedLocale
       else close()
       return
     }
-    if (event.key !== "Tab") return
+    if (event.key !== "Tab" || !expandedView) return
     const activeRoot = expandedView ? layerRef.current : peekRef.current
     const focusable = Array.from(activeRoot?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])
       .filter(isRenderedFocusable)
@@ -283,7 +284,7 @@ export function EditorialPlaceOverlayB({ editorialPlaceId, locale: mountedLocale
   }
 
   if (!expandedView) return (
-    <div id="editorial-place-dialog" ref={peekRef} className={styles.peek} role="dialog" aria-modal="true" aria-label={activePlace.name[locale]} aria-busy={closing ? "true" : undefined} tabIndex={-1} data-testid="ondo-b-editorial-place-peek" data-place-service-scroll="true" data-modal-layer-priority={ONDO_MODAL_PRIORITY.peek} data-editorial-place-id={activePlace.id} data-editorial-presence={presenceState} onClickCapture={consumeClosingInput} onPointerDownCapture={consumeClosingInput} onKeyDownCapture={consumeClosingInput} onKeyDown={trapFocus}>
+    <div id="editorial-place-dialog" ref={peekRef} className={styles.peek} role="dialog" aria-label={activePlace.name[locale]} aria-busy={closing ? "true" : undefined} tabIndex={-1} data-testid="ondo-b-editorial-place-peek" data-place-service-scroll="true" data-editorial-place-id={activePlace.id} data-editorial-presence={presenceState} onClickCapture={consumeClosingInput} onPointerDownCapture={consumeClosingInput} onKeyDownCapture={consumeClosingInput} onKeyDown={trapFocus}>
       <div className={styles.grabber} />
       <button type="button" className={styles.close} onClick={close} aria-label={copy.close}><X size={18} aria-hidden="true" /></button>
       <section className={styles.peekIdentity}>
@@ -327,7 +328,7 @@ export function EditorialPlaceOverlayB({ editorialPlaceId, locale: mountedLocale
             <p>{place.sourceCollection[locale]}</p>
             <h2 id="editorial-place-title">{place.name[locale]}</h2>
           </section>
-          <PlaceServiceActionsB placeId={activePlace.id} locale={locale} />
+          <PlaceDetailActionsB placeId={activePlace.id} locale={locale} />
           <section className={styles.editorialContext} role="group" aria-label={editorialSummary} data-testid="ondo-b-editorial-place-temperature" data-coverage-intensity={coverageIntensity} data-temperature-model={JEJU_EDITORIAL_TEMPERATURE.model} data-editorial-temperature-mode={JEJU_EDITORIAL_TEMPERATURE.mode} data-temperature-score="none" data-temperature-visual-grammar="editorial-label" data-pulse-numeric="hidden">
             <MapPin size={16} aria-hidden="true" /><span>{editorialLabel}</span>
           </section>

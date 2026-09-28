@@ -1929,7 +1929,12 @@
 .peekActions a, .peekActions button { min-height: 52px; }
 @media (forced-colors: active) { .peekActions { background: Canvas; } }
 @media (min-width:900px) and (min-height:501px) {
-  .body { grid-template-areas:"identity pulse" "offer trip" "table table" "decisions decisions" "before before" "after19 after19" "utility utility" "save save"; }
+  /* This is a scrolling content grid, not a viewport-sized dashboard. Auto
+     tracks could compress below an opened <details> (overflow:hidden gives
+     it a zero automatic minimum), painting the next rows over its content. */
+  .body { grid-template-areas:"identity pulse" "offer trip" "table table" "decisions decisions" "before before" "after19 after19" "utility utility" "save save"; grid-template-rows:repeat(8,max-content); }
+  .pulsePanel { min-height:max-content; }
+  .body > .detailIdentityStage { align-self:start; }
   .body:has(> .placeActions:empty) { grid-template-areas:"identity pulse" "identity trip" "table table" "decisions decisions" "before before" "after19 after19" "utility utility" "save save"; }
   .placeActions { grid-area:offer; align-self:start; }
   .tripActions { grid-area:trip; align-self:start; }

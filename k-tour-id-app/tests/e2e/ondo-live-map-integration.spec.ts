@@ -54,27 +54,29 @@ test("desktop place peek preserves navigation and details remains modal", async 
   await expect(detail).toHaveAttribute("aria-modal", "true")
 })
 
-test("place peek switches modal semantics across desktop and mobile resize", async ({ page }) => {
+test("place peek stays nonmodal across desktop and mobile resize", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await gotoB(page, `?venueId=${CANONICAL_VENUE_ID}&review=0`)
   const peek = page.getByTestId("canonical-place-peek")
   await expect(peek).not.toHaveAttribute("aria-modal", "true")
   await page.setViewportSize({ width: 390, height: 844 })
-  await expect(peek).toHaveAttribute("aria-modal", "true")
+  await expect(peek).not.toHaveAttribute("aria-modal", "true")
   await page.setViewportSize({ width: 1440, height: 1000 })
   await expect(peek).not.toHaveAttribute("aria-modal", "true")
 })
 
-test("desktop peek transfers focus when resized to the mobile sheet", async ({ page }) => {
+test("resizing a peek preserves focused map search without trapping it", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await gotoB(page, `?venueId=${CANONICAL_VENUE_ID}&review=0`)
   const peek = page.getByTestId("canonical-place-peek")
-  await page.getByTestId("nav-settings").focus()
+  const search = page.getByTestId("ondo-b-map-search-toggle")
+  await search.focus()
   await page.setViewportSize({ width: 390, height: 844 })
-  await expect(peek).toHaveAttribute("aria-modal", "true")
-  await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest("[data-testid='canonical-place-peek']")))).toBe(true)
-  await page.keyboard.press("Tab")
-  await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest("[data-testid='canonical-place-peek']")))).toBe(true)
+  await expect(peek).not.toHaveAttribute("aria-modal", "true")
+  await expect(search).toBeFocused()
+  await search.press("Enter")
+  await expect(page.getByTestId("ondo-b-search")).toBeFocused()
+  await peek.focus()
   await page.keyboard.press("Escape")
   await expect(peek).toHaveCount(0)
 })

@@ -42,10 +42,10 @@ import { FoodPhotoB } from "../map/food-photo-b"
 import { canonicalVenueMoodImage } from "../map/canonical-venue-capsule-b"
 import { ONDO_B_TABLES, ondoBTableTimeline } from "../connect/table-model"
 import { capturePlaceServiceMapReturnB } from "../map/place-service-map-return-b"
-import { PlacePeekActionsB, PlaceServiceActionsB } from "./place-service-actions-b"
+import { PlacePeekActionsB } from "./place-service-actions-b"
+import { PlaceDetailActionsB } from "./place-detail-actions-b"
 import { JourneyVisitEntryB } from "../commerce-b/journey-visit-b"
 import { ExperienceEntryB } from "../experience-b/experience-b"
-import { HackathonEntitlementCtaB } from "../hackathon-b/hackathon-cta-b"
 import {
   canonicalFactFreshness,
   canonicalFactState,
@@ -470,14 +470,6 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
   if (wasClosingRef.current && !closing) exitRequestedRef.current = false
   wasClosingRef.current = closing
   const [expanded, setExpanded] = useState(() => readBDiscoveryHistory()?.level === "detail")
-  const [desktopLayout, setDesktopLayout] = useState(false)
-  useEffect(() => {
-    const media = window.matchMedia("(min-width: 1024px)")
-    const sync = () => setDesktopLayout(media.matches)
-    sync()
-    media.addEventListener("change", sync)
-    return () => media.removeEventListener("change", sync)
-  }, [])
   const [detail, setDetail] = useState<CanonicalVenueDetail | null>(null)
   const [detailState, setDetailState] = useState<"idle" | "loading" | "ready" | "error">("idle")
   const [detailAttempt, setDetailAttempt] = useState(0)
@@ -608,29 +600,15 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
   const retainedRootRef = closing
     ? visualSnapshot.expanded ? layerRef : peekRef
     : expanded ? layerRef : peekRef
-  // A desktop map preview is a non-modal companion to the map. Full details,
-  // mobile sheets and nested evidence retain their isolation/focus contract.
-  const modalPresentation = !desktopLayout || visualSnapshot.expanded
+  // A compact map preview is a companion, including on mobile: searching or
+  // choosing another pin must stay reachable. Only expanded details isolate
+  // the map and trap focus; nested task/evidence sheets retain their own trap.
+  const modalPresentation = visualSnapshot.expanded
   const parentModalActive = modalPresentation && Boolean(venueId) && (closing || !after19Handoff)
   useModalIsolation(parentModalActive, retainedRootRef)
   useDocumentScrollLock(parentModalActive)
   useModalIsolation(Boolean(closing ? visualSnapshot.openFactKey : openFactKey), evidenceLayerRef)
   useModalVisualViewport(evidenceLayerRef)
-
-  const previousDesktopLayout = useRef(desktopLayout)
-  useEffect(() => {
-    const enteringMobile = previousDesktopLayout.current && !desktopLayout
-    previousDesktopLayout.current = desktopLayout
-    if (!enteringMobile || closing || expanded) return
-    const frame = window.requestAnimationFrame(() => {
-      const peek = peekRef.current
-      // A nested sheet owns focus if it has made this preview inert.
-      if (peek && !peek.closest("[inert],[aria-hidden='true']") && !peek.contains(document.activeElement)) {
-        peek.focus({ preventScroll: true })
-      }
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [desktopLayout, closing, expanded])
 
   useLayoutEffect(() => {
     if (!closing || !modalPresentation) return
@@ -1169,10 +1147,7 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
             </div>
           </details>
 
-          <section className={styles.placeActions} data-testid="canonical-place-actions" aria-label={locale === "ko" ? "이 장소에서 할 수 있는 일" : locale === "ja" ? "この場所でできること" : "At this place"}>
-            <PlaceServiceActionsB placeId={currentVenueId} locale={locale} onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open" presentation="place-detail" includeGuide={false} />
-            <HackathonEntitlementCtaB venueId={currentVenueId} locale={locale} />
-          </section>
+          <PlaceDetailActionsB placeId={currentVenueId} locale={locale} className={styles.placeActions} testId="canonical-place-actions" onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open" />
           <section className={styles.tripActions} data-testid="canonical-trip-actions" aria-labelledby="canonical-trip-actions-title">
             <h3 id="canonical-trip-actions-title">{locale === "ko" ? "가이드·여행 기록" : locale === "ja" ? "ガイド・旅の記録" : "Guides & memories"}</h3>
             <ExperienceEntryB placeId={currentVenueId} locale={locale} />

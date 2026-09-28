@@ -5,9 +5,7 @@ import { SheetB } from "../shared/ui/sheet-b"
 import { FoodPhotoB } from "./food-photo-b"
 import { SampleActivityMeterB } from "./sample-activity-meter-b"
 import { researchFoodDirectionsB, researchFoodMediaB, type ResearchedFoodB } from "./researched-food-b"
-import { PlacePeekActionsB, PlaceServiceActionsB } from "../place/place-service-actions-b"
-import { resolveCommercePlaceB } from "../commerce-b/place-service-registry-b"
-import { useReviewSampleSession } from "../shared/ui/use-qa-controls"
+import { PlaceDetailActionsB } from "../place/place-detail-actions-b"
 import styles from "./researched-food-panel-b.module.css"
 
 type Locale = "en" | "ko" | "ja"
@@ -31,20 +29,19 @@ export function ResearchedFoodListB({ places, locale, onSelect }: { places: read
 
 export function ResearchedFoodPanelB({ place, locale, onClose, onMap, returnFocus }: { place: ResearchedFoodB; locale: Locale; onClose: () => void; onMap: () => void; returnFocus?: "offer" | "reservation" | "table" }) {
   const copy = COPY[locale]
-  const sampleMode = useReviewSampleSession()
-  const hasOffer = Boolean(sampleMode && resolveCommercePlaceB(place.id)?.commerce)
   const directions = <a href={researchFoodDirectionsB(place)} target="_blank" rel="noopener noreferrer" data-testid="research-directions"><Navigation size={18} aria-hidden="true" />{copy.directions}</a>
   return <SheetB locale={locale} label={place.name[locale]} onClose={onClose} variant="detail" initialFocusSelector={returnFocus ? `[data-place-service='${returnFocus}']` : undefined} header={<span>{copy.title}</span>} footer={
-    <PlacePeekActionsB placeId={place.id} locale={locale} className={styles.actions} actionTestId="place-offer-open"
-      details={hasService => <button type="button" data-testid="research-on-map" data-visual-priority={hasService ? "secondary" : "primary"} onClick={onMap}><MapPin size={18} aria-hidden="true" />{copy.map}</button>}
-      directions={directions} />
+    <div className={styles.actions}>
+      <button type="button" data-testid="research-on-map" data-visual-priority="primary" onClick={onMap}><MapPin size={18} aria-hidden="true" />{copy.map}</button>
+      {directions}
+    </div>
   }>
     <article className={styles.detail} data-testid="researched-food-detail" data-research-id={place.id} data-origin="EDITORIAL_RESEARCH">
       <div className={styles.identity}><FoodPhotoB {...researchFoodMediaB(place)} locale={locale} compact /><div><small>{copy.guide} · {copy[place.kind]}</small><h2>{place.name[locale]}</h2><p>{place.signature[locale]}</p><span>{place.district[locale]}</span></div></div>
-      <PlaceServiceActionsB placeId={place.id} locale={locale} offerInFooter={hasOffer} />
-      <SampleActivityMeterB venueId={place.id} city={place.city} locale={locale} fallback={null} />
       <div className={styles.reason}><h3>{copy.why}</h3><p>{place.reason[locale]}</p></div>
-      {hasOffer ? <div className={styles.location}><MapPin size={16} aria-hidden="true" /><span>{place.address}</span>{directions}</div> : null}
+      <div className={styles.location}><MapPin size={16} aria-hidden="true" /><span>{place.address}</span></div>
+      <SampleActivityMeterB venueId={place.id} city={place.city} locale={locale} fallback={null} />
+      <PlaceDetailActionsB placeId={place.id} locale={locale} />
       {place.photo?.localSrc && <details className={styles.disclosure} data-testid="research-photo-credit"><summary>{locale === "ko" ? "사진 정보" : locale === "ja" ? "写真について" : "About the photo"}<ChevronRight size={16} /></summary><p>{place.photo.credit}</p>{place.photo.publishedAt && <p>{locale === "ko" ? "사진 게시일" : locale === "ja" ? "写真公開日" : "Photo published"}: {place.photo.publishedAt}</p>}<p>{locale === "ko" ? "당시 매장에서 촬영한 사진이며 현재 메뉴·가격·재고를 보장하지 않아요." : locale === "ja" ? "当時お店で撮影された写真です。現在のメニュー・価格・在庫を保証するものではありません。" : "Photographed at this place, not a guarantee of today's menu, prices or availability."}</p><ul><li><a href={place.photo.sourceUrl} target="_blank" rel="noopener noreferrer">{locale === "ko" ? "원본 사진" : locale === "ja" ? "元の写真" : "Original photo"}</a></li><li><a href={place.photo.licenseUrl} target="_blank" rel="noopener noreferrer">{place.photo.license}</a></li></ul></details>}
       <details className={styles.disclosure} data-testid="research-place-source"><summary>{copy.source}<ChevronRight size={16} /></summary><p>{copy.truth}</p><p>{copy.checked}: {place.checkedAt}</p><p>{place.address}</p><ul>{place.sources.map(source => <li key={source.url}><a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a></li>)}</ul></details>
     </article>

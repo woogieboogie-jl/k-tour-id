@@ -118,14 +118,14 @@ test.describe("ONDO B production inclusive surfaces", () => {
     await expect(page.getByTestId("ondo-b-device-data-settings")).toBeFocused()
   })
 
-  test("B-PROD-INCLUSIVE-005 place summary isolates the underlying directory", async ({ page }) => {
+  test("B-PROD-INCLUSIVE-005 place summary preserves directory access and full details isolate it", async ({ page }) => {
     await seedProduction(page, "en")
     await page.goto("/?city=seoul&view=list", { waitUntil: "domcontentloaded" })
     const directory = page.getByTestId("ondo-b-map-entry")
     await page.getByTestId("ondo-b-venue-list").locator("li button").first().click()
     const peek = page.getByTestId("canonical-place-peek")
-    await expect(peek).toHaveAttribute("aria-modal", "true")
-    const isolated = await directory.evaluate((node) => {
+    await expect(peek).not.toHaveAttribute("aria-modal", "true")
+    const isolated = () => directory.evaluate((node) => {
       let current: Element | null = node
       while (current) {
         if (current.hasAttribute("inert") && current.getAttribute("aria-hidden") === "true") return true
@@ -133,7 +133,10 @@ test.describe("ONDO B production inclusive surfaces", () => {
       }
       return false
     })
-    expect(isolated).toBe(true)
+    expect(await isolated()).toBe(false)
     expect(await seriousAxeViolations(page, "[data-testid='canonical-place-peek']")).toEqual([])
+    await peek.getByTestId("canonical-place-details").click()
+    await expect(page.getByTestId("canonical-place-overlay")).toHaveAttribute("aria-modal", "true")
+    expect(await isolated()).toBe(true)
   })
 })

@@ -94,7 +94,7 @@ test("UX16 pulse uses the same prepared frame with legible and motion-free count
   }
   expect(await values.locator("b").evaluateAll(nodes => nodes.every(node => getComputedStyle(node).animationName === "none"))).toBe(true)
   const before = await pulse.getAttribute("data-sample-minute")
-  // A place peek is modal: operate the map only after closing it, then
+  // Close and reselect to test persistence across the preview lifetime, then
   // reselect through the map's accessible place list. Switching to the main
   // list would unmount this map timeline, so it cannot prove frame continuity.
   await page.keyboard.press("Escape")

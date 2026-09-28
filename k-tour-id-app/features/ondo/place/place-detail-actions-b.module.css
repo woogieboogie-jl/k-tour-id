@@ -1,0 +1,17 @@
+.actions { min-width:0; }
+.actions:empty { display:none; }
+.actions > :global([data-testid="hackathon-entitlement-open"]) {
+  min-height:64px;
+  margin:0;
+  padding:12px 0;
+  border:0;
+  border-bottom:1px solid var(--ondo-line, #dedede);
+  border-radius:0;
+  background:transparent;
+  color:var(--ondo-ink, #171717);
+  box-shadow:none;
+  grid-template-columns:24px minmax(0,1fr) 18px;
+  gap:12px;
+}
+.actions > :global([data-testid="hackathon-entitlement-open"]) strong { font-size:15px; }
+.actions > :global([data-testid="hackathon-entitlement-open"]) small { font-size:13px; line-height:1.4; }
