@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { parseStoredJourney } from "../../lib/hackathon/store-integrity"
-import { readStore, withStore } from "../../lib/hackathon/store"
+import { readStore, withStore, type OperationRecord } from "../../lib/hackathon/store"
 
 const empty = () => ({ version: 1, sessions: {}, operations: {}, redemptions: {}, outbox: {}, idempotency: {}, nonces: {} })
 const savedEnv = { HK_ISOLATED_MOCK: process.env.HK_ISOLATED_MOCK, UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN }
@@ -74,4 +74,31 @@ test("expired Redis writer is fenced and cannot unlock the newer owner", async (
   assert.equal(lock, "newer-owner")
   assert.equal(commits, before)
   assert.deepEqual(Object.keys(await readStore((db) => db.sessions)), ["newer"])
+})
+
+test("store housekeeping drops expired CX bearers but preserves verified evidence and live handoffs", async () => {
+  const future = new Date(Date.now() + 60000).toISOString()
+  const past = new Date(Date.now() - 1000).toISOString()
+  const operation = (changes: Record<string, unknown>) => ({
+    updatedAt: new Date().toISOString(), expiresAt: future, status: "pending",
+    secrets: { cxToken: "private-token", cxTxId: "private-tx", cxCxId: "private-cx" },
+    identity: { mode: "cx", personVerified: false, handoff: { kind: "qr", qrBase64: "private-qr", expiresAt: future } },
+    ...changes,
+  } as unknown as OperationRecord)
+  await withStore(db => {
+    db.operations = {
+      live: operation({}),
+      handoffExpired: operation({ identity: { mode: "cx", personVerified: false, handoff: { expiresAt: past } } }),
+      verifiedExpired: operation({ expiresAt: past, identity: { mode: "cx", personVerified: true, evidenceId: "retained-evidence", handoff: { expiresAt: future } } }),
+      cancelled: operation({ status: "cancelled" }),
+      claimExpired: operation({ identity: null, secrets: { cxToken: "private-token", cxStartClaim: { id: "old-claim", expiresAt: past } } }),
+    }
+  })
+  const operations = await readStore(db => db.operations)
+  assert.equal(operations.live.secrets.cxToken, "private-token")
+  for (const id of ["handoffExpired", "verifiedExpired", "cancelled", "claimExpired"]) assert.deepEqual(operations[id].secrets, {})
+  assert.equal(operations.handoffExpired.identity, null)
+  assert.equal(operations.cancelled.identity, null)
+  assert.equal(operations.verifiedExpired.identity?.personVerified, true)
+  assert.equal(operations.verifiedExpired.identity?.handoff, null)
 })

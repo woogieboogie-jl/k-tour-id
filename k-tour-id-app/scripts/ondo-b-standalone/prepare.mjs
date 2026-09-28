@@ -531,6 +531,13 @@ export async function prepareStandaloneSource({ projectId = process.env.ONDO_B_S
     // The public discovery artifact remains provider-free. The full-app
     // integration lane keeps Harvey's real implementations and API routes.
     // Never copy provider SDKs or credentials into this standalone build.
+    ["features/ondo/identity-b/sumsub-passport-step-b.tsx", `import type { Ref } from "react"
+export const SUMSUB_PASSPORT_ENABLED = false
+const disclosure = { scope: "", purpose: "", evidence: "", provider: "", retention: "", boundary: "", returnStep: "" }
+export const SUMSUB_PASSPORT_DISCLOSURE = { en: disclosure, ko: disclosure, ja: disclosure }
+export type SumsubPassportStepHandle = { requestExit(): Promise<boolean> }
+export function SumsubPassportStepB(_props: { locale: "en" | "ko" | "ja"; onReturn(): void; ref?: Ref<SumsubPassportStepHandle> }) { return null }
+`],
     ["features/ondo/hackathon-b/hackathon-layer-b.tsx", 'export function HackathonEntitlementLayerB() { return null }\nexport function HackathonDemoEntryB() { return null }\n'],
     ["features/ondo/hackathon-b/hackathon-cta-b.tsx", 'export function HackathonEntitlementCtaB(_props: { venueId: string; locale: "en" | "ko" | "ja" }) { return null }\n'],
     [".openai/hosting.json", `${JSON.stringify({ project_id: projectId, d1: null, r2: null }, null, 2)}\n`],

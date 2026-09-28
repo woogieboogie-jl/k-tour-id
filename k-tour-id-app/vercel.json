@@ -1,6 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "pnpm build:vercel:ondo-b",
-  "outputDirectory": ".ondo-b-standalone/.next"
+  "buildCommand": "pnpm build:vercel:cx-preview",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "outputDirectory": ".next",
+  "git": {
+    "deploymentEnabled": {
+      "integration/autonomous-finish-20260927": false,
+      "implementation/opendid-native-20260928": false,
+      "integration/sumsub-live-20260927": false
+    }
+  },
+  "regions": ["icn1"]
 }

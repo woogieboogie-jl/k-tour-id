@@ -44,7 +44,7 @@ test.describe("ONDO B standalone Sites packaging contract", () => {
       "build:vercel:ondo-b": "pnpm prepare:sites:ondo-b && cd .ondo-b-standalone && ../node_modules/.bin/next build --webpack && cd .. && pnpm scan:vercel:ondo-b",
       "scan:vercel:ondo-b": "ONDO_B_NEXT_SOURCE_ROOT=.ondo-b-standalone ONDO_B_NEXT_ROOT=.ondo-b-standalone/.next node scripts/ondo-b-next-client-artifact.mjs",
     })
-    const vercel = JSON.parse(readFileSync(resolve(APP_ROOT, "vercel.json"), "utf8"))
+    const vercel = JSON.parse(readFileSync(resolve(APP_ROOT, "vercel.public-ui.json"), "utf8"))
     expect(vercel).toMatchObject({
       framework: "nextjs",
       buildCommand: "pnpm build:vercel:ondo-b",

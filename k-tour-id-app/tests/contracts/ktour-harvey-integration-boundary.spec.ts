@@ -9,7 +9,7 @@ test("HK-BOUNDARY-01 full-stack entry and API require explicit opt-in", () => {
     .toContain('HACKATHON_ENABLED = process.env.NEXT_PUBLIC_HK_ENABLED === "1"')
   const route = read("app/api/hackathon/v1/[...path]/route.ts")
   expect(route.match(/process\.env\.HK_API_ENABLED !== "1" \|\| process\.env\.NEXT_PUBLIC_HK_ENABLED !== "1"/g)).toHaveLength(2)
-  expect(JSON.parse(read("vercel.json")).buildCommand).toBe("pnpm build:vercel:ondo-b")
+  expect(JSON.parse(read("vercel.public-ui.json")).buildCommand).toBe("pnpm build:vercel:ondo-b")
   expect(JSON.parse(read("vercel.hackathon.json")).buildCommand).toBe("pnpm build:vercel:hackathon")
 })
 

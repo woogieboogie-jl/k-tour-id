@@ -1,0 +1,27 @@
+.root { box-sizing: border-box; flex: 1 1 auto; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 22px 20px 18px; color: var(--ondo-ink, #171717); }
+.badge { display: flex; align-items: center; gap: 6px; margin: 0 0 20px; color: var(--ondo-muted, #626262); font-size: 12px; font-weight: 650; }
+.icon { display: grid; width: 52px; height: 52px; place-items: center; margin-bottom: 18px; border: 1px solid var(--ondo-line, #dedede); border-radius: 17px; background: var(--ondo-surface-soft, #f5f5f5); }
+.icon svg { width: 25px; height: 25px; }
+.root h1 { margin: 0; outline: none; overflow-wrap: anywhere; font-size: clamp(25px, 6.5vw, 34px); font-weight: 800; line-height: 1.15; letter-spacing: -.04em; text-wrap: balance; }
+.lead { max-width: 520px; margin: 12px 0 0; color: var(--ondo-muted, #626262); font-size: 14px; line-height: 1.65; }
+.sdk { width: 100%; min-width: 0; margin-top: 18px; }
+.sdk[hidden] { display: none; }
+.sdk iframe { display: block; width: 100%; max-width: 100%; border: 0; }
+.live { margin: 12px 0 0; color: var(--ondo-muted, #626262); font-size: 13px; line-height: 1.5; }
+.live:empty { margin: 0; }
+.form, .actions { display: grid; gap: 10px; margin-top: 20px; }
+.form + .actions { margin-top: 10px; }
+.form label { display: grid; min-width: 0; gap: 8px; color: var(--ondo-ink, #171717); font-size: 13px; font-weight: 650; }
+.form input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 48px; border: 1px solid var(--ondo-line-strong, #bbb); border-radius: 14px; padding: 12px 14px; background: var(--ondo-surface, #fff); color: var(--ondo-ink, #171717); font: inherit; font-size: 16px; }
+.primary, .secondary, .textButton { display: flex; min-width: 0; min-height: 48px; align-items: center; justify-content: center; gap: 8px; border-radius: 15px; padding: 12px 16px; font: inherit; font-size: 14px; font-weight: 750; line-height: 1.4; cursor: pointer; }
+.primary { border: 1px solid var(--ondo-control, #171717); background: var(--ondo-control, #171717); color: var(--ondo-control-ink, #fff); }
+.secondary { border: 1px solid var(--ondo-line, #dedede); background: var(--ondo-surface, #fff); color: var(--ondo-ink, #171717); }
+.textButton { border: 1px solid transparent; background: transparent; color: var(--ondo-muted, #626262); }
+.primary svg { flex: 0 0 auto; }
+.root :is(button, input, summary):focus-visible { outline: 3px solid var(--ondo-focus, #3979cb); outline-offset: 3px; }
+.root button:disabled { cursor: default; opacity: .55; }
+.alert { margin: 16px 0 0; border: 1px solid var(--ondo-line-strong, #bbb); border-radius: 14px; padding: 12px 14px; background: var(--ondo-surface-soft, #f5f5f5); color: var(--ondo-ink, #171717); font-size: 13px; line-height: 1.6; }
+.privacy { margin-top: 16px; border-top: 1px solid var(--ondo-line, #dedede); color: var(--ondo-muted, #626262); font-size: 12px; line-height: 1.65; }
+.privacy summary { display: flex; min-height: 44px; align-items: center; cursor: pointer; }
+.privacy p { margin: 0 0 12px; }
+@media (max-width: 380px) { .root { padding-inline: 14px; } }

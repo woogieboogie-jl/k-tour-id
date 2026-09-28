@@ -7,6 +7,8 @@
 import { Contract, JsonRpcProvider, Wallet, getBytes, hexlify, keccak256, zeroPadValue } from "ethers"
 import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { HkError } from "../util"
+import { OMNIONE_STAGE, sameHex, validateOmnioneExpectation } from "../omnione-evidence"
+import { omnioneRpcReader, readOmnioneReceiptEvidence, type OmnioneReceiptResult } from "../omnione-readonly"
 
 const ABI = [
   "function recordRedemption(bytes32 eventKey, bytes32 payloadCommitment)",
@@ -75,10 +77,23 @@ export async function getRedemption(eventKeyHex: string) {
   return { exists: Boolean(r[0]), payloadCommitment: hexlify(r[1]) as string, recordedAt: Number(r[2]), recorder: String(r[3]) }
 }
 
-export async function receiptStatus(txHash: string): Promise<{ status: "pending" | "confirmed" | "failed"; blockNumber: number | null }> {
-  const rc = await provider().getTransactionReceipt(txHash)
-  if (!rc) return { status: "pending", blockNumber: null }
-  return { status: rc.status === 1 ? "confirmed" : "failed", blockNumber: rc.blockNumber }
+export async function receiptStatus(txHash: string, binding: { eventKey: string; payloadCommitment: string }): Promise<OmnioneReceiptResult> {
+  assertExternalServicesEnabled("OmniOne Chain evidence")
+  const c = hkConfig().omnione
+  // Public recorder identity; deriving it by constructing a Wallet would make
+  // read-only recovery depend on a private key. Preserve the deployed stage default.
+  const recorder = process.env.HK_OMNIONE_RECORDER_ADDRESS || (c.chainId === OMNIONE_STAGE.chainId && sameHex(c.registryAddress, OMNIONE_STAGE.registry) ? OMNIONE_STAGE.recorder : "")
+  const expected = { ...binding, txHash, registry: c.registryAddress, recorder, chainId: c.chainId }
+  try {
+    validateOmnioneExpectation(expected)
+    if (!c.rpcUrl) throw new Error("configuration")
+    const url = new URL(c.rpcUrl)
+    if (url.protocol !== "https:" || url.username || url.password || url.hash) throw new Error("configuration")
+    return await readOmnioneReceiptEvidence(omnioneRpcReader(c.rpcUrl, { maxCalls: 4, deadline: Date.now() + 20000 }), expected)
+  } catch {
+    // No SDK/RPC URL, credential or response body reaches the outbox/API.
+    throw new HkError("omnione_evidence_unavailable", "OmniOne receipt evidence is unavailable; check again without resubmitting.", 503, true)
+  }
 }
 
 export function explorerHint(txHash: string) {

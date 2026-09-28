@@ -11,18 +11,42 @@ export interface GeminiTurn {
 }
 export interface GeminiResult {
   reply?: string
+  /** Successful request target, not an unverified provider-reported version. */
+  model?: string
   error?: string
+}
+
+// Provider responses can contain credentials, request URLs, prompts, or other
+// sensitive diagnostics. Keep the public result deliberately code-like; the
+// server route and rule fallback only need to know that generation failed.
+function providerError(code: "http" | "network" | "empty", status?: number): string {
+  if (code === "http") return `gemini_provider_http_${status ?? "unknown"}`
+  if (code === "empty") return "gemini_provider_empty_response"
+  return "gemini_provider_unavailable"
+}
+
+function discardProviderBody(res: Response): void {
+  // Do not await cancellation: a broken provider stream may never settle.
+  void res.body?.cancel().catch(() => undefined)
 }
 
 export async function geminiGenerate(opts: {
   key: string
+  /** Explicit preference takes precedence over the shared caller default/cache. */
+  model?: string
   system: string
   message: string
   history?: GeminiTurn[]
   maxOutputTokens?: number
   temperature?: number
 }): Promise<GeminiResult> {
-  const models = [process.env.GEMINI_MODEL, cachedModel, ...CANDIDATES].filter((m): m is string => !!m)
+  const preferredModel = opts.model ?? (process.env.GEMINI_MODEL || undefined)
+  // A model is a single public API resource identifier, never a URL/query or
+  // arbitrary provider diagnostic. Invalid configuration must not be echoed.
+  if (preferredModel !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(preferredModel)) {
+    return { error: "gemini_provider_model_invalid" }
+  }
+  const models = [preferredModel, cachedModel, ...CANDIDATES].filter((m): m is string => !!m)
   const seen = new Set<string>()
   const contents = [
     ...(opts.history ?? []).map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
@@ -51,17 +75,20 @@ export async function geminiGenerate(opts: {
         const reply: string =
           data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") ?? ""
         if (reply.trim()) {
-          cachedModel = model // remember the working model → no repeat 404s
-          return { reply }
+          cachedModel = model // retain the working fallback; explicit preferences still win
+          return { reply, model }
         }
-        lastErr = `empty reply from ${model}`
+        lastErr = providerError("empty")
         continue
       }
-      const body = await res.text().catch(() => "")
-      lastErr = `${res.status} ${model}: ${body.slice(0, 180)}`
+      // Do not read or propagate provider bodies: they may echo the API key,
+      // request URL, prompt, or vendor-internal diagnostics.
+      lastErr = providerError("http", res.status)
+      discardProviderBody(res)
       if (res.status !== 404) break // 400/403/429/5xx won't be fixed by another model
     } catch (e) {
-      lastErr = `${model}: ${e instanceof Error ? e.message : "fetch failed"}`
+      void e
+      lastErr = providerError("network")
     }
   }
   return { error: lastErr }

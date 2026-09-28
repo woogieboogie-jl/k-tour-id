@@ -19,7 +19,7 @@ const HARVEY_PRESERVED_SHA256: Record<string, string> = {
 }
 
 test("DEPLOYMENT-PROFILE-001 keeps map-only and Harvey full-stack builds separate", () => {
-  const mapOnly = json("vercel.json")
+  const mapOnly = json("vercel.public-ui.json")
   const harvey = json("vercel.hackathon.json")
   const scripts = json("package.json").scripts as Record<string, string>
 
@@ -57,12 +57,21 @@ test("DEPLOYMENT-PROFILE-003 preserves one source revision and the original Sui/
   expect(read("../chain/omnione/DemoEntitlementRegistry.sol")).toContain("contract DemoEntitlementRegistry")
   expect(read("../chain/omnione/KTourAnchor.sol")).toContain("contract KTourAnchor")
   for (const [path, expected] of Object.entries(HARVEY_PRESERVED_SHA256)) {
-    expect(sha256(path), `${path} changed from Harvey baseline f4526af3`).toBe(expected)
+    if (path === "pnpm-lock.yaml") {
+      // This approved restore adds only the pinned, dependency-free WebSDK.
+      // Removing its exact three entries must recover Harvey's whole lockfile.
+      const restored = lockfile
+        .replace("      '@sumsub/websdk':\n        specifier: 2.9.0\n        version: 2.9.0\n", "")
+        .replace("  '@sumsub/websdk@2.9.0':\n    resolution: {integrity: sha512-7oH1XrmjaPseDXcliq1IFNhRD9vCw/mfDnLcny55IiubvWFhXZ+BHf63p4Pscln8rCKQiRe6X9klmJ0N8bfGlA==}\n\n", "")
+        .replace("  '@sumsub/websdk@2.9.0': {}\n\n", "")
+      expect(dependencies["@sumsub/websdk"]).toBe("2.9.0")
+      expect(createHash("sha256").update(restored).digest("hex")).toBe(expected)
+    } else expect(sha256(path), `${path} changed from Harvey baseline f4526af3`).toBe(expected)
   }
 })
 
 test("DEPLOYMENT-PROFILE-004 does not silently promote the public static profile to provider or chain runtime", () => {
-  const mapOnly = read("vercel.json")
+  const mapOnly = read("vercel.public-ui.json")
   expect(mapOnly).not.toMatch(/HK_API_ENABLED|NEXT_PUBLIC_HK_ENABLED|HK_SUI_|HK_OMNIONE_|HK_CX_/)
   expect(mapOnly).not.toContain("vercel.hackathon.json")
 })

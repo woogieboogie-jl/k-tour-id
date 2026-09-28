@@ -14,6 +14,7 @@ import { fromBase64, toBase64 } from "@mysten/sui/utils"
 import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { hexToBytes, sha256Hex, HkError } from "../util"
 import { chainId, commitment, verifyDelegationEvidence, verifyExecutionEvidence, type ChainTransaction, type GrantExpectation, type ExecutionExpectation } from "../sui-evidence"
+import { readTransactionWithHistoricalFallback } from "../sui-historical-read"
 
 export type ObjRef = { objectId: string; version: string; digest: string }
 
@@ -64,13 +65,26 @@ function campaignArg(tx: Transaction, mutable: boolean) {
 const clockArg = (tx: Transaction) => tx.sharedObjectRef({ objectId: "0x6", initialSharedVersion: 1, mutable: false })
 const bytes32 = (tx: Transaction, hex: string) => tx.pure.vector("u8", Array.from(hexToBytes(hex)))
 
+/** Optional operator bound; existing application callers retain their gas policy. */
+function gasBudget(tx: Transaction, mist?: number) {
+  if (mist === undefined) return
+  if (!Number.isSafeInteger(mist) || mist <= 0) throw new HkError("sui_gas_budget", "Invalid gas budget", 400)
+  tx.setGasBudget(mist)
+}
+export function assertSerializedGasBudget(bytes: Uint8Array, mist?: number) {
+  if (mist === undefined) return
+  if (!Number.isSafeInteger(mist) || mist <= 0 || Transaction.from(bytes).getData().gasData.budget !== String(mist)) {
+    throw new HkError("sui_gas_budget", "Serialized gas budget differs from approval", 400)
+  }
+}
+
 async function executeSigned(bytes: Uint8Array, signatures: string[]) {
   const client = suiClient()
   const res = await client.executeTransaction({ transaction: bytes, signatures, include: { effects: true, events: true } })
   const txn = res.Transaction ?? res.FailedTransaction
   if (!txn) throw new HkError("sui_execute", "no transaction result", 502, true)
   if (txn.digest !== transactionDigest(bytes)) throw new HkError("sui_evidence_mismatch", "transaction response digest differs from submitted bytes", 502)
-  if (!txn.status.success) throw new HkError("sui_execute_failed", `Sui execution failed: ${JSON.stringify(txn.status.error).slice(0, 300)}`, 502)
+  if (!txn.status.success) throw new HkError("sui_execute_failed", "The chain rejected this transaction", 502)
   // executeTransaction returns on validator certification; the fullnode we read from
   // may lag by a checkpoint. Wait until it has indexed this tx so the follow-up
   // getObject / gas-coin lookups never see stale state ("Object … not found").
@@ -93,12 +107,11 @@ async function waitForIndexed(digest: string, timeoutMs = 15_000) {
 /** getObject with a short retry: a freshly created object can trail the tx by a moment. */
 async function getObjectRetry(objectId: string, include?: { json?: boolean }, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs
-  let lastErr: unknown = null
   while (Date.now() < deadline) {
-    try { return (await suiClient().getObject(include ? { objectId, include } : { objectId })).object } catch (e) { lastErr = e }
+    try { return (await suiClient().getObject(include ? { objectId, include } : { objectId })).object } catch { /* bounded read retry; provider text is never retained */ }
     await new Promise((r) => setTimeout(r, 400))
   }
-  throw lastErr instanceof Error ? lastErr : new HkError("sui_read", `object ${objectId} not readable`, 502, true)
+  throw new HkError("sui_read", "The chain object is not available yet", 502, true)
 }
 
 type Executed = Awaited<ReturnType<typeof executeSigned>>
@@ -115,13 +128,15 @@ async function objectType(objectId: string) {
 }
 
 // ── issuer: mint entitlement to user (sponsored by sponsor) ───────────
-export async function issueEntitlement(opts: { intentRefHex: string; holder: string; expiresAtMs: number; beforeBroadcast?: (digest: string) => Promise<void> }) {
+export async function issueEntitlement(opts: { intentRefHex: string; holder: string; expiresAtMs: number; gasBudgetMIST?: number; beforeBroadcast?: (digest: string) => Promise<void> }) {
   const t = suiTargets(); const k = suiKeys()
   const tx = new Transaction()
   tx.setSender(k.issuerAddress)
   tx.setGasOwner(k.sponsorAddress)
+  gasBudget(tx, opts.gasBudgetMIST)
   tx.moveCall({ target: t.fn.issue, arguments: [campaignArg(tx, true), bytes32(tx, opts.intentRefHex), tx.pure.address(opts.holder), tx.pure.u64(BigInt(opts.expiresAtMs)), clockArg(tx)] })
   const bytes = await tx.build({ client: suiClient() })
+  assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
   const sigs = [(await k.issuer.signTransaction(bytes)).signature]
   if (k.sponsorAddress !== k.issuerAddress) sigs.push((await k.sponsor.signTransaction(bytes)).signature)
   await opts.beforeBroadcast?.(transactionDigest(bytes))
@@ -139,22 +154,26 @@ export async function issueEntitlement(opts: { intentRefHex: string; holder: str
 }
 
 // ── user: build sponsored delegation PTB (2 commands) ─────────────────
-export async function buildDelegationPtb(opts: { userAddress: string; entitlement: ObjRef; recipient: string; actionCommitmentHex: string; consentCommitmentHex: string; expiresAtMs: number }) {
+export async function buildDelegationPtb(opts: { userAddress: string; entitlement: ObjRef; recipient: string; actionCommitmentHex: string; consentCommitmentHex: string; expiresAtMs: number; gasBudgetMIST?: number }) {
   const t = suiTargets(); const k = suiKeys()
   const tx = new Transaction()
   tx.setSender(opts.userAddress)
   tx.setGasOwner(k.sponsorAddress)
+  gasBudget(tx, opts.gasBudgetMIST)
   const grantId = tx.moveCall({ target: t.fn.delegate, arguments: [campaignArg(tx, true), tx.objectRef(opts.entitlement), tx.pure.address(opts.recipient), bytes32(tx, opts.actionCommitmentHex), tx.pure.u64(BigInt(opts.expiresAtMs)), clockArg(tx)] })
   tx.moveCall({ target: t.fn.attestConsent, arguments: [campaignArg(tx, false), grantId, bytes32(tx, opts.consentCommitmentHex)] })
   const bytes = await tx.build({ client: suiClient() })
+  assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
   const sponsorSignature = (await k.sponsor.signTransaction(bytes)).signature
   return { txBytesB64: toBase64(bytes), txBytesDigest: sha256Hex(bytes), sponsorSignature }
 }
 
 /** Execute the delegation with the user's signature (zkLogin or Ed25519) + the sponsor's. */
-export async function executeDelegation(opts: { txBytesB64: string; userSignature: string; sponsorSignature: string; expected: GrantExpectation }) {
+export async function executeDelegation(opts: { txBytesB64: string; userSignature: string; sponsorSignature: string; expected: GrantExpectation; gasBudgetMIST?: number; beforeBroadcast?: (digest: string) => Promise<void> }) {
   const t = suiTargets()
   const bytes = fromBase64(opts.txBytesB64)
+  assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
+  await opts.beforeBroadcast?.(transactionDigest(bytes))
   const txn = await executeSigned(bytes, [opts.userSignature, opts.sponsorSignature])
   const granted = (txn.events ?? []).find((e) => e.eventType === t.events.granted)
   if (!granted) throw new HkError("sui_delegate_verify", "GrantCreated event missing", 502)
@@ -167,15 +186,17 @@ export async function executeDelegation(opts: { txBytesB64: string; userSignatur
 }
 
 // ── agent: consume grant + attest execution (2 commands, sponsored) ───
-export async function agentConsume(opts: { grant: { objectId: string; initialSharedVersion: string }; expected: ExecutionExpectation; beforeBroadcast?: (digest: string) => Promise<void> }) {
+export async function agentConsume(opts: { grant: { objectId: string; initialSharedVersion: string }; expected: ExecutionExpectation; gasBudgetMIST?: number; beforeBroadcast?: (digest: string) => Promise<void> }) {
   const t = suiTargets(); const k = suiKeys()
   const tx = new Transaction()
   tx.setSender(k.agentAddress)
   tx.setGasOwner(k.sponsorAddress)
+  gasBudget(tx, opts.gasBudgetMIST)
   const grantArg = tx.sharedObjectRef({ objectId: opts.grant.objectId, initialSharedVersion: Number(opts.grant.initialSharedVersion), mutable: true })
   const recordId = tx.moveCall({ target: t.fn.consume, arguments: [campaignArg(tx, true), grantArg, bytes32(tx, opts.expected.decisionCommitment), clockArg(tx)] })
   tx.moveCall({ target: t.fn.attestExecution, arguments: [campaignArg(tx, false), recordId, bytes32(tx, opts.expected.manifestCommitment)] })
   const bytes = await tx.build({ client: suiClient() })
+  assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
   const sigs = [(await k.agent.signTransaction(bytes)).signature]
   if (k.sponsorAddress !== k.agentAddress) sigs.push((await k.sponsor.signTransaction(bytes)).signature)
   await opts.beforeBroadcast?.(transactionDigest(bytes))
@@ -194,9 +215,15 @@ export async function readGrant(objectId: string) {
 }
 
 export async function readTransaction(digest: string) {
-  const res = await suiClient().getTransaction({ digest, include: { effects: true, events: true } })
-  const txn = res.Transaction ?? res.FailedTransaction
-  return txn ? transactionEvidence(txn) : null
+  const client = suiClient()
+  return readTransactionWithHistoricalFallback({
+    digest, network: hkConfig().sui.network,
+    readFullnode: async signal => {
+      const res = await client.getTransaction({ digest, include: { effects: true, events: true }, signal })
+      const txn = res.Transaction ?? res.FailedTransaction
+      return txn ? transactionEvidence(txn) : null
+    },
+  })
 }
 
 async function verifyExecutionRecord(recordId: string, expected: ExecutionExpectation, executedAtMs: number) {

@@ -1,0 +1,68 @@
+name: Mobile compatibility (no-provider fixtures)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - integration/autonomous-finish-20260927
+    paths-ignore:
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mobile-compat:
+    if: github.ref == 'refs/heads/integration/autonomous-finish-20260927'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: k-tour-id-app
+    env:
+      CI: 'true'
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - name: Check out the exact test revision without persistent credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Use Node.js 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install the pinned package manager
+        run: npm install --global pnpm@10.8.0
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify provider boundaries without real credentials
+        run: pnpm test:harvey:unit
+      - name: Verify cancellation, expiry, legacy errors and transaction recovery
+        run: pnpm test:harvey:verification
+      - name: Verify the isolated CI runner and report accounting
+        run: node --test tests/ci/mobile-compat-runner.test.mjs
+      - name: Install Chromium and WebKit with Linux dependencies
+        run: pnpm exec playwright install --with-deps chromium webkit
+      - name: Build the local fixture app without provider credentials
+        run: pnpm build:sumsub:local
+      - name: Run all 33 cases in each browser against loopback only
+        run: node scripts/kyc/ci-mobile-server.mjs
+      - name: Record independent browser totals
+        if: always()
+        run: node scripts/kyc/ci-mobile-server.mjs --summary
+      - name: Retain only failed-run diagnostics for three days
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: mobile-compat-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            k-tour-id-app/artifacts/qa/mobile-compat/
+            k-tour-id-app/artifacts/qa/mobile-compat-server.log
+          if-no-files-found: ignore
+          retention-days: 3
+          include-hidden-files: false

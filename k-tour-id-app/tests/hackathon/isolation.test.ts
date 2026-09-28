@@ -160,7 +160,7 @@ test("all chain and provider authentication entrypoints reject isolated executio
     () => sui.buildDelegationPtb({ userAddress: "test", entitlement: { objectId: "test", version: "1", digest: "test" }, recipient: "test", actionCommitmentHex: "test", consentCommitmentHex: "test", expiresAtMs: Date.now() }),
     () => sui.executeDelegation({ txBytesB64: "test", userSignature: "test", sponsorSignature: "test", expected: {} as GrantExpectation }),
     () => sui.agentConsume({ grant: { objectId: "test", initialSharedVersion: "1" }, expected: {} as ExecutionExpectation }),
-    () => omnione.getRedemption("test"), () => omnione.receiptStatus("test"),
+    () => omnione.getRedemption("test"), () => omnione.receiptStatus("test", { eventKey: "test", payloadCommitment: "test" }),
     () => omnione.submitRedemption({ eventKeyHex: "test", payloadCommitmentHex: "test" }),
     () => proveZkLogin({ jwt: "test", extendedEphemeralPublicKey: "test", maxEpoch: 2, jwtRandomness: "test" }),
     () => service.delegationSubmit("test", "test", { txBytesDigest: "test", userSignature: "test" }),

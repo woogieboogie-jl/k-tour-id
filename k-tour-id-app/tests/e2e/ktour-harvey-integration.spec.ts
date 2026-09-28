@@ -284,6 +284,24 @@ test("HK-FIXTURE-11 an audit retry never re-executes or redeems the already-used
   await returnToPlace(page)
 })
 
+test("HK-FIXTURE-11A failed external record uses blocked copy while remaining reconcilable", async ({ page, harvey }, info) => {
+  harvey.failChainNext()
+  await harvey.preferences()
+  await harvey.open()
+  await reachApproval(page, harvey)
+  await page.locator("#hk-approve").check()
+  await page.getByTestId("hackathon-delegate").click()
+  await phase(page, "agent")
+  await page.getByTestId("hackathon-agent-run").click()
+  await phase(page, "fulfillment")
+  await page.getByTestId("hackathon-redeem").click()
+  await expect(layer(page)).toHaveAttribute("data-chain-status", "failed")
+  await expect(layer(page)).toContainText("Perk use confirmed")
+  await expect(layer(page).locator("[data-tone='error']")).toContainText("Couldn’t confirm the external record. Check again.")
+  await expect(page.getByTestId("hackathon-reconcile")).toBeVisible()
+  await page.screenshot({ path: info.outputPath("fixture-record-failed-audit-mobile.png"), scale: "css" })
+})
+
 test("HK-FIXTURE-12 reload after pass storage and signing reads progress without repeating either action", async ({ page, harvey }) => {
   await harvey.preferences()
   await harvey.open()
