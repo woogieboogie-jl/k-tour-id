@@ -15,6 +15,7 @@ import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { hexToBytes, sha256Hex, HkError } from "../util"
 import { chainId, commitment, verifyDelegationEvidence, verifyExecutionEvidence, type ChainTransaction, type GrantExpectation, type ExecutionExpectation } from "../sui-evidence"
 import { readTransactionWithHistoricalFallback } from "../sui-historical-read"
+import { isHostedSuiProfile, assertHostedSuiRoles, PIN as HOSTED_SUI_PIN } from "../hosted-sui-profile"
 
 export type ObjRef = { objectId: string; version: string; digest: string }
 
@@ -42,6 +43,7 @@ export function suiKeys() {
   const issuer = keypair(c.issuerSecretKey, "HK_SUI_ISSUER_SECRET_KEY")
   const agent = keypair(c.agentSecretKey, "HK_SUI_AGENT_SECRET_KEY")
   const sponsor = keypair(c.sponsorSecretKey, "HK_SUI_SPONSOR_SECRET_KEY")
+  if (isHostedSuiProfile()) assertHostedSuiRoles({ issuer: issuer.toSuiAddress(), agent: agent.toSuiAddress(), sponsor: sponsor.toSuiAddress() })
   return { issuer, agent, sponsor, issuerAddress: issuer.toSuiAddress(), agentAddress: agent.toSuiAddress(), sponsorAddress: sponsor.toSuiAddress() }
 }
 export function suiTargets() {
@@ -67,11 +69,19 @@ const bytes32 = (tx: Transaction, hex: string) => tx.pure.vector("u8", Array.fro
 
 /** Optional operator bound; existing application callers retain their gas policy. */
 function gasBudget(tx: Transaction, mist?: number) {
+  if (isHostedSuiProfile()) {
+    if (mist !== undefined && mist !== HOSTED_SUI_PIN.gasBudgetMIST) throw new HkError("sui_gas_budget", "Invalid gas budget", 400)
+    mist = HOSTED_SUI_PIN.gasBudgetMIST
+  }
   if (mist === undefined) return
   if (!Number.isSafeInteger(mist) || mist <= 0) throw new HkError("sui_gas_budget", "Invalid gas budget", 400)
   tx.setGasBudget(mist)
 }
 export function assertSerializedGasBudget(bytes: Uint8Array, mist?: number) {
+  if (isHostedSuiProfile()) {
+    if (mist !== undefined && mist !== HOSTED_SUI_PIN.gasBudgetMIST) throw new HkError("sui_gas_budget", "Invalid gas budget", 400)
+    mist = HOSTED_SUI_PIN.gasBudgetMIST
+  }
   if (mist === undefined) return
   if (!Number.isSafeInteger(mist) || mist <= 0 || Transaction.from(bytes).getData().gasData.budget !== String(mist)) {
     throw new HkError("sui_gas_budget", "Serialized gas budget differs from approval", 400)

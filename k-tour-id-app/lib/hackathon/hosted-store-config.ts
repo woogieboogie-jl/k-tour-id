@@ -1,5 +1,6 @@
 import { HkError } from "./util"
 import type { RedisConnection } from "./redis-config"
+import { isHostedSuiProfile } from "./hosted-sui-profile"
 
 type Env = Record<string, string | undefined>
 export type HostedIntegrationRedisConfig = RedisConnection & { key: string }
@@ -28,6 +29,6 @@ export function hostedIntegrationRedisConfig(env: Env): HostedIntegrationRedisCo
   if (!token || token !== token.trim() || /[\x00-\x20\x7f]/.test(token)) throw invalid()
   const key = env.HK_STORE_KEY ?? ""
   // Never fall back to the public/CX/Sumsub ledger or silently invent a namespace.
-  if (!/^ktour:integration-preview:[A-Za-z0-9:_-]{1,120}$/.test(key)) throw invalid()
+  if (isHostedSuiProfile(env) ? key !== "ktour:sui-hosted:20260928:v1" : !/^ktour:integration-preview:[A-Za-z0-9:_-]{1,120}$/.test(key)) throw invalid()
   return { url: url.replace(/\/+$/, ""), token, key }
 }

@@ -17,13 +17,13 @@ const COPY = {
 
 /** The unchanged Journey is not mounted until the server accepts its own
  * separate HttpOnly access cookie. No access code enters browser storage. */
-export function HackathonIntegrationPreviewGate({ detail, onClose, children }: { detail: HackathonOpenDetail; onClose: () => void; children: ReactNode }) {
+export function HackathonIntegrationPreviewGate({ detail, onClose, children, hostedSui = false }: { detail: HackathonOpenDetail; onClose: () => void; children: ReactNode; hostedSui?: boolean }) {
   const [authorized, setAuthorized] = useState(false)
   const grant = useCallback(() => setAuthorized(true), [])
-  return authorized ? children : <IntegrationAccessForm detail={detail} onClose={onClose} onGranted={grant} />
+  return authorized ? children : <IntegrationAccessForm detail={detail} onClose={onClose} onGranted={grant} hostedSui={hostedSui} />
 }
 
-function IntegrationAccessForm({ detail, onClose, onGranted }: { detail: HackathonOpenDetail; onClose: () => void; onGranted: () => void }) {
+function IntegrationAccessForm({ detail, onClose, onGranted, hostedSui }: { detail: HackathonOpenDetail; onClose: () => void; onGranted: () => void; hostedSui: boolean }) {
   const c = COPY[detail.locale]
   const [status, setStatus] = useState<"checking" | "access" | "unavailable">("checking")
   const [code, setCode] = useState("")
@@ -43,9 +43,9 @@ function IntegrationAccessForm({ detail, onClose, onGranted }: { detail: Hackath
     if (!response.ok) { setStatus("unavailable"); return }
     const config = await response.json()
     if (signal.aborted) return
-    if (config.isolatedMock !== false || config.modes?.cx !== "cx" || config.modes?.opendid !== "opendid") { setStatus("unavailable"); return }
+    if (config.isolatedMock !== false || (hostedSui ? config.hostedSui !== true || config.modes?.sui !== "testnet" || config.modes?.opendid !== "mock" : config.modes?.cx !== "cx" || config.modes?.opendid !== "opendid")) { setStatus("unavailable"); return }
     onGranted()
-  }, [onGranted])
+  }, [onGranted, hostedSui])
 
   const retry = useCallback(async () => {
     if (inFlight.current) return
@@ -80,7 +80,7 @@ function IntegrationAccessForm({ detail, onClose, onGranted }: { detail: Hackath
     requestRef.current = controller
     const timeout = window.setTimeout(() => controller.abort(), 8000)
     try {
-      const response = await fetch("/api/hackathon/v1/integration/access", { method: "POST", credentials: "same-origin", cache: "no-store",
+      const response = await fetch(hostedSui ? "/api/hackathon/v1/hosted/access" : "/api/hackathon/v1/integration/access", { method: "POST", credentials: "same-origin", cache: "no-store",
         headers: { "content-type": "application/json" }, body: JSON.stringify({ accessCode: submittedCode }), signal: controller.signal })
       if (controller.signal.aborted) return
       if (response.status === 401) { setDenied(true); return }
