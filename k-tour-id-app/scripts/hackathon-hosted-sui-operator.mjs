@@ -17,6 +17,38 @@ const SCHEMA = "ktour-hosted-sui-release/v1"
 const MAX_END = Date.parse("2026-09-30T14:59:59Z")
 const ID = /^[A-Za-z0-9_-]{1,128}$/, SHA = /^[a-f0-9]{40}$/, HASH = /^[a-f0-9]{64}$/, NONCE = /^[a-f0-9]{32}$/
 const stop = code => { throw new Error(`release_${code}`) }
+const API_ERROR_CODES = new Set(["bad_request", "invalid_request", "invalid_request_body", "invalid_request_parameter", "validation_error", "missing_required_property", "unauthorized", "forbidden", "not_found", "conflict", "rate_limited", "too_many_requests", "payment_required", "git_repo_not_found", "git_ref_not_found", "git_reference_conflict", "git_author_must_have_access", "missing_git_author", "deployment_name_invalid", "deployment_limit_reached", "builds_queue_full", "project_not_found", "invalid_project_id"])
+const API_FIELDS = Object.freeze({ repoId: "/gitSource/repoId", ref: "/gitSource/ref", sha: "/gitSource/sha", type: "/gitSource/type", gitSource: "/gitSource", name: "/name", project: "/project", meta: "/meta", target: "/target" })
+function safeDiagnostic(value) {
+  return { kind: value?.kind === "http" ? "http" : "unknown", httpStatus: Number.isInteger(value?.httpStatus) && value.httpStatus >= 400 && value.httpStatus <= 599 ? value.httpStatus : null,
+    providerCode: API_ERROR_CODES.has(value?.providerCode) ? value.providerCode : null,
+    fieldHints: Object.values(API_FIELDS).filter(field => Array.isArray(value?.fieldHints) && value.fieldHints.includes(field)) }
+}
+class ApiHttpError extends Error {
+  constructor(status, body) {
+    super(`release_http_${status}`)
+    const provider = body?.error, message = typeof provider?.message === "string" ? provider.message.slice(0, 4096) : ""
+    // Only fixed field-name hints survive; never retain body/message/values.
+    this.diagnostic = safeDiagnostic({ kind: "http", httpStatus: status, providerCode: provider?.code,
+      fieldHints: Object.entries(API_FIELDS).filter(([field]) => new RegExp(`\\b${field}\\b`).test(message)).map(([, pointer]) => pointer) })
+  }
+}
+class MutationError extends Error {
+  constructor(scope, diagnostic) {
+    const failure = safeDiagnostic(diagnostic)
+    super(`release_${scope}_${failure.httpStatus >= 400 && failure.httpStatus < 500 && failure.httpStatus !== 408 ? "rejected" : "outcome_unknown"}`)
+    this.diagnostic = failure
+  }
+}
+/** Response-only helper for synthetic tests; no credentials or network access. */
+export async function readApiResponse(response) {
+  let raw, parsed
+  try { raw = await response.text() } catch { if (!response.ok) throw new ApiHttpError(response.status); stop("response_body") }
+  if (raw.length > 2_000_000) { if (!response.ok) throw new ApiHttpError(response.status); stop("response_size") }
+  try { parsed = JSON.parse(raw) } catch { if (!response.ok) throw new ApiHttpError(response.status); stop("response_json") }
+  if (!response.ok) throw new ApiHttpError(response.status, parsed)
+  return parsed
+}
 const record = value => value && typeof value === "object" && !Array.isArray(value)
 const targetsOf = item => Array.isArray(item?.target) ? item.target : typeof item?.target === "string" ? [item.target] : []
 const sensitive = new Set(["HK_HOSTED_SUI_ACCESS_SECRET", "HK_ISSUER_SIGNING_SEED", "KV_REST_API_TOKEN", "HK_SUI_ISSUER_SECRET_KEY", "HK_SUI_AGENT_SECRET_KEY", "HK_SUI_SPONSOR_SECRET_KEY"])
@@ -92,10 +124,7 @@ async function api(path, method = "GET", body) {
   if (!path.startsWith("/v") || path.includes("..") || path.includes("://")) stop("api_path")
   const auth = privateJson(AUTH), url = new URL(path, "https://api.vercel.com"); url.searchParams.set("teamId", ORG_ID)
   const response = await fetch(url, { method, redirect: "error", signal: AbortSignal.timeout(30000), headers: { authorization: `Bearer ${auth.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
-  const raw = await response.text()
-  if (raw.length > 2_000_000) stop("response_size")
-  if (!response.ok) stop(`http_${response.status}`)
-  return JSON.parse(raw)
+  return readApiResponse(response)
 }
 function journal(value) {
   if (value === null) return { schema: SCHEMA, project: PROJECT_ID, team: ORG_ID, branch: HOSTED_SUI_BRANCH, targets: {} }
@@ -159,7 +188,8 @@ export function createReleaseOperator(io) {
   const now = () => io.now?.() ?? Date.now(), stamp = () => new Date(now()).toISOString(), nonce = () => io.nonce?.() ?? randomBytes(16).toString("hex")
   async function projectCheck() {
     const [user, project] = await Promise.all([io.api("/v2/user"), io.api(`/v9/projects/${PROJECT_ID}`)])
-    if (user.user?.username !== "jaewook-9643" || project.id !== PROJECT_ID || project.accountId !== ORG_ID || project.name !== "ondo" || project.rootDirectory !== "k-tour-id-app" || project.link?.org !== "woogieboogie-jl" || project.link?.repo !== "k-tour-id" || project.link?.type !== "github") stop("project")
+    if (user.user?.username !== "jaewook-9643" || project.id !== PROJECT_ID || project.accountId !== ORG_ID || project.name !== "ondo" || project.rootDirectory !== "k-tour-id-app" || project.link?.org !== "woogieboogie-jl" || project.link?.repo !== "k-tour-id" || project.link?.type !== "github" ||
+      !["number", "string"].includes(typeof project.link?.repoId) || !/^[1-9][0-9]{0,19}$/.test(String(project.link.repoId)) || (typeof project.link.repoId === "number" && !Number.isSafeInteger(project.link.repoId))) stop("project")
     return project
   }
   async function listEnvs() { const result = await io.api(`/v10/projects/${PROJECT_ID}/env`); if (!Array.isArray(result.envs)) stop("environment_list"); return result.envs }
@@ -176,7 +206,7 @@ export function createReleaseOperator(io) {
     if (!HASH.test(privateKeys.credentialSeed ?? "") || !/^[A-Za-z0-9_-]{32,128}$/.test(code) || ![privateKeys.issuer, privateKeys.agent, kvToken].every(value => typeof value === "string" && value.length >= 32 && value.length <= 1024 && !/[\x00-\x20\x7f]/.test(value))) stop("missing_value")
     let url
     try { url = new URL(kvUrl) } catch { stop("source_value") }
-    if (url.protocol !== "https:" || !/^[a-z0-9-]+\.upstash\.io$/.test(url.hostname) || url.username || url.password || url.search || url.hash || url.pathname !== "/" || (url.port && url.port !== "443")) stop("source_value")
+    if (kvUrl !== kvUrl.trim() || /[\x00-\x20\x7f]/.test(kvUrl) || url.protocol !== "https:" || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.upstash\.io$/.test(url.hostname) || url.username || url.password || url.search || url.hash || url.pathname !== "/" || (url.port && url.port !== "443")) stop("source_value")
     const accessSecret = createHash("sha256").update(`ktour-hosted-sui-access/v1:${privateKeys.credentialSeed}`).digest("hex")
     const values = { ...fixedValues, HK_HOSTED_SUI_ACCESS_SECRET: accessSecret, HK_HOSTED_SUI_ACCESS_CODE: code, KV_REST_API_URL: kvUrl, KV_REST_API_TOKEN: kvToken,
       HK_ISSUER_SIGNING_SEED: privateKeys.credentialSeed, HK_SUI_ISSUER_SECRET_KEY: privateKeys.issuer, HK_SUI_AGENT_SECRET_KEY: privateKeys.agent, HK_SUI_SPONSOR_SECRET_KEY: privateKeys.issuer }
@@ -205,7 +235,9 @@ export function createReleaseOperator(io) {
       const j = journal(io.loadJournal())
       return { project: "ondo", production: /^dpl_[A-Za-z0-9]+$/.test(project.targets?.production?.id ?? "") ? project.targets.production.id : null,
         productionSha: SHA.test(project.targets?.production?.meta?.githubCommitSha ?? "") ? project.targets.production.meta.githubCommitSha : null, branch: HOSTED_SUI_BRANCH, mutation: false,
-        preparedTargets: ["preview", "production"].filter(target => j.targets[target]?.complete === true) }
+        preparedTargets: ["preview", "production"].filter(target => j.targets[target]?.complete === true),
+        deploymentAttempts: ["preview", "production"].flatMap(target => Object.entries(j.targets[target]?.deployments ?? {}).filter(([sha]) => SHA.test(sha)).map(([sha, intent]) => ({ target, sha,
+          id: /^dpl_[A-Za-z0-9]+$/.test(intent?.id ?? "") ? intent.id : null, failure: intent?.failure ? safeDiagnostic(intent.failure) : null }))) }
     }
     const sha = io.localCheck()
     if (!SHA.test(sha)) stop("local_revision")
@@ -239,9 +271,14 @@ export function createReleaseOperator(io) {
         }
         intent = { nonce: nonce(), environmentDigest: state.environmentDigest, sentAt: stamp() }; state.deployments[sha] = intent; io.saveJournal(j)
         let d
-        try { d = await io.api("/v13/deployments", "POST", { name: "ondo", project: PROJECT_ID, gitSource: { type: "github", repoId: project.link.repoId, ref: HOSTED_SUI_BRANCH, sha },
+        // GitHub SDK accepts number|string repoId. Normalize, without claiming
+        // numeric repoId caused the previous unclassified request failure.
+        try { d = await io.api("/v13/deployments", "POST", { name: "ondo", project: PROJECT_ID, gitSource: { type: "github", repoId: String(project.link.repoId), ref: HOSTED_SUI_BRANCH, sha },
           meta: { ktourHostedSuiRelease: intent.nonce, ktourHostedSuiConfig: intent.environmentDigest }, ...(target === "production" ? { target: "production" } : {}) }) }
-        catch { stop("deployment_outcome_unknown") }
+        catch (error) {
+          intent.failure = { ...safeDiagnostic(error instanceof ApiHttpError ? error.diagnostic : null), recordedAt: stamp() }; io.saveJournal(j)
+          throw new MutationError("deployment", intent.failure)
+        }
         const info = boundDeployment(d, target, sha, intent); intent.id = info.id; io.saveJournal(j); return info
       }
       const { values, fingerprint } = await desiredValues(envs), state = j.targets[target] ?? { nonce: nonce(), fingerprint, entries: {}, deployments: {} }
@@ -254,7 +291,10 @@ export function createReleaseOperator(io) {
         let response
         try { response = await io.api(`/v10/projects/${PROJECT_ID}/env`, "POST", { key, value: values[key], type: sensitive.has(key) ? "sensitive" : "encrypted", target: [target],
           ...(target === "preview" ? { gitBranch: HOSTED_SUI_BRANCH } : {}), comment: marker(state, key) }) }
-        catch { stop("environment_outcome_unknown") }
+        catch (error) {
+          state.entries[key].failure = { ...safeDiagnostic(error instanceof ApiHttpError ? error.diagnostic : null), recordedAt: stamp() }; io.saveJournal(j)
+          throw new MutationError("environment", state.entries[key].failure)
+        }
         state.entries[key] = { ...state.entries[key], ...metadata(createdItem(response), key, target, state) }; io.saveJournal(j)
       }
       reconcile(await listEnvs(), target, state, true)
@@ -269,5 +309,6 @@ const storage = createJournalStorage(RUN)
 export const releaseCommand = createReleaseOperator({ api, localCheck, readSecrets: () => privateJson(`${RUN}/private.json`), loadJournal: storage.load, saveJournal: storage.save, withLock: storage.lock })
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try { if (process.argv.length > 5) stop("arguments"); console.log(JSON.stringify(await releaseCommand(process.argv[2], process.argv[3], process.argv[4]))) }
-  catch (error) { const code = typeof error?.message === "string" && /^release_[a-z_0-9]+$/.test(error.message) ? error.message : "release_failed"; console.error(JSON.stringify({ ok: false, code })); process.exitCode = 1 }
+  catch (error) { const code = typeof error?.message === "string" && /^release_[a-z_0-9]+$/.test(error.message) ? error.message : "release_failed";
+    console.error(JSON.stringify({ ok: false, code, ...(error instanceof MutationError || error instanceof ApiHttpError ? { failure: safeDiagnostic(error.diagnostic) } : {}) })); process.exitCode = 1 }
 }

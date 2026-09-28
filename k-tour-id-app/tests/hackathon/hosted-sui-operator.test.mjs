@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { mkdtempSync, realpathSync, lstatSync, rmSync, symlinkSync, writeFileSync, readFileSync, readdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createJournalStorage, createReleaseOperator } from "../../scripts/hackathon-hosted-sui-operator.mjs"
+import { createJournalStorage, createReleaseOperator, readApiResponse } from "../../scripts/hackathon-hosted-sui-operator.mjs"
 import { HOSTED_SUI_BRANCH, PROJECT_ID, ORG_ID } from "../../scripts/hackathon-hosted-sui-build.mjs"
 
 // Pure synthetic API/state fixtures. Never invoke the operational wrapper,
@@ -38,6 +38,7 @@ function fixture() {
       return { created: createdShape === "object" ? copy(item) : [copy(item)], failed: [] }
     }
     if (path === "/v13/deployments" && method === "POST") {
+      assert.equal(body.gitSource.repoId, "123", "normalize only digit-validated repository ID")
       const target = body.target === "production" ? "production" : "preview"
       const intent = stored.targets[target].deployments[body.gitSource.sha]
       assert.equal(intent.nonce, body.meta.ktourHostedSuiRelease, "deployment intent precedes POST")
@@ -183,6 +184,46 @@ test("unknown deployment outcome is read-reconciled by nonce, never resubmitted"
   await f.run("reconcile-deployment", d.id)
   const replay = await f.run("deploy-preview")
   assert.equal(replay.id, d.id); assert.equal(f.postCount(), count)
+})
+
+test("HTTP validation failures preserve only status, allowlisted code and fixed field hints", async () => {
+  const f = fixture(); await f.run("prepare-preview")
+  f.deploymentHook(() => readApiResponse(Response.json({ error: { code: "bad_request", message: "Invalid gitSource repoId SECRET_RESPONSE_BODY", token: "SECRET_TOKEN" } }, { status: 400 })))
+  await rejects(f.run("deploy-preview"), "deployment_rejected")
+  const failure = f.journal().targets.preview.deployments[SHA].failure
+  assert.equal(failure.httpStatus, 400); assert.equal(failure.providerCode, "bad_request")
+  assert.deepEqual(failure.fieldHints, ["/gitSource/repoId", "/gitSource"])
+  for (const raw of ["SECRET_RESPONSE_BODY", "SECRET_TOKEN"]) assert.equal(JSON.stringify(f.journal()).includes(raw), false)
+  const info = await f.run("inspect")
+  assert.equal(info.deploymentAttempts[0].failure.httpStatus, 400)
+  for (const raw of ["SECRET_RESPONSE_BODY", "SECRET_TOKEN"]) assert.equal(JSON.stringify(info).includes(raw), false)
+})
+
+test("arbitrary provider codes and raw errors cannot enter diagnostics", async () => {
+  for (const failure of [
+    () => readApiResponse(Response.json({ error: { code: "SECRET_TOKEN_123", message: "SECRET_RAW_BODY" } }, { status: 403 })),
+    () => readApiResponse(new Response("SECRET_NON_JSON_BODY", { status: 502 })),
+    () => { throw new Error("SECRET_TRANSPORT_ERROR") },
+  ]) {
+    const f = fixture(); await f.run("prepare-preview"); f.deploymentHook(failure)
+    await assert.rejects(f.run("deploy-preview"), /release_deployment_(rejected|outcome_unknown)/)
+    const saved = f.journal().targets.preview.deployments[SHA].failure
+    assert.equal(saved.providerCode, null); assert.deepEqual(saved.fieldHints, [])
+    for (const raw of ["SECRET_TOKEN_123", "SECRET_RAW_BODY", "SECRET_NON_JSON_BODY", "SECRET_TRANSPORT_ERROR"]) assert.equal(JSON.stringify(f.journal()).includes(raw), false)
+  }
+})
+
+test("reviewed new SHA can deploy once while preserving the old unknown intent", async () => {
+  const f = fixture(); await f.run("prepare-preview")
+  f.deploymentHook(() => { throw new Error("synthetic network failure") })
+  await rejects(f.run("deploy-preview"), "deployment_outcome_unknown")
+  const old = f.journal().targets.preview.deployments[SHA]
+  const next = "e".repeat(40); f.sha(next); f.deploymentHook(undefined)
+  await f.run("prepare-preview")
+  const deployed = await f.run("deploy-preview")
+  assert.equal(deployed.sha, next)
+  assert.deepEqual(f.journal().targets.preview.deployments[SHA], old)
+  const count = f.postCount(); await f.run("deploy-preview"); assert.equal(f.postCount(), count)
 })
 
 test("metadata changes after preview attestation invalidate production permission", async () => {
