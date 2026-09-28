@@ -45,6 +45,10 @@ for (const locale of ["en", "ja"] as const) test(`UX16 research detail shares in
   await page.keyboard.press("Tab")
   await expect(detail.getByTestId("place-reservation-open")).toBeFocused()
   await pay.focus()
+  // This action now lives in the scrolling detail body, not a fixed footer.
+  // Record the position the user actually clicks after bringing it into view.
+  await pay.scrollIntoViewIfNeeded()
+  await usable(pay, 480)
   const scroll = sheet.locator("[data-sheet-scroll-owner]")
   const before = await scroll.evaluate(node => node.scrollTop)
   await pay.click()
