@@ -18,6 +18,14 @@ async function prepare(page: Page, locale: "ko" | "en" | "ja", theme: "light" | 
   await page.getByTestId("nav-id").click()
   await expect(page.getByTestId("travel-pass-card")).toBeVisible()
   await expect(page.locator("html")).toHaveAttribute("data-ondo-theme", theme)
+  // Geometry concerns the settled layout, not the temporary 10px card entry
+  // transform. Keep the real animation enabled and await only finite effects.
+  await page.evaluate(() => document.fonts.ready)
+  await page.getByTestId("travel-pass-card").evaluate(async node => {
+    await Promise.all(node.getAnimations({ subtree: true })
+      .filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+      .map(animation => animation.finished.catch(() => undefined)))
+  })
 }
 
 async function boundedGuide(page: Page, viewportWidth: number) {
