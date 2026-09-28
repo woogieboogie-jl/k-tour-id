@@ -3,6 +3,7 @@
 import { withStore, type OperationRecord } from "./store"
 import { assert, HkError, nowIso, randomId } from "./util"
 import type { DelegationSummary } from "./types"
+import { assertCurrentIdentityPolicy, identityPolicyChanged } from "./identity-policy"
 
 type Entitlement = NonNullable<DelegationSummary["entitlement"]>
 type Scope = Pick<DelegationSummary, "intentRef" | "actionCommitment" | "consentCommitment" | "userAddress" | "signer" | "recipient" | "expiresAtMs">
@@ -29,6 +30,7 @@ export async function prepareDelegationOnce(input: { sessionId: string; operatio
     const op = db.operations[operationId]
     assert(op && op.sessionId === sessionId, "not_found", "operation not found", 404)
     assert(op.status === "pending" && op.phase === "delegation" && Date.parse(op.expiresAt) > Date.now(), "phase", "delegation is not pending", 409)
+    assertCurrentIdentityPolicy(op.identity)
     assert(!op.delegation && !op.secrets.delegationPreparation, "delegation_pending", "issuer attempt already claimed; reconcile or stop", 409)
     assert(op.revision === expectedRevision, "operation_changed", "approval changed while preparation was in flight", 409)
     assert(scope.expiresAtMs > Date.now(), "grant_window_expired", "delegation window expired", 409)
@@ -40,6 +42,7 @@ export async function prepareDelegationOnce(input: { sessionId: string; operatio
     const issued = await services.issue({ intentRefHex: scope.intentRef, holder: scope.userAddress, expiresAtMs: scope.expiresAtMs + 60_000, beforeBroadcast: async (digest) => {
       await withStore((db) => {
         const op = owned(db.operations[operationId])
+        assertCurrentIdentityPolicy(op.identity)
         assert(op.status === "pending" && op.phase === "delegation" && Date.parse(op.expiresAt) > Date.now() && scope.expiresAtMs > Date.now(), "phase", "issuer dispatch was stopped or approval expired", 409)
         assert(op.secrets.delegationPreparation!.stage === "issuing" && !op.secrets.delegationPreparation!.issueTxDigest, "delegation_pending", "issuer already dispatched", 409)
         op.secrets.delegationPreparation!.issueTxDigest = digest
@@ -55,12 +58,13 @@ export async function prepareDelegationOnce(input: { sessionId: string; operatio
       op.delegation!.status = "entitled"
       op.secrets.delegationPreparation!.stage = "building"
       touch(op, "delegation.entitlement_persisted")
-      return op.status === "pending" && op.phase === "delegation" && Date.parse(op.expiresAt) > Date.now() && scope.expiresAtMs > Date.now()
+      return !identityPolicyChanged(op.identity) && op.status === "pending" && op.phase === "delegation" && Date.parse(op.expiresAt) > Date.now() && scope.expiresAtMs > Date.now()
     })
     assert(proceed, "phase", "preparation was stopped; issued evidence retained", 409)
     const ptb = await services.build({ userAddress: scope.userAddress, entitlement: issued.entitlement, recipient: scope.recipient, actionCommitmentHex: scope.actionCommitment, consentCommitmentHex: scope.consentCommitment, expiresAtMs: scope.expiresAtMs })
     return await withStore((db) => {
       const op = owned(db.operations[operationId])
+      assertCurrentIdentityPolicy(op.identity)
       assert(op.status === "pending" && op.phase === "delegation" && Date.parse(op.expiresAt) > Date.now() && scope.expiresAtMs > Date.now(), "phase", "preparation was stopped or expired", 409)
       op.delegation!.status = "awaiting_signature"; op.delegation!.txBytesDigest = ptb.txBytesDigest
       op.secrets.lastTxBytesB64 = ptb.txBytesB64

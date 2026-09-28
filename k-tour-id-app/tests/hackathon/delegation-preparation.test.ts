@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { prepareDelegationOnce, type PreparationServices } from "../../lib/hackathon/delegation-preparation"
 import { readStore, withStore, type OperationRecord } from "../../lib/hackathon/store"
 import { HkError, nowIso, plusMs, randomId } from "../../lib/hackathon/util"
+import { hkConfig } from "../../lib/hackathon/config"
 
 // These are orchestration fixtures, never Sui success or live transaction evidence.
 const dataDir = mkdtempSync(join(tmpdir(), "harvey-prepare-claim-"))
@@ -164,3 +165,37 @@ test("approval expiring during issuer preparation blocks the actual broadcast ca
   assert.equal(stopped.delegation?.status, "unknown")
   assert.equal(stopped.secrets.delegationPreparation?.issueTxDigest, null)
 })
+
+for (const driftAt of ["claim", "before-broadcast", "after-receipt"] as const) {
+  test(`identity provider drift at ${driftAt} blocks new authority while retaining already-issued evidence`, async () => {
+    const input = await seed(), provider = hkConfig().cx.provider
+    await withStore(db => { db.operations[input.operationId].identity = {
+      evidenceId: "fixture-evidence", subjectRef: "fixture-subject", source: "cx_mobile_id", mode: "mock", provider,
+      personVerified: true, adultVerified: null, verifiedAt: nowIso(), expiresAt: plusMs(60_000), providerTransactionRef: "fixture-reference", handoff: null,
+    } })
+    const previous = process.env.HK_CX_PROVIDER
+    const drift = () => { process.env.HK_CX_PROVIDER = "different-provider" }
+    let issues = 0, broadcasts = 0, builds = 0
+    const services: PreparationServices = {
+      issue: async ({ beforeBroadcast }) => {
+        issues++
+        if (driftAt === "before-broadcast") drift()
+        await beforeBroadcast(issuedFixture.txDigest)
+        broadcasts++
+        if (driftAt === "after-receipt") drift()
+        return issuedFixture
+      },
+      build: async () => { builds++; return builtFixture },
+    }
+    try {
+      if (driftAt === "claim") drift()
+      await assert.rejects(prepareDelegationOnce(input, services), code(driftAt === "after-receipt" ? "phase" : "cx_mode_changed"))
+      const stopped = await readStore(db => db.operations[input.operationId])
+      assert.equal(issues, driftAt === "claim" ? 0 : 1)
+      assert.equal(broadcasts, driftAt === "after-receipt" ? 1 : 0)
+      assert.equal(builds, 0)
+      assert.equal(stopped.delegation?.entitlement?.txDigest ?? null, driftAt === "after-receipt" ? issuedFixture.txDigest : null)
+      if (driftAt !== "claim") assert.equal(stopped.delegation?.status, "unknown")
+    } finally { if (previous === undefined) delete process.env.HK_CX_PROVIDER; else process.env.HK_CX_PROVIDER = previous }
+  })
+}

@@ -20,6 +20,7 @@ import { verifyGrantEvidence } from "./sui-evidence"
 import { prepareDelegationOnce } from "./delegation-preparation"
 import { safeHkError } from "./public-error"
 import { isHostedSuiProfile, PIN as HOSTED_SUI_PIN } from "./hosted-sui-profile"
+import { assertCurrentIdentityPolicy, identityPolicyChanged } from "./identity-policy"
 
 /** SDK/provider errors may contain authenticated URLs or signed bytes. */
 function safeServiceError(error: unknown, code: string): HkError {
@@ -67,6 +68,11 @@ export function toResult(op: OperationRecord): OperationResult {
 }
 
 function allowed(op: OperationRecord): { allowedActions: AllowedAction[]; safeNextAction: NextAction } {
+  if (identityPolicyChanged(op.identity)) {
+    const canCancel = op.status === "pending" && op.phase !== "agent" && op.phase !== "fulfillment" &&
+      (!op.delegation?.userTxDigest || op.delegation.status === "failed")
+    return { allowedActions: ["check_status", "reconcile", ...(canCancel ? ["cancel" as const] : []), "return"], safeNextAction: "return" }
+  }
   if (isHostedSuiProfile() && op.phase === "fulfillment") return { allowedActions: ["check_status", "return"], safeNextAction: "return" }
   if (op.status === "cancelled" || op.status === "expired" || op.status === "failed" || op.phase === "done") return { allowedActions: ["return"], safeNextAction: "return" }
   switch (op.phase) {
@@ -278,6 +284,7 @@ export async function identityComplete(sessionId: string, operationId: string, s
 // ── issuance (OpenDID) ────────────────────────────────────────────────
 export async function credentialIssue(sessionId: string, operationId: string, holder: { publicKeyPem: string; alg: "Ed25519" | "ECDSA-P256" }) {
   const op = await loadOperation(sessionId, operationId)
+  assertCurrentIdentityPolicy(op.identity)
   assert(op.status === "pending" && op.phase === "issuance" && op.identity?.personVerified, "phase", "identity required", 409)
   assert(!isPast(op.identity.expiresAt), "evidence_expired", "identity evidence expired", 409)
   assert(/BEGIN PUBLIC KEY/.test(holder.publicKeyPem) && holder.publicKeyPem.length < 1200, "holder_key", "holder public key must be SPKI PEM")
@@ -288,6 +295,7 @@ export async function credentialIssue(sessionId: string, operationId: string, ho
   if (op.credential) return replay(op)
   const issued = await issueCredential({ operationId, subjectRef: op.identity.subjectRef, holderPublicKeyPem: holder.publicKeyPem, holderKeyAlg: holder.alg, evidenceId: op.identity.evidenceId })
   return mutate(sessionId, operationId, (o) => {
+    assertCurrentIdentityPolicy(o.identity)
     assert(o.status === "pending" && o.phase === "issuance", "phase", "issuance is no longer pending", 409)
     if (o.credential) return replay(o)
     assertSnapshot(o, op)
@@ -301,6 +309,7 @@ export async function credentialIssue(sessionId: string, operationId: string, ho
 export async function credentialHolderAck(sessionId: string, operationId: string, ack: { signatureB64: string }) {
   const op = await loadOperation(sessionId, operationId)
   const assertAcknowledgable = (o: OperationRecord) => {
+    assertCurrentIdentityPolicy(o.identity)
     assert(o.status === "pending" && o.phase === "issuance" && o.credential && o.secrets.holderPublicKeyPem && o.secrets.holderKeyAlg, "phase", "credential not issued", 409)
     assert(!isPast(o.expiresAt) && o.identity?.personVerified === true && !isPast(o.identity.expiresAt), "evidence_expired", "identity evidence expired", 409)
     assert(o.credential.status === "active" && !isPast(o.credential.validUntil) && Number.isFinite(Date.parse(o.credential.validFrom)) && Date.parse(o.credential.validFrom) <= Date.now(), "credential_expired", "credential is not currently active", 409)
@@ -323,6 +332,7 @@ export async function credentialHolderAck(sessionId: string, operationId: string
 // ── presentation (VP) ─────────────────────────────────────────────────
 export async function presentationRequest(sessionId: string, operationId: string) {
   return mutate(sessionId, operationId, (o, db) => {
+    assertCurrentIdentityPolicy(o.identity)
     assert(o.status === "pending" && o.phase === "presentation" && o.credential?.holderAckAt, "phase", "holder ack required", 409)
     if (o.presentation && !o.presentation.submittedAt && !isPast(o.presentation.expiresAt)) return { result: toResult(o), challenge: o.secrets.presentationChallenge }
     const nonce = randomHex32()
@@ -339,6 +349,7 @@ export async function presentationRequest(sessionId: string, operationId: string
 
 export async function presentationSubmit(sessionId: string, operationId: string, submission: { presentationId: string; disclosed: Record<string, unknown>; signatureB64: string }) {
   return mutate(sessionId, operationId, (o, db) => {
+    assertCurrentIdentityPolicy(o.identity)
     assert(o.status === "pending" && o.phase === "presentation" && o.presentation && o.credential, "phase", "presentation not requested", 409)
     const p = o.presentation
     if (p.submittedAt && p.decision) return toResult(o) // idempotent re-submit → same decision
@@ -397,6 +408,7 @@ export async function presentationDeny(sessionId: string, operationId: string) {
 // ── proposal (AI) ─────────────────────────────────────────────────────
 export async function proposalCreate(sessionId: string, operationId: string, ctx: { locale: "ko" | "en" | "ja"; venueName: string; category: string; district: string }) {
   const op = await loadOperation(sessionId, operationId)
+  assertCurrentIdentityPolicy(op.identity)
   assert(op.status === "pending" && op.phase === "proposal" && op.presentation?.decision === "allow", "phase", "allow decision required", 409)
   assert(!isPast(op.presentation.decisionExpiresAt), "decision_expired", "decision expired; present again", 409)
   assert(credentialEligibility(op) === null && presentationEligibility(op) === null, "eligibility", "current credential and presentation required", 409)
@@ -420,6 +432,7 @@ export async function proposalCreate(sessionId: string, operationId: string, ctx
 export async function delegationPrepare(sessionId: string, operationId: string, input: { userAddress: string; signer: "zklogin" | "demo"; walletProof: { message: string; signature: string }; approvedProposalDigest: string }) {
   assertExternalServicesEnabled("Sui delegation")
   const op = await loadOperation(sessionId, operationId)
+  assertCurrentIdentityPolicy(op.identity)
   assert(op.status === "pending" && op.phase === "delegation" && op.proposal && op.presentation?.decision === "allow", "phase", "proposal approval required", 409)
   assert(op.proposal.proposalDigest === input.approvedProposalDigest, "proposal_digest", "approved proposal does not match", 409)
   assert(credentialEligibility(op) === null && presentationEligibility(op) === null, "eligibility", "current credential and presentation required", 409)
@@ -479,6 +492,7 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
 export async function delegationSubmit(sessionId: string, operationId: string, input: { txBytesDigest: string; userSignature: string }) {
   assertExternalServicesEnabled("Sui delegation")
   const op = await loadOperation(sessionId, operationId)
+  assertCurrentIdentityPolicy(op.identity)
   assert(op.status === "pending" && op.phase === "delegation" && op.delegation?.status === "awaiting_signature" && op.secrets.lastTxBytesB64, "phase", "no delegation awaiting signature", 409)
   assert(op.delegation.txBytesDigest === input.txBytesDigest, "tx_mismatch", "transaction bytes changed", 409)
   assert(op.delegation.expiresAtMs > Date.now(), "grant_window_expired", "delegation window expired", 409)
@@ -490,6 +504,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
   // submit the same signed transaction and overwrite the winner with its failure.
   const dispatch = await mutate(sessionId, operationId, (o) => {
     assertSnapshot(o, op)
+    assertCurrentIdentityPolicy(o.identity)
     assert(o.delegation?.status === "awaiting_signature", "phase", "delegation already dispatched", 409)
     o.delegation.status = "prepared"
     o.delegation.userTxDigest = expectedTxDigest
@@ -499,7 +514,15 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
   let executed: Awaited<ReturnType<typeof executeDelegation>> | null = null
   let error: HkError | null = null
   try {
-    executed = await executeDelegation({ txBytesB64: op.secrets.lastTxBytesB64, userSignature: input.userSignature, sponsorSignature, expected })
+    executed = await executeDelegation({ txBytesB64: op.secrets.lastTxBytesB64, userSignature: input.userSignature, sponsorSignature, expected, beforeBroadcast: async (digest) => {
+      await mutate(sessionId, operationId, (o) => {
+        assertSnapshot(o, dispatch)
+        assertCurrentIdentityPolicy(o.identity)
+        assert(digest === expectedTxDigest && o.delegation?.userTxDigest === digest, "tx_mismatch", "transaction bytes changed", 409)
+        assert(o.status === "pending" && o.phase === "delegation" && o.delegation.status === "prepared", "phase", "delegation dispatch was stopped", 409)
+        assert(!isPast(o.expiresAt) && o.delegation.expiresAtMs > Date.now(), "grant_window_expired", "approved delegation window expired before broadcast", 409)
+      })
+    } })
   } catch (e) { error = safeServiceError(e, "sui_delegate") }
   return mutate(sessionId, operationId, (o) => {
     if (o.delegation?.status === "delegated" && o.delegation.userTxDigest === expectedTxDigest) return toResult(o)
@@ -522,6 +545,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
 export async function agentRun(sessionId: string, operationId: string) {
   assertExternalServicesEnabled("Sui agent execution")
   const op = await loadOperation(sessionId, operationId)
+  assertCurrentIdentityPolicy(op.identity)
   assert(op.status === "pending" && op.phase === "agent" && op.delegation?.grant && op.proposal, "phase", "delegation required", 409)
   // Hosted gas ceiling: one durable agent attempt per operation, including
   // chain failure or interruption before a digest was recorded. Neither proves
@@ -550,6 +574,7 @@ export async function agentRun(sessionId: string, operationId: string) {
   const manifestCommitment = digestOf(manifest)
   let dispatch = await mutate(sessionId, operationId, (o) => {
     assertSnapshot(o, op)
+    assertCurrentIdentityPolicy(o.identity)
     assert(isHostedSuiProfile() ? !o.agent : !o.agent || o.agent.status === "failed", "phase", "agent already dispatched", 409)
     o.agent = { dispatchId: o.agent?.dispatchId ?? randomId("agt"), status: "queued", decisionCommitment, manifestCommitment, manifest, txDigest: null, recordId: null, verified: null, error: null }
     touch(o, "agent.queued")
@@ -561,6 +586,7 @@ export async function agentRun(sessionId: string, operationId: string) {
     executed = await agentConsume({ grant: op.delegation.grant, expected: { ...expectedGrant, grantId: op.delegation.grant.objectId, decisionCommitment, manifestCommitment }, beforeBroadcast: async (digest) => {
       dispatch = await mutate(sessionId, operationId, (o) => {
         assertSnapshot(o, dispatch)
+        assertCurrentIdentityPolicy(o.identity)
         assert(o.status === "pending" && o.phase === "agent" && o.agent?.status === "queued" && !o.agent.txDigest, "phase", "agent dispatch was stopped or already broadcast", 409)
         assert(o.delegation && o.delegation.expiresAtMs > Date.now(), "grant_expired", "approved execution window expired before broadcast", 409)
         o.agent.txDigest = digest
@@ -842,7 +868,8 @@ export function evidence(op: OperationRecord) {
     provenanceCheck: op.agent?.manifest ? { recomputedManifestCommitment: digestOf(op.agent.manifest), storedManifestCommitment: op.agent.manifestCommitment, matches: digestOf(op.agent.manifest) === op.agent.manifestCommitment } : null,
     boundaries: {
       note: "Sui consume ≠ benefit used. DB redemption is the ledger; OmniOne is the audit anchor; neither chain carries PII.",
-      mock: { cx: cfg.cx.mode === "mock", opendid: cfg.opendid.mode === "mock" },
+      mock: { cx: (op.identity?.mode ?? cfg.cx.mode) === "mock", opendid: (op.credential?.mode ?? cfg.opendid.mode) === "mock" },
+      identityPolicyChanged: identityPolicyChanged(op.identity),
     },
   }
 }

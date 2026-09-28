@@ -3,6 +3,7 @@ import { digestOf, sha256Hex, assert } from "./util"
 import { redemptionKey, type Db, type OperationRecord } from "./store"
 import type { GrantExpectation, ExecutionExpectation } from "./sui-evidence"
 import { verifyIssuerSignature, sampleSubjectCommitment, type KPassVc } from "./adapters/opendid"
+import { identityPolicyChanged } from "./identity-policy"
 
 const time = (v: string | null | undefined) => v ? Date.parse(v) : NaN
 const fresh = (v: string | null | undefined, now: number) => Number.isFinite(time(v)) && time(v) > now
@@ -11,6 +12,7 @@ const fresh = (v: string | null | undefined, now: number) => Number.isFinite(tim
 export function credentialEligibility(op: OperationRecord, now = Date.now()): string | null {
   const i = op.identity, c = op.credential, vc = op.secrets.vcDocument as KPassVc | undefined
   if (i?.personVerified !== true || !i.subjectRef || !fresh(i.expiresAt, now)) return "identity_invalid"
+  if (identityPolicyChanged(i)) return "identity_policy_changed"
   if (!c) return "credential_missing"
   if (c.mode !== "mock") return "opendid_provider_unimplemented"
   if (c.status !== "active") return `credential_${c.status}`

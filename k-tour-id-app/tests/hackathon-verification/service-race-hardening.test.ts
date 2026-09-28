@@ -14,11 +14,12 @@ import { readStore, withStore, type OutboxRecord } from "../../lib/hackathon/sto
 import { presentationPayload, type KPassVc } from "../../lib/hackathon/adapters/opendid"
 import type { ProposalInput } from "../../lib/hackathon/adapters/ai"
 import type { GrantEvidence } from "../../lib/hackathon/sui-evidence"
+import { credentialEligibility } from "../../lib/hackathon/operation-evidence"
 
 const dataDir = mkdtempSync(join(tmpdir(), "ktour-service-races-"))
 const fixtureEnv = {
   HK_ISOLATED_MOCK: "0", NEXT_PUBLIC_HK_PREVIEW_READ_ONLY: "0", NEXT_PUBLIC_HK_CX_PREVIEW: "0",
-  HK_MODE_CX: "mock", HK_MODE_OPENDID: "mock", HK_AI_MODE: "rule", HK_DATA_DIR: dataDir,
+  HK_MODE_CX: "mock", HK_CX_PROVIDER: "comdl", HK_MODE_OPENDID: "mock", HK_AI_MODE: "rule", HK_DATA_DIR: dataDir,
   HK_ISSUER_SIGNING_SEED: "service-race-fixture-only-seed", HK_CAMPAIGN_ENDS_AT: "2099-01-01T00:00:00.000Z",
   HK_SUI_NETWORK: "testnet", HK_SUI_GRAPHQL_URL: "https://graphql.invalid",
   UPSTASH_REDIS_REST_URL: "", UPSTASH_REDIS_REST_TOKEN: "", KV_REST_API_URL: "", KV_REST_API_TOKEN: "",
@@ -36,6 +37,7 @@ let executionError: unknown = new Error(sensitive)
 let grant: (GrantEvidence & { uses: number; revoked: boolean; expiresAtMs: number }) | undefined
 let signatureScheme = "ED25519"
 let outboxFailure = false
+let delegationBroadcastProbe: ((callback: (digest: string) => Promise<void>) => Promise<void>) | undefined
 
 const forbidden = () => { networkAttempts++; throw new Error("External network forbidden in service hardening fixtures") }
 mock.module(new URL("../../lib/hackathon/adapters/ai.ts", import.meta.url).href, { namedExports: {
@@ -55,7 +57,7 @@ mock.module("@mysten/sui/cryptography", { namedExports: {
 } })
 mock.module(new URL("../../lib/hackathon/adapters/sui.ts", import.meta.url).href, { namedExports: {
   agentConsume: async () => { throw executionError },
-  executeDelegation: async () => { throw executionError },
+  executeDelegation: async ({ beforeBroadcast }: { beforeBroadcast: (digest: string) => Promise<void> }) => { await delegationBroadcastProbe?.(beforeBroadcast); throw executionError },
   readGrant: async () => { assert.ok(grant); return grant },
   transactionDigest: () => "fixture-sui-digest",
   suiClient: () => ({ core: { verifyZkLoginSignature: async () => { crossCheckCalls++; return { success: false, errors: [sensitive] } } } }),
@@ -79,6 +81,7 @@ before(() => {
 beforeEach(() => {
   proposePause = undefined; proposalCalls = 0; verifyCalls = 0; crossCheckCalls = 0
   executionError = new Error(sensitive); signatureScheme = "ED25519"; grant = undefined; outboxFailure = false
+  delegationBroadcastProbe = undefined
   globalThis.fetch = async () => forbidden()
 })
 after(() => {
@@ -290,3 +293,103 @@ test("legacy stored error strings are sanitized at result/evidence projection wi
   assert.equal(result.chain?.txHash, txHash)
   assert.deepEqual(op, before, "projection must not rewrite legacy evidence or transaction recovery state")
 })
+
+for (const drift of ["mode", "provider"] as const) {
+  test(`persisted identity ${drift} cannot cross current policy at credential/VP/AI/Sui write boundaries`, async () => {
+    const issuance = await issued()
+    const challenge = await issued()
+    await service.credentialHolderAck(challenge.sessionId, challenge.operationId, challenge)
+    const submission = await issued()
+    await service.credentialHolderAck(submission.sessionId, submission.operationId, submission)
+    const requested = await service.presentationRequest(submission.sessionId, submission.operationId)
+    const p = requested.result.presentation!
+    const disclosed = Object.fromEntries(p.requestedClaims.map(key => [key, (submission.vc.credentialSubject as Record<string, unknown>)[key]]))
+    const payload = presentationPayload({ presentationId: p.presentationId, nonce: p.nonce, audience: "ondo-hackathon-verifier", purpose: HK_SERVICE_ACCESS, venueId: requested.result.venueId, campaignId: requested.result.campaignId, vcDigest: digestOf(submission.vc), disclosed })
+    const submit = { presentationId: p.presentationId, disclosed, signatureB64: sign(null, Buffer.from(payload), submission.holder.privateKey).toString("base64url") }
+    const proposal = await proposalReady()
+    const delegation = await delegationReady()
+    const execution = await delegationReady(true)
+    const fixtures = [issuance, challenge, submission, proposal, delegation, execution]
+    const snapshots = await Promise.all(fixtures.map(f => stored(f.operationId)))
+    const prepared = snapshots[4], beforeProposalCalls = proposalCalls
+    const key = drift === "mode" ? "HK_MODE_CX" : "HK_CX_PROVIDER", prior = process.env[key]
+    process.env[key] = drift === "mode" ? "cx" : "different-provider"
+    try {
+      const holder = { publicKeyPem: issuance.holder.publicKey.export({ format: "pem", type: "spki" }).toString(), alg: "Ed25519" as const }
+      const attempts = [
+        () => service.credentialIssue(issuance.sessionId, issuance.operationId, holder),
+        () => service.credentialHolderAck(issuance.sessionId, issuance.operationId, issuance),
+        () => service.presentationRequest(challenge.sessionId, challenge.operationId),
+        () => service.presentationSubmit(submission.sessionId, submission.operationId, submit),
+        () => service.proposalCreate(proposal.sessionId, proposal.operationId, context),
+        () => service.delegationPrepare(delegation.sessionId, delegation.operationId, { userAddress: address, signer: "demo", walletProof: { message: `ondo-hk-wallet-proof:${delegation.operationId}:${prepared.presentation!.decisionRef}`, signature: "fixture-signature" }, approvedProposalDigest: prepared.proposal!.proposalDigest }),
+        () => service.delegationSubmit(delegation.sessionId, delegation.operationId, { txBytesDigest: "fixture-bytes-digest", userSignature: "fixture-user-signature" }),
+        () => service.agentRun(execution.sessionId, execution.operationId),
+      ]
+      for (const attempt of attempts) await assert.rejects(attempt(), code("cx_mode_changed"))
+      for (let i = 0; i < fixtures.length; i++) assert.deepEqual(await stored(fixtures[i].operationId), snapshots[i])
+      assert.equal(credentialEligibility(prepared), "identity_policy_changed")
+      assert.equal(proposalCalls, beforeProposalCalls); assert.equal(verifyCalls, 0); assert.equal(crossCheckCalls, 0)
+      const result = service.toResult(prepared)
+      assert.equal(result.safeNextAction, "return")
+      assert.deepEqual(result.allowedActions, ["check_status", "reconcile", "cancel", "return"])
+    } finally { if (prior === undefined) delete process.env[key]; else process.env[key] = prior }
+  })
+}
+
+test("policy migration preserves old evidence, safe reconciliation and cancellation without relabeling mock identity", async () => {
+  const f = await issued(), op = await stored(f.operationId)
+  process.env.HK_MODE_CX = "cx"
+  try {
+    assert.deepEqual(await service.loadOperation(f.sessionId, f.operationId), op)
+    const result = await service.reconcile(f.sessionId, f.operationId)
+    assert.equal(result.credential?.vcId, op.credential!.vcId)
+    const evidence = service.evidence(op)
+    assert.equal(evidence.identity?.mode, "mock")
+    assert.deepEqual(evidence.boundaries.mock, { cx: true, opendid: true })
+    assert.equal(evidence.boundaries.identityPolicyChanged, true)
+    assert.deepEqual(await stored(f.operationId), op)
+    assert.equal((await service.cancel(f.sessionId, f.operationId)).status, "cancelled")
+  } finally { process.env.HK_MODE_CX = "mock" }
+})
+
+test("matching server-persisted CX policy still permits the existing signed sample-credential flow", async () => {
+  // Synthetic ledger fixture, NOT a claim of a real provider approval.
+  const f = await issued()
+  await withStore(db => { db.operations[f.operationId].identity!.mode = "cx" })
+  process.env.HK_MODE_CX = "cx"
+  try {
+    const replay = await service.credentialIssue(f.sessionId, f.operationId, { publicKeyPem: f.holder.publicKey.export({ format: "pem", type: "spki" }).toString(), alg: "Ed25519" })
+    assert.equal(replay.result.identity?.mode, "cx")
+    assert.equal(replay.result.credential?.mode, "mock")
+    await service.credentialHolderAck(f.sessionId, f.operationId, f)
+    const requested = await service.presentationRequest(f.sessionId, f.operationId), p = requested.result.presentation!
+    const disclosed = Object.fromEntries(p.requestedClaims.map(key => [key, (f.vc.credentialSubject as Record<string, unknown>)[key]]))
+    const payload = presentationPayload({ presentationId: p.presentationId, nonce: p.nonce, audience: "ondo-hackathon-verifier", purpose: HK_SERVICE_ACCESS, venueId: requested.result.venueId, campaignId: requested.result.campaignId, vcDigest: digestOf(f.vc), disclosed })
+    await service.presentationSubmit(f.sessionId, f.operationId, { presentationId: p.presentationId, disclosed, signatureB64: sign(null, Buffer.from(payload), f.holder.privateKey).toString("base64url") })
+    const proposed = await service.proposalCreate(f.sessionId, f.operationId, context)
+    assert.equal(proposed.phase, "delegation")
+    assert.equal(credentialEligibility(await stored(f.operationId)), null)
+    assert.deepEqual(service.evidence(await stored(f.operationId)).boundaries.mock, { cx: false, opendid: true })
+    assert.equal(proposalCalls, 1)
+  } finally { process.env.HK_MODE_CX = "mock" }
+})
+
+for (const changed of ["policy", "digest", "unchanged"] as const) {
+  test(`delegation pre-broadcast callback rechecks ${changed} without discarding the durable intent`, async () => {
+    const f = await delegationReady()
+    let syntheticBroadcasts = 0
+    delegationBroadcastProbe = async callback => {
+      if (changed === "policy") process.env.HK_MODE_CX = "cx"
+      await callback(changed === "digest" ? "foreign-digest" : "fixture-sui-digest")
+      syntheticBroadcasts++
+    }
+    try {
+      const result = await service.delegationSubmit(f.sessionId, f.operationId, { txBytesDigest: "fixture-bytes-digest", userSignature: "fixture-signature" })
+      assert.equal(syntheticBroadcasts, changed === "unchanged" ? 1 : 0)
+      assert.equal(result.delegation?.userTxDigest, "fixture-sui-digest")
+      assert.equal(result.delegation?.status, "unknown")
+      assert.equal(result.error?.code, changed === "policy" ? "cx_mode_changed" : changed === "digest" ? "tx_mismatch" : "sui_delegate")
+    } finally { process.env.HK_MODE_CX = "mock" }
+  })
+}
