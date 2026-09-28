@@ -1,12 +1,21 @@
 import { expect, test, type Page } from "@playwright/test"
 import { seedFreshOnboarding } from "../helpers/ondo-b-qa"
+import { assertHostedUiLocalProfile, expectHostedUiMutationsClean, installHostedUiMutationGuard } from "../helpers/hosted-ui-regression"
 
 test.use({ serviceWorkers: "block" })
 test.describe.configure({ timeout: 45_000 })
 test.beforeEach(async ({ page, request, baseURL }) => {
-  expect(new URL(baseURL!).hostname).toBe("127.0.0.1")
-  expect(await (await request.get("/api/hackathon/v1/config")).json()).toMatchObject({ isolatedMock: true })
+  if (process.env.KTOUR_QA_LOCAL_HOSTED_UI === "1") {
+    await assertHostedUiLocalProfile(request, baseURL)
+    await installHostedUiMutationGuard(page)
+  } else {
+    expect(new URL(baseURL!).hostname).toBe("127.0.0.1")
+    await expect((await request.get("/api/hackathon/v1/config")).json()).resolves.toMatchObject({ isolatedMock: true })
+  }
   await seedFreshOnboarding(page)
+})
+test.afterEach(({ page }) => {
+  if (process.env.KTOUR_QA_LOCAL_HOSTED_UI === "1") expectHostedUiMutationsClean(page)
 })
 async function open(page: Page) {
   await page.goto("/?city=seoul", { waitUntil: "domcontentloaded" })

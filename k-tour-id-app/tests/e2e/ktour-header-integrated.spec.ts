@@ -1,17 +1,29 @@
 import { expect, test, type Page } from "@playwright/test"
 import { seedFreshOnboarding } from "../helpers/ondo-b-qa"
+import { assertHostedUiLocalProfile, expectHostedUiMutationsClean, installHostedUiMutationGuard } from "../helpers/hosted-ui-regression"
 
 test.describe.configure({ timeout: 60_000 })
 test.use({ serviceWorkers: "block" })
+test.beforeEach(async ({ page, baseURL, request }) => {
+  if (process.env.KTOUR_QA_LOCAL_HOSTED_UI === "1") {
+    await assertHostedUiLocalProfile(request, baseURL)
+    await installHostedUiMutationGuard(page)
+  }
+})
+test.afterEach(({ page }) => {
+  if (process.env.KTOUR_QA_LOCAL_HOSTED_UI === "1") expectHostedUiMutationsClean(page)
+})
 
 async function openSeoul(page: Page, baseURL: string) {
   const origin = new URL(baseURL).origin
-  const config = await page.request.get(`${origin}/api/hackathon/v1/config`)
-  if (process.env.KTOUR_QA_PUBLIC_PROFILE === "1") {
-    expect(config.status(), "Public UI must not expose hackathon APIs").toBe(404)
-  } else {
-    expect(config.ok()).toBe(true)
-    expect(await config.json()).toMatchObject({ isolatedMock: true })
+  if (process.env.KTOUR_QA_LOCAL_HOSTED_UI !== "1") {
+    const config = await page.request.get(`${origin}/api/hackathon/v1/config`)
+    if (process.env.KTOUR_QA_PUBLIC_PROFILE === "1") {
+      expect(config.status(), "Public UI must not expose hackathon APIs").toBe(404)
+    } else {
+      expect(config.ok()).toBe(true)
+      await expect(config.json()).resolves.toMatchObject({ isolatedMock: true })
+    }
   }
   const forbidden: string[] = []
   await page.route("**/*", async route => {

@@ -1,19 +1,30 @@
 import { expect, test, type Page } from "@playwright/test"
 import { seedFreshOnboarding } from "../helpers/ondo-b-qa"
+import { assertHostedUiLocalProfile, expectHostedUiMutationsClean, installHostedUiMutationGuard } from "../helpers/hosted-ui-regression"
 
 test.describe.configure({ timeout: 60_000 })
 test.use({ serviceWorkers: "block" })
+test.beforeEach(async ({ page, baseURL, request }) => {
+  if (process.env.KTOUR_QA_LOCAL_HOSTED_UI === "1") {
+    await assertHostedUiLocalProfile(request, baseURL)
+    await installHostedUiMutationGuard(page)
+  }
+})
+test.afterEach(({ page }) => {
+  if (process.env.KTOUR_QA_LOCAL_HOSTED_UI === "1") expectHostedUiMutationsClean(page)
+})
 
 const forbiddenRequests = new WeakMap<Page, string[]>()
 const diagnostics = new WeakMap<Page, string[]>()
 const passiveAssetHosts = new Set(["tiles.openfreemap.org", "fonts.googleapis.com", "fonts.gstatic.com"])
 
 test.beforeEach(async ({ page, context, baseURL, request }) => {
-  expect(baseURL, "Use an explicitly managed local server").toBeTruthy()
   const origin = new URL(baseURL!).origin
-  const config = await request.get(`${origin}/api/hackathon/v1/config`)
-  expect(config.ok()).toBe(true)
-  expect(await config.json()).toMatchObject({ isolatedMock: true })
+  if (process.env.KTOUR_QA_LOCAL_HOSTED_UI !== "1") {
+    const config = await request.get(`${origin}/api/hackathon/v1/config`)
+    expect(config.ok()).toBe(true)
+    await expect(config.json()).resolves.toMatchObject({ isolatedMock: true })
+  }
   forbiddenRequests.set(page, [])
   diagnostics.set(page, [])
   page.on("pageerror", error => diagnostics.get(page)?.push(error.message))
@@ -110,6 +121,10 @@ test("desktop Next then focus/search before settle cancels the pending camera pr
   await openSeoul(page)
   const mapCanvas = page.getByTestId("maplibre-map")
   const before = await mapCanvas.getAttribute("data-map-center")
+  // Search is an explicit map-shell affordance; opening it exposes the
+  // input used to cancel the pending story camera preview.
+  await page.getByTestId("ondo-b-map-search-toggle").click()
+  await expect(page.getByTestId("ondo-b-search")).toBeVisible()
   // Issue both actions in one browser task so the focus cancellation is
   // unambiguously before the 180ms preview settle window; Locator.click can
   // otherwise yield through smooth-scroll/actionability work first.

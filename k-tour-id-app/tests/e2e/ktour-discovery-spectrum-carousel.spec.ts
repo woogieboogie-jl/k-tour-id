@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test"
 import { seedFreshOnboarding } from "../helpers/ondo-b-qa"
+import { assertHostedUiLocalProfile, expectHostedUiMutationsClean, installHostedUiMutationGuard } from "../helpers/hosted-ui-regression"
 
 // Adversarial acceptance coverage for the manual story carousel and the
 // Hot/Warm/Cool editorial spectrum. This spec deliberately uses only the
@@ -12,15 +13,20 @@ const runtimeDiagnostics = new WeakMap<Page, { pageErrors: string[]; failedReque
 const passiveAssetHosts = new Set(["tiles.openfreemap.org", "fonts.googleapis.com", "fonts.gstatic.com"])
 
 test.beforeEach(async ({ page, context, baseURL, request }) => {
-  expect(baseURL, "Use an explicitly managed local server").toBeTruthy()
+  if (process.env.KTOUR_QA_LOCAL_HOSTED_UI === "1") {
+    await assertHostedUiLocalProfile(request, baseURL)
+    await installHostedUiMutationGuard(page)
+  }
   const origin = new URL(baseURL!).origin
   expect(["127.0.0.1", "localhost", "[::1]"]).toContain(new URL(origin).hostname)
-  const config = await request.get(`${origin}/api/hackathon/v1/config`)
-  if (process.env.KTOUR_QA_PUBLIC_PROFILE === "1") {
-    expect(config.status(), "Public UI must not expose hackathon APIs").toBe(404)
-  } else {
-    expect(config.ok(), "Read-only isolation check must succeed").toBe(true)
-    expect(await config.json()).toMatchObject({ isolatedMock: true })
+  if (process.env.KTOUR_QA_LOCAL_HOSTED_UI !== "1") {
+    const config = await request.get(`${origin}/api/hackathon/v1/config`)
+    if (process.env.KTOUR_QA_PUBLIC_PROFILE === "1") {
+      expect(config.status(), "Public UI must not expose hackathon APIs").toBe(404)
+    } else {
+      expect(config.ok(), "Read-only isolation check must succeed").toBe(true)
+      await expect(config.json()).resolves.toMatchObject({ isolatedMock: true })
+    }
   }
   const forbidden: string[] = []
   forbiddenRequests.set(page, forbidden)
@@ -48,6 +54,7 @@ test.beforeEach(async ({ page, context, baseURL, request }) => {
 })
 
 test.afterEach(async ({ page }) => {
+  if (process.env.KTOUR_QA_LOCAL_HOSTED_UI === "1") expectHostedUiMutationsClean(page)
   const diagnostics = runtimeDiagnostics.get(page)
   if (diagnostics && (diagnostics.pageErrors.length || diagnostics.failedRequests.length)) {
     await test.info().attach("runtime-diagnostics", { body: JSON.stringify(diagnostics, null, 2), contentType: "application/json" })
