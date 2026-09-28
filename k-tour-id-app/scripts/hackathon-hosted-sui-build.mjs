@@ -26,15 +26,23 @@ const PUBLIC_ORIGINS = Object.freeze(["NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_ONDO_
 const fail = code => { throw new Error(`hosted_sui_build_${code}`) }
 
 export function assertHostedSuiTarget(env) {
+  const failed = hostedSuiTargetFailures(env)
+  if (failed.length) fail("target")
+}
+export function hostedSuiTargetFailures(env) {
   const remote = Object.keys(env).some(key => key === "VERCEL" || key.startsWith("VERCEL_"))
-  if (!remote) return
+  if (!remote) return []
   const target = env.VERCEL_ENV
-  if (env.VERCEL !== "1" || !["preview", "production"].includes(target) ||
-    (env.VERCEL_TARGET_ENV !== undefined && env.VERCEL_TARGET_ENV !== target) ||
-    env.VERCEL_PROJECT_ID !== PROJECT_ID || (env.VERCEL_ORG_ID !== undefined && env.VERCEL_ORG_ID !== ORG_ID) ||
-    env.VERCEL_GIT_PROVIDER !== "github" || env.VERCEL_GIT_COMMIT_REF !== HOSTED_SUI_BRANCH ||
-    env.VERCEL_GIT_REPO_OWNER !== REPO_OWNER || env.VERCEL_GIT_REPO_SLUG !== REPO_NAME ||
-    !/^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? "")) fail("target")
+  return [
+    env.VERCEL !== "1" || !["preview", "production"].includes(target) || (env.VERCEL_TARGET_ENV !== undefined && env.VERCEL_TARGET_ENV !== target) ? "flags" : null,
+    env.VERCEL_PROJECT_ID !== PROJECT_ID ? "project" : null,
+    env.VERCEL_ORG_ID !== undefined && env.VERCEL_ORG_ID !== ORG_ID ? "optionalorg" : null,
+    env.VERCEL_GIT_PROVIDER !== "github" ? "provider" : null,
+    env.VERCEL_GIT_COMMIT_REF !== HOSTED_SUI_BRANCH ? "branch" : null,
+    env.VERCEL_GIT_REPO_OWNER !== REPO_OWNER ? "owner" : null,
+    env.VERCEL_GIT_REPO_SLUG !== REPO_NAME ? "repo" : null,
+    !/^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? "") ? "sha" : null,
+  ].filter(Boolean)
 }
 
 export function hostedSuiBuildEnv(env) {
@@ -81,5 +89,10 @@ export function hostedSuiBuildPlan({ env, args = [], cwd = APP_ROOT, exists = en
 
 if (process.argv[1] === import.meta.filename) {
   try { const plan = hostedSuiBuildPlan({ env: process.env, args: process.argv.slice(2), cwd: process.cwd() }); console.log("Building the locked hosted-Sui artifact; no deployment or provider credential loading."); const result = spawnSync(plan.command, plan.args, plan.options); if (result.error) fail("child"); process.exitCode = result.status ?? 1 }
-  catch { console.error("Hosted-Sui build refused or failed; no deployment or provider activation performed."); process.exitCode = 1 }
+  catch (error) {
+    const code = typeof error?.message === "string" && /^hosted_sui_build_[a-z_]+$/.test(error.message) ? error.message.slice("hosted_sui_build_".length) : "failed"
+    const failedChecks = code === "target" ? hostedSuiTargetFailures(process.env) : []
+    console.error(JSON.stringify({ code, failedChecks }))
+    process.exitCode = 1
+  }
 }
