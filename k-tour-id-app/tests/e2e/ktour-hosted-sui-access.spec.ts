@@ -9,6 +9,7 @@ for (const [locale, width, height, appearance] of [
   await harvey.preferences(locale, appearance)
   Object.assign(harvey.config, { isolatedMock: false, hostedSui: true })
   harvey.config.sui.network = "testnet"
+  harvey.config.modes.sui = "testnet"
   let granted = false, accesses = 0
   await page.context().route("**/api/hackathon/v1/config", async route => {
     if (!granted) return route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: { code: "hosted_sui_access_denied", message: "Enter the journey access code." } }) })
