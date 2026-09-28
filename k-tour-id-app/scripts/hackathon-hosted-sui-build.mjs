@@ -31,7 +31,7 @@ export function assertHostedSuiTarget(env) {
   const target = env.VERCEL_ENV
   if (env.VERCEL !== "1" || !["preview", "production"].includes(target) ||
     (env.VERCEL_TARGET_ENV !== undefined && env.VERCEL_TARGET_ENV !== target) ||
-    env.VERCEL_PROJECT_ID !== PROJECT_ID || env.VERCEL_ORG_ID !== ORG_ID ||
+    env.VERCEL_PROJECT_ID !== PROJECT_ID || (env.VERCEL_ORG_ID !== undefined && env.VERCEL_ORG_ID !== ORG_ID) ||
     env.VERCEL_GIT_PROVIDER !== "github" || env.VERCEL_GIT_COMMIT_REF !== HOSTED_SUI_BRANCH ||
     env.VERCEL_GIT_REPO_OWNER !== REPO_OWNER || env.VERCEL_GIT_REPO_SLUG !== REPO_NAME ||
     !/^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? "")) fail("target")

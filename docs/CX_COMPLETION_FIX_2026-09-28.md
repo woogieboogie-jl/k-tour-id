@@ -91,4 +91,25 @@ CI 미제공, ZKP flag와 adult 판정의 분리를 검사한다. 테스트는 �
    실제 반환 규격을 확인한다. 사용자에게 CI를 직접 전달하거나 인증을 반복해 달라고 요구하지 않는다.
 
 단위 테스트 통과나 새 배포는 실제 holder 성공 검수와 구분한다.
-이 문서 작성 시점에는 이 수정으로 제공자 재호출·실제 승인 재검수·배포를 수행하지 않았다.
+초기 수정 검수는 단위 테스트까지였으며, 이후 배포 및 제공자 호출 결과는 아래에 기록한다.
+
+## CX-only 보호 배포의 현재 확인 상태
+
+위 수정은 다음 CX-only Preview에서 READY 상태로 확인되었다.
+
+- revision: `e4ef20b4a16fa862ecc62ea57681c48c2dbdd564`
+- deployment: `dpl_61tNMUFwy6wwhGbqHXgjXknn8upG`
+- immutable origin: `https://ondo-74illm55t-jaewook-9643s-projects.vercel.app`
+- 확인 경로 예시: `/?venueId=mois-0021cd596bc5b2a922ad&review=0`
+- 무-holder QR/app/cancel smoke: **PASS**
+- 관찰 요약: `access=1 consent=2 qr=1 app=2 checkResult=1 rejectedResult=1 cancel=2 focus=1 forbidden=0 identityBeforeConsent=0 pageErrors=0`
+
+이 smoke는 접근·동의·QR/app 요청·거절 결과·취소 및 보호 경계를 검증한 것이다. **실제
+holder가 새 요청을 승인해 완료한 사례는 아직 확인하지 않았다.** 실제 검수 시 사용자는
+새 요청을 직접 생성하고 모바일 신분증 앱에서 한 번 승인해야 한다. 이전 token이나 세션을
+재사용하지 않는다. CI가 제공되지 않아 `cx_subject_unavailable`이 되면 성인 판정이나
+완료 성공으로 해석하지 말고, provider 계약에서 stable subject 제공 여부를 확인한다.
+`data.zkp === true`만으로 `adultVerified` 또는 성인 성공을 주장하지 않는다.
+
+이 상태는 CX-only 보호 배포의 검수 기록이며, Sui hosted 배포의 완료 또는 OpenDID
+워크플로의 완료를 의미하지 않는다.

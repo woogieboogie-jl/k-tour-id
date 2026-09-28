@@ -56,6 +56,14 @@ test("explicit mock and provider deployments both validate without changing thei
   assert.ok(subject.hostedSuiPreflightIssues(env, NOW).includes("cx_origin")); assert.equal(env.HK_MODE_CX, "cx")
 })
 
+test("runtime uses documented project metadata without requiring the CLI org variable", () => {
+  const env = fixture()
+  delete env.VERCEL_ORG_ID
+  assert.deepEqual(subject.hostedSuiPreflightIssues(env, NOW), [])
+  assert.ok(subject.hostedSuiPreflightIssues({ ...env, VERCEL_PROJECT_ID: undefined }, NOW).includes("project"))
+  for (const value of ["", "foreign-team"]) assert.ok(subject.hostedSuiPreflightIssues({ ...env, VERCEL_ORG_ID: value }, NOW).includes("team"))
+})
+
 test("missing or crossed build/runtime/mode/metadata/chain pins fail closed with fixed names", () => {
   const mutations: Array<[string, string | undefined, string]> = [
     ["NEXT_PUBLIC_HK_HOSTED_SUI", "0", "hosted_build"], ["HK_HOSTED_SUI_ENABLED", "0", "runtime_enabled"],

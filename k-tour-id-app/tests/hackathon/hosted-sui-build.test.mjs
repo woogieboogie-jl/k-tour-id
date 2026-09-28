@@ -17,6 +17,8 @@ function metadata(environment = "preview") { return {
 test("hosted-Sui target accepts only the approved project, repo, branch and Preview/Production", () => {
   assert.doesNotThrow(() => subject.assertHostedSuiTarget(metadata("preview")))
   assert.doesNotThrow(() => subject.assertHostedSuiTarget(metadata("production")))
+  const { VERCEL_ORG_ID: _cliOnlyOrgId, ...withoutCliOrgId } = metadata("preview")
+  assert.doesNotThrow(() => subject.assertHostedSuiTarget(withoutCliOrgId))
   for (const change of [{ VERCEL_ENV: "development" }, { VERCEL_TARGET_ENV: "production" }, { VERCEL_PROJECT_ID: "other" }, { VERCEL_ORG_ID: "other" }, { VERCEL_GIT_COMMIT_REF: TARGET.branch }, { VERCEL_GIT_REPO_OWNER: "other" }, { VERCEL_GIT_COMMIT_SHA: "bad" }]) {
     assert.throws(() => subject.assertHostedSuiTarget({ ...metadata(), ...change }), { message: "hosted_sui_build_target" })
   }
