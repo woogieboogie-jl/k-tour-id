@@ -63,7 +63,7 @@ test("metadata transport is GET-only pinned bounded and cannot return body secre
     assert.equal(new URL(url).origin, "https://api.vercel.com"); assert.equal(init?.method, "GET"); assert.equal(init?.redirect, "error")
     assert.equal(new URL(url).searchParams.get("teamId"), PIN.team); calls.push(url); return Response.json({ ok: true })
   })
-  for (let i = 0; i < 4; i++) assert.deepEqual(await api("/v2/user"), { ok: true })
+  for (const path of ["/v2/user", `/v9/projects/${PIN.project}`, "/v13/deployments/dpl_Valid123", `/v4/aliases/${PIN.host}`]) assert.deepEqual(await api(path), { ok: true })
   await assert.rejects(api("/v2/user"), safe("metadata_read_scope")); assert.equal(calls.length, 4)
   const forbidden = metadataApi("synthetic_auth", new AbortController().signal, async () => { throw new Error("should_not_fetch") })
   await assert.rejects(forbidden("/v10/projects/foreign/env"), safe("metadata_read_scope"))

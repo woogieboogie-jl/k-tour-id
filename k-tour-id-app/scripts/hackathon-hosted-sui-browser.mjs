@@ -69,7 +69,7 @@ async function boundedBytes(response, cap, signal) {
 export function metadataApi(auth, outerSignal, fetchImpl = globalThis.fetch) {
   let calls = 0
   return async path => {
-    if (++calls > 4 || !/^\/v(?:2\/user|9\/projects\/prj_[A-Za-z0-9]+|13\/deployments\/[A-Za-z0-9.-]+|4\/aliases\/ktour-id\.vercel\.app)$/.test(path)) fail("metadata_read_scope")
+    if (++calls > 4 || !/^\/v(?:2\/user|9\/projects\/prj_[A-Za-z0-9]+|13\/deployments\/(?:dpl_[A-Za-z0-9]+|[a-z0-9.-]+)|4\/aliases\/ktour-id\.vercel\.app)$/.test(path)) fail("metadata_read_scope")
     const url = new URL(path, "https://api.vercel.com"); url.searchParams.set("teamId", PIN.team)
     const signal = AbortSignal.any([outerSignal, AbortSignal.timeout(LIMITS.requestMs)])
     const response = await abortable(fetchImpl(url.href, { method: "GET", redirect: "error", credentials: "omit", cache: "no-store", signal, headers: { authorization: `Bearer ${auth}` } }), signal)
@@ -210,7 +210,7 @@ async function apiJson(response) {
 }
 
 export async function run({ origin, accessCode, expectedRevision, deploymentId } = {}) {
-  const report = { ok: false, status: "running", checkpoint: "input", errorCode: null, actionSteps: [], txDigests: [], pageErrors: 0, requestFailures: 0, httpFailures: [], chainRead: { reads: 0, bytes: 0 } }
+  const report = { ok: false, status: "running", checkpoint: "input", errorCode: null, actionSteps: [], txDigests: [], pageErrors: 0, requestFailures: 0, unexpectedRequestFailures: 0, blockedExternalAssets: 0, httpFailures: [], chainRead: { reads: 0, bytes: 0 } }
   let browser, context, guard, latest = null, page; const controller = new AbortController()
   const timer = setTimeout(() => { controller.abort(); void context?.close().catch(() => {}) }, LIMITS.deadlineMs)
   const capture = op => {
@@ -228,7 +228,10 @@ export async function run({ origin, accessCode, expectedRevision, deploymentId }
     report.actionSteps.push("deployment_account_project_revision_verified"); guard = createRequestGuard(base)
     browser = await chromium.launch({ headless: true }); context = await browser.newContext({ baseURL: base, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: "block" })
     page = await context.newPage(); page.setDefaultTimeout(45000)
-    page.on("pageerror", () => { report.pageErrors++ }); page.on("requestfailed", () => { report.requestFailures++ })
+    page.on("pageerror", () => { report.pageErrors++ }); page.on("requestfailed", request => {
+      report.requestFailures++
+      if (new URL(request.url()).origin === base) report.unexpectedRequestFailures++
+    })
     const observations = new Set()
     page.on("response", response => {
       const u = new URL(response.url()); if (u.origin !== base || !u.pathname.startsWith(API + "/")) return
@@ -241,7 +244,10 @@ export async function run({ origin, accessCode, expectedRevision, deploymentId }
     })
     await context.route("**/*", async route => {
       const req = route.request()
-      if (!guard.check(req.method(), req.url())) { await route.abort("blockedbyclient"); return }
+      if (!guard.check(req.method(), req.url())) {
+        if (new URL(req.url()).origin !== base && ["GET", "HEAD"].includes(req.method())) report.blockedExternalAssets++
+        await route.abort("blockedbyclient"); return
+      }
       if (req.method() === "POST" && (Buffer.byteLength(req.postData() ?? "") > LIMITS.bodyBytes || !(req.headers()["content-type"] ?? "").startsWith("application/json"))) { report.invalidBody = true; await route.abort("blockedbyclient"); return }
       await route.continue()
     })
@@ -273,7 +279,7 @@ export async function run({ origin, accessCode, expectedRevision, deploymentId }
     report.checkpoint = "return_to_place"
     await page.keyboard.press("Escape"); await expect(layer).toHaveCount(0); await expect(page.getByTestId("canonical-place-overlay")).toHaveAttribute("data-venue-id", PIN.venueId)
     await Promise.all([...observations])
-    if (guard.summary().blocked || report.pageErrors || report.httpFailures.length || report.observationError || report.invalidBody) fail("browser_errors")
+    if (guard.summary().blocked || report.pageErrors || report.unexpectedRequestFailures || report.httpFailures.length || report.observationError || report.invalidBody) fail("browser_errors")
     report.actionSteps.push("returned_to_place"); report.ok = true; report.status = "passed"; report.checkpoint = "complete"
   } catch (error) { report.status = "failed"; report.errorCode = safeErrors.has(error) ? error.safeCode : "verification_failed" }
   finally {
