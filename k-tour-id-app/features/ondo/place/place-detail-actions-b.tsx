@@ -7,17 +7,19 @@ import styles from "./place-detail-actions-b.module.css"
 /** One downstream decision surface for map, editorial and story entries.
  * Source-specific context belongs above this block. Capabilities still decide
  * what exists: a guide pick never becomes an accepted merchant or CX venue. */
-export function PlaceDetailActionsB({ placeId, locale, className, testId = "place-detail-actions", onOffer, offerTestId }: {
+export function PlaceDetailActionsB({ placeId, locale, className, testId = "place-detail-actions", onOffer, offerTestId, includeGuide = true }: {
   placeId: string
   locale: "en" | "ko" | "ja"
   className?: string
   testId?: string
   onOffer?: () => void
   offerTestId?: string
+  /** Canonical details render their guide in a separate memories group. */
+  includeGuide?: boolean
 }) {
   return <section className={`${styles.actions} ${className ?? ""}`} data-testid={testId} data-place-flow="shared" data-service-place-id={placeId}
     aria-label={locale === "ko" ? "이 장소에서 할 수 있는 일" : locale === "ja" ? "この場所でできること" : "At this place"}>
-    <PlaceServiceActionsB placeId={placeId} locale={locale} onOffer={onOffer} offerTestId={offerTestId} presentation="place-detail" includeGuide={false} />
+    <PlaceServiceActionsB placeId={placeId} locale={locale} onOffer={onOffer} offerTestId={offerTestId} presentation="place-detail" includeGuide={includeGuide} />
     <HackathonEntitlementCtaB venueId={placeId} locale={locale} />
   </section>
 }

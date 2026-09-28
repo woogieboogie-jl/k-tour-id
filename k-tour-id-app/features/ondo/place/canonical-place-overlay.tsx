@@ -1147,7 +1147,7 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
             </div>
           </details>
 
-          <PlaceDetailActionsB placeId={currentVenueId} locale={locale} className={styles.placeActions} testId="canonical-place-actions" onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open" />
+          <PlaceDetailActionsB placeId={currentVenueId} locale={locale} className={styles.placeActions} testId="canonical-place-actions" onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open" includeGuide={false} />
           <section className={styles.tripActions} data-testid="canonical-trip-actions" aria-labelledby="canonical-trip-actions-title">
             <h3 id="canonical-trip-actions-title">{locale === "ko" ? "가이드·여행 기록" : locale === "ja" ? "ガイド・旅の記録" : "Guides & memories"}</h3>
             <ExperienceEntryB placeId={currentVenueId} locale={locale} />
