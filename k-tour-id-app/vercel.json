@@ -7,6 +7,7 @@
   "git": {
     "deploymentEnabled": {
       "integration/autonomous-finish-20260927": false,
+      "implementation/opendid-native-20260928": false,
       "integration/sumsub-live-20260927": false
     }
   },

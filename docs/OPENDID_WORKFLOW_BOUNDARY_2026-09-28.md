@@ -1,5 +1,10 @@
 # OpenDID 병렬 워크플로 연계 계약·인수 기준 — 2026-09-28
 
+> Claude의 실제 시작 위치·파일 소유권·포트/데이터 격리·작업 순서는
+> [전용 구현 인계](./OPENDID_CLAUDE_HANDOFF_2026-09-28.md)를 먼저 확인한다.
+> [기존 SDK 검증 §4.5](./ZKP_CAPABILITY_VERIFICATION_2026-08-17.md)의 predicate/restriction/
+> 필수 referent 결합 P0도 필수 인수 조건이다. SDK `verifyProof=true`만으로 권한을 허용하지 않는다.
+
 ## 1. 목적과 현재 상태
 
 OpenDID는 취소하거나 제거한 기능이 아니다. 별도 워크플로에서 진행 중인 issuer/holder/verifier
@@ -172,6 +177,12 @@ UTC 유효한 시각만 받고 `NaN`, 미래 `validFrom`, 경계 시각의 만�
 외부 조회 동안 전역 Redis lock을 계속 잡지 않는다. 먼저 중복 방지용 request/claim을 영속화하고,
 제한된 외부 I/O 뒤 revision/phase/claim을 다시 확인해 원자적으로 commit한다.
 불명 결과의 재개는 저장된 provider transaction을 조회한다. 응답 유실만으로 발급을 반복하지 않는다.
+
+현재 소스에 그대로 provider I/O를 넣어서는 안 되는 두 지점이 있다. `credentialIssue`는
+adapter 호출 전 durable issuance claim이 없고, `presentationSubmit`은 sample 검증을 `mutate`
+내부에서 수행한다. 실제 provider 연결 전 발급 claim과 snapshot → 외부 I/O → revision 재검증
+구조를 구현해야 한다. native start/status/return 경로를 추가할 때에는 보호 통합 profile의
+`integration-preview-access.ts` exact allowlist와 해당 부정 테스트도 함께 변경한다.
 
 ## 5. Native launch / resume / cancel
 
