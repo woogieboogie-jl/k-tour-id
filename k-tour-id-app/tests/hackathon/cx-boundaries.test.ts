@@ -10,7 +10,7 @@ const oldFetch = globalThis.fetch
 const calls: string[] = []
 let responses: Response[] = []
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } })
-const result = (verified: unknown = true) => json({ code: 200, oacxStatus: "AFTER_RESULT", data: { verified } })
+const result = (verified: unknown = true, patch: Record<string, unknown> = {}) => json({ code: 200, oacxStatus: "AFTER_RESULT", token: "fixture-completed-token", txId: "tx-fixture", reqTxId: "tx-fixture", cxId: "cx-fixture", data: { verified }, ...patch })
 const claims = (patch: Record<string, unknown> = {}) => json({ code: 200, data: { ci: "fixture-ci-not-personal-data", txId: "tx-fixture", cxId: "cx-fixture", adult: "Y", ...patch } })
 const input = { operationId: "op-fixture", token: "fixture-token", txId: "tx-fixture", cxId: "cx-fixture", mobile: false }
 const code = (expected: string) => (e: unknown) => e instanceof HkError && e.code === expected
@@ -56,9 +56,17 @@ test("missing stable subject cannot become a new person through transaction ID",
   await assert.rejects(cxComplete(input), code("cx_subject_unavailable"))
 })
 
-test("missing provider transaction reference cannot inherit the requested one", async () => {
-  responses = [result(), claims({ txId: undefined })]
+test("missing result-envelope transaction reference cannot inherit the requested one", async () => {
+  responses = [result(true, { txId: undefined, reqTxId: undefined }), claims()]
   await assert.rejects(cxComplete(input), code("cx_transaction_missing"))
+  assert.equal(calls.length, 1)
+})
+
+test("documented parsed claims need not repeat the bound result transaction", async () => {
+  responses = [result(), claims({ txId: undefined, cxId: undefined, jti: "tx-fixture", sub: "AFTER_RESULT" })]
+  const completed = await cxComplete(input)
+  assert.ok("evidence" in completed)
+  assert.equal(completed.evidence.providerTransactionRef, "tx-fixture")
 })
 
 for (const badCode of [undefined, "garbage", 0]) {
@@ -81,7 +89,7 @@ for (const mismatch of [{ txId: "other-tx" }, { cxId: "other-cx" }]) {
 }
 
 test("same provider subject has stable pseudonym across requests and never exposes CI", async () => {
-  responses = [result(), claims(), result(), claims({ txId: "tx-second", cxId: "cx-second" })]
+  responses = [result(), claims(), result(true, { txId: "tx-second", reqTxId: "tx-second", cxId: "cx-second" }), claims({ txId: "tx-second", cxId: "cx-second" })]
   const first = await cxComplete(input)
   const second = await cxComplete({ ...input, operationId: "op-second", txId: "tx-second", cxId: "cx-second" })
   assert.ok("evidence" in first && "evidence" in second)
