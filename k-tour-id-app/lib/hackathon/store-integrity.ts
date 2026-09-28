@@ -1,5 +1,6 @@
 import type { Db } from "./store"
 import { HkError } from "./util"
+import { assertIntegrationSuiBudget } from "./integration-sui-limits"
 
 /** Reject corrupt/incompatible storage instead of clearing redemption history. */
 export function parseStoredJourney(raw: unknown): Db {
@@ -14,6 +15,9 @@ export function parseStoredJourney(raw: unknown): Db {
     const rows = db[name]
     if (!rows || typeof rows !== "object" || Array.isArray(rows)) throw invalid()
     if (Object.values(rows).some((row) => !row || typeof row !== "object" || Array.isArray(row))) throw invalid()
+  }
+  if (db.integrationSuiBudget !== undefined) {
+    try { assertIntegrationSuiBudget(parsed as Db) } catch { throw invalid() }
   }
   return parsed as Db
 }

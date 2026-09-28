@@ -21,6 +21,7 @@ import { prepareDelegationOnce } from "./delegation-preparation"
 import { safeHkError } from "./public-error"
 import { isHostedSuiProfile, PIN as HOSTED_SUI_PIN } from "./hosted-sui-profile"
 import { assertCurrentIdentityPolicy, identityPolicyChanged } from "./identity-policy"
+import { requiresIntegrationSuiLimits, assertIntegrationSuiActivation, assertIntegrationSuiLimits, assertIntegrationSuiOperation, claimIntegrationSuiOperation, INTEGRATION_SUI_LIMITS } from "./integration-sui-limits"
 
 /** SDK/provider errors may contain authenticated URLs or signed bytes. */
 function safeServiceError(error: unknown, code: string): HkError {
@@ -90,7 +91,7 @@ function allowed(op: OperationRecord): { allowedActions: AllowedAction[]; safeNe
       return { allowedActions: canCancel ? ["check_status", "reconcile", "cancel"] : ["check_status", "reconcile"], safeNextAction: "check_status" }
     }
     case "agent": {
-      if (isHostedSuiProfile() && op.agent) return { allowedActions: ["check_status", "reconcile", "return"], safeNextAction: op.agent.status === "failed" ? "return" : "check_status" }
+      if ((isHostedSuiProfile() || requiresIntegrationSuiLimits()) && op.agent) return { allowedActions: ["check_status", "reconcile", "return"], safeNextAction: op.agent.status === "failed" ? "return" : "check_status" }
       return { allowedActions: op.agent?.status === "unknown" || op.agent?.status === "queued" ? ["check_status", "reconcile"] : ["run_agent", "check_status", "reconcile"], safeNextAction: "check_status" }
     }
     case "fulfillment": return op.fulfillment?.status === "blocked" ? { allowedActions: ["check_status", "return"], safeNextAction: "return" } : { allowedActions: ["redeem", "check_status", "reconcile"], safeNextAction: "check_status" }
@@ -159,6 +160,7 @@ function assertIdentityPending(op: OperationRecord) {
 
 // ── create ────────────────────────────────────────────────────────────
 export async function createOperation(input: { sessionId: string; venueId: string; consentVersion: string; locale: "ko" | "en" | "ja"; venueName: string }) {
+  if (requiresIntegrationSuiLimits() && process.env.HK_INTEGRATION_SUI_TARGET === INTEGRATION_SUI_LIMITS.targetId) { assertIntegrationSuiActivation(); assertIntegrationSuiLimits() }
   const c = hkConfig().campaign
   assert(input.venueId === c.venueId, "venue_unsupported", "this place has no demo entitlement", 404)
   assert(input.consentVersion === HK_CONSENT_VERSION, "consent_version", "consent version mismatch")
@@ -181,6 +183,7 @@ export async function createOperation(input: { sessionId: string; venueId: strin
       identity: null, credential: null, presentation: null, proposal: null, delegation: null, agent: null, fulfillment: null, chain: null, error: null,
       sessionId: input.sessionId, secrets: { proposalPromptDigest: undefined }, audit: [{ at: now, event: "created", detail: { locale: input.locale, venueName: input.venueName } }],
     }
+    if (requiresIntegrationSuiLimits() && process.env.HK_INTEGRATION_SUI_TARGET === INTEGRATION_SUI_LIMITS.targetId) claimIntegrationSuiOperation(db, op.operationId)
     db.operations[op.operationId] = op
     return toResult(op)
   })
@@ -433,6 +436,7 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
   assertExternalServicesEnabled("Sui delegation")
   const op = await loadOperation(sessionId, operationId)
   assertCurrentIdentityPolicy(op.identity)
+  if (requiresIntegrationSuiLimits()) await readStore(db => assertIntegrationSuiOperation(db, operationId))
   assert(op.status === "pending" && op.phase === "delegation" && op.proposal && op.presentation?.decision === "allow", "phase", "proposal approval required", 409)
   assert(op.proposal.proposalDigest === input.approvedProposalDigest, "proposal_digest", "approved proposal does not match", 409)
   assert(credentialEligibility(op) === null && presentationEligibility(op) === null, "eligibility", "current credential and presentation required", 409)
@@ -493,6 +497,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
   assertExternalServicesEnabled("Sui delegation")
   const op = await loadOperation(sessionId, operationId)
   assertCurrentIdentityPolicy(op.identity)
+  if (requiresIntegrationSuiLimits()) await readStore(db => assertIntegrationSuiOperation(db, operationId))
   assert(op.status === "pending" && op.phase === "delegation" && op.delegation?.status === "awaiting_signature" && op.secrets.lastTxBytesB64, "phase", "no delegation awaiting signature", 409)
   assert(op.delegation.txBytesDigest === input.txBytesDigest, "tx_mismatch", "transaction bytes changed", 409)
   assert(op.delegation.expiresAtMs > Date.now(), "grant_window_expired", "delegation window expired", 409)
@@ -546,11 +551,12 @@ export async function agentRun(sessionId: string, operationId: string) {
   assertExternalServicesEnabled("Sui agent execution")
   const op = await loadOperation(sessionId, operationId)
   assertCurrentIdentityPolicy(op.identity)
+  if (requiresIntegrationSuiLimits()) await readStore(db => assertIntegrationSuiOperation(db, operationId))
   assert(op.status === "pending" && op.phase === "agent" && op.delegation?.grant && op.proposal, "phase", "delegation required", 409)
   // Hosted gas ceiling: one durable agent attempt per operation, including
   // chain failure or interruption before a digest was recorded. Neither proves
   // another paid transaction is within the approved three-transaction budget.
-  if (isHostedSuiProfile() && op.agent) return toResult(op)
+  if ((isHostedSuiProfile() || requiresIntegrationSuiLimits()) && op.agent) return toResult(op)
   if (op.agent?.status === "executed") return toResult(op)
   if (op.agent?.status === "unknown" || op.agent?.status === "queued") return toResult(op) // In-flight/unknown execution is never blindly dispatched again.
   const grantState = await readGrant(op.delegation.grant.objectId)
@@ -575,7 +581,7 @@ export async function agentRun(sessionId: string, operationId: string) {
   let dispatch = await mutate(sessionId, operationId, (o) => {
     assertSnapshot(o, op)
     assertCurrentIdentityPolicy(o.identity)
-    assert(isHostedSuiProfile() ? !o.agent : !o.agent || o.agent.status === "failed", "phase", "agent already dispatched", 409)
+    assert((isHostedSuiProfile() || requiresIntegrationSuiLimits()) ? !o.agent : !o.agent || o.agent.status === "failed", "phase", "agent already dispatched", 409)
     o.agent = { dispatchId: o.agent?.dispatchId ?? randomId("agt"), status: "queued", decisionCommitment, manifestCommitment, manifest, txDigest: null, recordId: null, verified: null, error: null }
     touch(o, "agent.queued")
     return o

@@ -4,6 +4,7 @@
 import { HkError } from "./util"
 import { isCxPreview, isReadinessPreview } from "./preview-readiness"
 import { isHostedSuiProfile, hostedSuiPreflightIssues } from "./hosted-sui-profile"
+import { requiresIntegrationSuiLimits, assertIntegrationSuiActivation, assertIntegrationSuiLimits } from "./integration-sui-limits"
 
 export type CxMode = "mock" | "cx"
 export type OpenDidMode = "mock" | "opendid"
@@ -110,6 +111,7 @@ export type HkConfig = ReturnType<typeof hkConfig>
 
 /** Isolation is an execution boundary, not a simulated chain confirmation. */
 export function assertExternalServicesEnabled(service: string) {
+  if (requiresIntegrationSuiLimits() && ["Sui signing", "Sui delegation", "Sui agent execution"].includes(service)) { assertIntegrationSuiActivation(); assertIntegrationSuiLimits() }
   if (isHostedSuiProfile() && (hostedSuiPreflightIssues().length || !["Sui", "Sui signing", "Sui delegation", "Sui agent execution", "Sui grant lookup"].includes(service))) {
     throw new HkError("hosted_sui_scope", "Only the approved Testnet journey is available.", 503)
   }
@@ -139,7 +141,7 @@ export function hkPublicConfig() {
       omnione: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : c.omnione.rpcUrl && c.omnione.privateKey && c.omnione.registryAddress ? "stage" : "unconfigured",
       zklogin: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : c.sui.googleClientId && c.sui.zkSaltSeed ? "google" : "demo-signer",
     },
-    capabilities: { opendidProviderReady: false, chainExecutionEnabled: !c.isolatedMock && !c.cxPreview, redemptionEnabled: !isHostedSuiProfile() },
+    capabilities: { opendidProviderReady: false, chainExecutionEnabled: !c.isolatedMock && !c.cxPreview && !requiresIntegrationSuiLimits(), redemptionEnabled: !isHostedSuiProfile() && !requiresIntegrationSuiLimits() },
     sui: { network: c.sui.network, packageId: c.isolatedMock || c.cxPreview ? "" : c.sui.packageId, campaignId: c.isolatedMock || c.cxPreview ? "" : c.sui.campaignId, explorer: c.isolatedMock || c.cxPreview ? "" : c.sui.explorer, googleClientId: c.sui.googleClientId },
     omnione: { chainId: c.omnione.chainId, registryAddress: c.isolatedMock || c.cxPreview ? "" : c.omnione.registryAddress },
     ttl: HK_TTL,

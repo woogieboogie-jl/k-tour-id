@@ -18,6 +18,7 @@ import { HkError } from "./util"
 import { parseStoredJourney } from "./store-integrity"
 import { previewRedisConfig, storeRedisCommand, type StoreCanaryOwnership } from "./redis-config"
 import { hostedIntegrationRedisConfig, requiresHostedIntegrationRedis } from "./hosted-store-config"
+import { assertIntegrationSuiBudget, assertIntegrationSuiBudgetMonotonic, type IntegrationSuiBudget } from "./integration-sui-limits"
 
 export type OperationRecord = OperationResult & {
   sessionId: string
@@ -58,6 +59,7 @@ export type Db = {
   outbox: Record<string, OutboxRecord>
   idempotency: Record<string, IdempotencyRecord>
   nonces: Record<string, { operationId: string; consumedAt: string | null; createdAt: string }>
+  integrationSuiBudget?: IntegrationSuiBudget // Retained across operation pruning; never initialized by runtime.
 }
 
 const EMPTY: Db = { version: 1, sessions: {}, operations: {}, redemptions: {}, outbox: {}, idempotency: {}, nonces: {} }
@@ -199,7 +201,10 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
     if (b.kind === "file") {
       // Failed mutations must not leak through the in-memory cache or a later write.
       const db = structuredClone(fileLoad(b.path))
+      const budget = db.integrationSuiBudget ? structuredClone(assertIntegrationSuiBudget(db)) : undefined
       const result = await fn(db)
+      if (budget) assertIntegrationSuiBudgetMonotonic(budget, db)
+      else if (db.integrationSuiBudget !== undefined) assertIntegrationSuiBudget(db)
       prune(db)
       filePersist(b.path, db)
       fileCache = db
@@ -208,7 +213,10 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
     const token = await redisLock(b)
     try {
       const db = await redisLoad(b)
+      const budget = db.integrationSuiBudget ? structuredClone(assertIntegrationSuiBudget(db)) : undefined
       const result = await fn(db)
+      if (budget) assertIntegrationSuiBudgetMonotonic(budget, db)
+      else if (db.integrationSuiBudget !== undefined) assertIntegrationSuiBudget(db)
       prune(db)
       await redisPersist(b, db, token)
       return structuredClone(result)

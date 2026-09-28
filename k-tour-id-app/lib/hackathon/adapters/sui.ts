@@ -16,6 +16,7 @@ import { hexToBytes, sha256Hex, HkError } from "../util"
 import { chainId, commitment, verifyDelegationEvidence, verifyExecutionEvidence, type ChainTransaction, type GrantExpectation, type ExecutionExpectation } from "../sui-evidence"
 import { readTransactionWithHistoricalFallback } from "../sui-historical-read"
 import { isHostedSuiProfile, assertHostedSuiRoles, PIN as HOSTED_SUI_PIN } from "../hosted-sui-profile"
+import { requiresIntegrationSuiLimits, assertIntegrationSuiRoles, INTEGRATION_SUI_LIMITS } from "../integration-sui-limits"
 
 export type ObjRef = { objectId: string; version: string; digest: string }
 
@@ -44,6 +45,7 @@ export function suiKeys() {
   const agent = keypair(c.agentSecretKey, "HK_SUI_AGENT_SECRET_KEY")
   const sponsor = keypair(c.sponsorSecretKey, "HK_SUI_SPONSOR_SECRET_KEY")
   if (isHostedSuiProfile()) assertHostedSuiRoles({ issuer: issuer.toSuiAddress(), agent: agent.toSuiAddress(), sponsor: sponsor.toSuiAddress() })
+  if (requiresIntegrationSuiLimits()) assertIntegrationSuiRoles({ issuer: issuer.toSuiAddress(), agent: agent.toSuiAddress(), sponsor: sponsor.toSuiAddress() })
   return { issuer, agent, sponsor, issuerAddress: issuer.toSuiAddress(), agentAddress: agent.toSuiAddress(), sponsorAddress: sponsor.toSuiAddress() }
 }
 export function suiTargets() {
@@ -69,6 +71,10 @@ const bytes32 = (tx: Transaction, hex: string) => tx.pure.vector("u8", Array.fro
 
 /** Optional operator bound; existing application callers retain their gas policy. */
 function gasBudget(tx: Transaction, mist?: number) {
+  if (requiresIntegrationSuiLimits()) {
+    if (mist !== undefined && mist !== INTEGRATION_SUI_LIMITS.gasBudgetMIST) throw new HkError("sui_gas_budget", "Invalid gas budget", 400)
+    mist = INTEGRATION_SUI_LIMITS.gasBudgetMIST
+  }
   if (isHostedSuiProfile()) {
     if (mist !== undefined && mist !== HOSTED_SUI_PIN.gasBudgetMIST) throw new HkError("sui_gas_budget", "Invalid gas budget", 400)
     mist = HOSTED_SUI_PIN.gasBudgetMIST
@@ -78,6 +84,10 @@ function gasBudget(tx: Transaction, mist?: number) {
   tx.setGasBudget(mist)
 }
 export function assertSerializedGasBudget(bytes: Uint8Array, mist?: number) {
+  if (requiresIntegrationSuiLimits()) {
+    if (mist !== undefined && mist !== INTEGRATION_SUI_LIMITS.gasBudgetMIST) throw new HkError("sui_gas_budget", "Invalid gas budget", 400)
+    mist = INTEGRATION_SUI_LIMITS.gasBudgetMIST
+  }
   if (isHostedSuiProfile()) {
     if (mist !== undefined && mist !== HOSTED_SUI_PIN.gasBudgetMIST) throw new HkError("sui_gas_budget", "Invalid gas budget", 400)
     mist = HOSTED_SUI_PIN.gasBudgetMIST
@@ -89,6 +99,7 @@ export function assertSerializedGasBudget(bytes: Uint8Array, mist?: number) {
 }
 
 async function executeSigned(bytes: Uint8Array, signatures: string[]) {
+  assertExternalServicesEnabled("Sui signing")
   const client = suiClient()
   const res = await client.executeTransaction({ transaction: bytes, signatures, include: { effects: true, events: true } })
   const txn = res.Transaction ?? res.FailedTransaction
@@ -180,6 +191,7 @@ export async function buildDelegationPtb(opts: { userAddress: string; entitlemen
 
 /** Execute the delegation with the user's signature (zkLogin or Ed25519) + the sponsor's. */
 export async function executeDelegation(opts: { txBytesB64: string; userSignature: string; sponsorSignature: string; expected: GrantExpectation; gasBudgetMIST?: number; beforeBroadcast?: (digest: string) => Promise<void> }) {
+  assertExternalServicesEnabled("Sui delegation")
   const t = suiTargets()
   const bytes = fromBase64(opts.txBytesB64)
   assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
