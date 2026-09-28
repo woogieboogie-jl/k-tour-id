@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { spawnSync } from "node:child_process"
 import { allowlistedEnv, runIntegrationReadiness, type ExplicitEnv } from "../../lib/hackathon/integration-readiness"
+import { resolveIntegrationSuiTarget } from "../../lib/hackathon/integration-sui-targets"
 
 const PRIVATE = "fixture-only-secret-never-in-output"
 const base: ExplicitEnv = {
@@ -9,6 +10,8 @@ const base: ExplicitEnv = {
   HK_CX_API_KEY: PRIVATE, HK_ISSUER_SIGNING_SEED: PRIVATE.repeat(2),
   HK_STORE_KEY: "ktour:integration-preview:fixture", KV_REST_API_URL: "https://fixture.upstash.io/", KV_REST_API_TOKEN: PRIVATE,
   HK_SUI_ISSUER_SECRET_KEY: PRIVATE, HK_SUI_AGENT_SECRET_KEY: PRIVATE, HK_OMNIONE_PRIVATE_KEY: PRIVATE,
+  HK_INTEGRATION_SUI_TARGET: "harvey-original", HK_SUI_NETWORK: "testnet",
+  HK_SUI_CHAIN_IDENTIFIER: "69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD", HK_SUI_GRPC_URL: "https://fullnode.testnet.sui.io:443",
   HK_SUI_PACKAGE_ID: "0xc5d26326ffd5267bb5b54625c1e2b9c03f7cca4753232d0b042c62ee74fd975d",
   HK_SUI_CAMPAIGN_ID: "0xe3fce96c9c9e1086ff20dd7453e16ff2c52d3d3324e6e4e34446c7d0dc2ecf16",
   HK_SUI_CAMPAIGN_INITIAL_VERSION: "349181955",
@@ -17,7 +20,9 @@ const base: ExplicitEnv = {
   NEXT_PUBLIC_GOOGLE_CLIENT_ID: "fixture-client", HK_ZKLOGIN_SALT_SEED: PRIVATE,
   ENOKI_API_KEY: PRIVATE, GEMINI_API_KEY: PRIVATE,
 }
-const report = (env: ExplicitEnv = base, zkLoginRequested = false) => runIntegrationReadiness({ env, zkLoginRequested })
+const original = resolveIntegrationSuiTarget("harvey-original")
+const suiRoles = { issuer: original.issuerAddress, agent: original.agentAddress, sponsor: original.sponsorAddress }
+const report = (env: ExplicitEnv = base, zkLoginRequested = false) => runIntegrationReadiness({ env, zkLoginRequested, suiRoles })
 const codes = (r: ReturnType<typeof report>) => Object.values(r.issues).flat().map(x => x.code)
 
 test("complete offline config still cannot claim provider, OpenDID or transaction verification", () => {
@@ -26,6 +31,7 @@ test("complete offline config still cannot claim provider, OpenDID or transactio
   assert.equal(r.providerVerified, false)
   assert.equal(r.liveExecutionReady, false)
   assert.equal(r.opendidProviderReady, false)
+  assert.equal(r.suiSignerOwnershipVerified, false)
   assert.equal(JSON.stringify(r).includes(PRIVATE), false)
   assert.ok(codes(r).includes("opendid_provider_workflow_separate"))
   assert.equal(r.safety.networkCalls, 0)
@@ -170,7 +176,7 @@ test("CLI empty inventory ignores ambient credentials and exits nonzero for miss
 })
 
 test("CLI consumes bounded stdin envelope without secret values in stdout/stderr", () => {
-  const r = cli(["--offline", "--stdin"], JSON.stringify({ env: base, zkLoginRequested: false }))
+  const r = cli(["--offline", "--stdin"], JSON.stringify({ env: base, zkLoginRequested: false, suiRoles }))
   assert.equal(r.status, 0)
   assert.equal(JSON.parse(r.stdout).providerVerified, false)
   assert.equal((r.stdout + r.stderr).includes(PRIVATE), false)
