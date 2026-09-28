@@ -226,6 +226,53 @@ test("reviewed new SHA can deploy once while preserving the old unknown intent",
   const count = f.postCount(); await f.run("deploy-preview"); assert.equal(f.postCount(), count)
 })
 
+test("private deployment error message is bounded/redacted and absent from public diagnostics", async () => {
+  const f = fixture(); await f.run("prepare-preview")
+  const token = "synthetic-auth-token", opaque = "X".repeat(64)
+  f.deploymentHook(() => readApiResponse(Response.json({ error: { code: "bad_request", message:
+    `Invalid configuration: unsupported option. ${token} user@example.invalid https://example.invalid/token?key=secret Bearer short-token apiKey=short-secret ${opaque}\n${"details ".repeat(100)}` } }, { status: 400 }), { deploymentError: true, redactValues: [token] }))
+  let thrown
+  try { await f.run("deploy-preview") } catch (error) { thrown = error }
+  assert.equal(thrown.message, "release_deployment_rejected")
+  const detail = f.journal().targets.preview.deployments[SHA].failure.privateMessage
+  assert.ok(detail.startsWith("Invalid configuration: unsupported option.")); assert.ok(detail.length <= 256)
+  for (const raw of [token, "user@example.invalid", "short-token", "short-secret", opaque, "https://", "\n"]) assert.equal(detail.includes(raw), false)
+  assert.equal(JSON.stringify(thrown.diagnostic).includes("unsupported option"), false)
+  assert.equal(JSON.stringify(await f.run("inspect")).includes("unsupported option"), false)
+})
+
+test("explicit Preview retry archives proven HTTP 400 and sends at most one new request", async () => {
+  const f = fixture(); await f.run("prepare-preview")
+  f.deploymentHook(() => readApiResponse(Response.json({ error: { code: "bad_request", message: "Invalid configuration" } }, { status: 400 })))
+  await rejects(f.run("deploy-preview"), "deployment_rejected")
+  const previous = f.journal().targets.preview.deployments[SHA], count = f.postCount()
+  f.deploymentHook(undefined)
+  const retry = await f.run("retry-rejected-preview")
+  assert.equal(retry.target, "preview"); assert.equal(f.postCount(), count + 1)
+  assert.deepEqual(f.journal().targets.preview.deployments[SHA].previousAttempts, [previous])
+  await rejects(f.run("retry-rejected-preview"), "preview_retry_not_rejected")
+  assert.equal(f.postCount(), count + 1)
+})
+
+test("explicit retry refuses unknown, 408, 5xx, production, and repeated 400 retries", async () => {
+  for (const status of [null, 408, 500]) {
+    const f = fixture(); await f.run("prepare-preview")
+    f.deploymentHook(() => { if (status === null) throw new Error("fixture unknown"); return readApiResponse(Response.json({ error: { code: "bad_request" } }, { status })) })
+    await rejects(f.run("deploy-preview"), "deployment_outcome_unknown")
+    const count = f.postCount()
+    await rejects(f.run("retry-rejected-preview"), "preview_retry_not_rejected")
+    await rejects(f.run("retry-rejected-production"), "arguments")
+    assert.equal(f.postCount(), count)
+  }
+  const f = fixture(); await f.run("prepare-preview")
+  f.deploymentHook(() => readApiResponse(Response.json({ error: { code: "bad_request" } }, { status: 400 })))
+  await rejects(f.run("deploy-preview"), "deployment_rejected")
+  await rejects(f.run("retry-rejected-preview"), "deployment_rejected")
+  const count = f.postCount()
+  await rejects(f.run("retry-rejected-preview"), "preview_retry_limit")
+  assert.equal(f.postCount(), count)
+})
+
 test("metadata changes after preview attestation invalidate production permission", async () => {
   const f = fixture(); await f.run("prepare-preview"); await f.run("prepare-production")
   const preview = await f.run("deploy-preview")

@@ -96,7 +96,11 @@ export function hostedSuiPreflightIssues(env: HostedSuiEnv = process.env, now = 
     deployment_target: (env.VERCEL_ENV === "preview" || env.VERCEL_ENV === "production") && (!env.VERCEL_TARGET_ENV || env.VERCEL_TARGET_ENV === env.VERCEL_ENV),
     immutable_host: /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.vercel\.app$/.test(env.VERCEL_URL ?? ""),
     seoul: env.VERCEL_REGION === PIN.region,
-    project: env.VERCEL_PROJECT_ID === PIN.projectId, team: env.VERCEL_ORG_ID === PIN.orgId,
+    // PROJECT_ID is a documented runtime system variable; ORG_ID is a CLI
+    // linking variable and may be absent. The release operator independently
+    // binds this unique project to the approved team through Vercel's API.
+    project: env.VERCEL_PROJECT_ID === PIN.projectId,
+    team: env.VERCEL_ORG_ID === undefined || env.VERCEL_ORG_ID === PIN.orgId,
     git_provider: env.VERCEL_GIT_PROVIDER === "github", git_branch: env.VERCEL_GIT_COMMIT_REF === PIN.branch,
     git_owner: env.VERCEL_GIT_REPO_OWNER === PIN.repoOwner, git_repo: env.VERCEL_GIT_REPO_SLUG === PIN.repoName,
     git_revision: /^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? ""),

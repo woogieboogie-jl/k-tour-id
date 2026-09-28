@@ -24,13 +24,29 @@ function safeDiagnostic(value) {
     providerCode: API_ERROR_CODES.has(value?.providerCode) ? value.providerCode : null,
     fieldHints: Object.values(API_FIELDS).filter(field => Array.isArray(value?.fieldHints) && value.fieldHints.includes(field)) }
 }
+function privateApiMessage(message, redactValues) {
+  if (typeof message !== "string") return undefined
+  let safe = message
+  for (const value of redactValues) if (typeof value === "string" && value.length) safe = safe.split(value).join("[redacted]")
+  safe = safe.slice(0, 8192).replace(/-----BEGIN[\s\S]*?-----END[^-]*-----/g, "[redacted]")
+    .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/https?:\/\/[^\s<>"']+/gi, "[url]")
+    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, "[email]")
+    .replace(/\b(?:authorization|token|api[_ -]?key|secret|password)\b\s*[:=]\s*["']?[^\s"',;]+/gi, "[redacted]")
+    .replace(/[A-Za-z0-9_+/=-]{32,}/g, "[redacted]")
+    .replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim()
+  return safe.slice(0, 256) || undefined
+}
 class ApiHttpError extends Error {
-  constructor(status, body) {
+  constructor(status, body, options = {}) {
     super(`release_http_${status}`)
     const provider = body?.error, message = typeof provider?.message === "string" ? provider.message.slice(0, 4096) : ""
     // Only fixed field-name hints survive; never retain body/message/values.
     this.diagnostic = safeDiagnostic({ kind: "http", httpStatus: status, providerCode: provider?.code,
       fieldHints: Object.entries(API_FIELDS).filter(([field]) => new RegExp(`\\b${field}\\b`).test(message)).map(([, pointer]) => pointer) })
+    // This extra detail is ONLY for the private operator journal. It is never
+    // copied into MutationError, inspect output or the command-line error JSON.
+    if (options.deploymentError === true) this.privateMessage = privateApiMessage(provider?.message, options.redactValues ?? [])
   }
 }
 class MutationError extends Error {
@@ -41,12 +57,12 @@ class MutationError extends Error {
   }
 }
 /** Response-only helper for synthetic tests; no credentials or network access. */
-export async function readApiResponse(response) {
+export async function readApiResponse(response, options = {}) {
   let raw, parsed
   try { raw = await response.text() } catch { if (!response.ok) throw new ApiHttpError(response.status); stop("response_body") }
   if (raw.length > 2_000_000) { if (!response.ok) throw new ApiHttpError(response.status); stop("response_size") }
   try { parsed = JSON.parse(raw) } catch { if (!response.ok) throw new ApiHttpError(response.status); stop("response_json") }
-  if (!response.ok) throw new ApiHttpError(response.status, parsed)
+  if (!response.ok) throw new ApiHttpError(response.status, parsed, options)
   return parsed
 }
 const record = value => value && typeof value === "object" && !Array.isArray(value)
@@ -124,7 +140,7 @@ async function api(path, method = "GET", body) {
   if (!path.startsWith("/v") || path.includes("..") || path.includes("://")) stop("api_path")
   const auth = privateJson(AUTH), url = new URL(path, "https://api.vercel.com"); url.searchParams.set("teamId", ORG_ID)
   const response = await fetch(url, { method, redirect: "error", signal: AbortSignal.timeout(30000), headers: { authorization: `Bearer ${auth.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
-  return readApiResponse(response)
+  return readApiResponse(response, { deploymentError: method === "POST" && path === "/v13/deployments", redactValues: [auth.token] })
 }
 function journal(value) {
   if (value === null) return { schema: SCHEMA, project: PROJECT_ID, team: ORG_ID, branch: HOSTED_SUI_BRANCH, targets: {} }
@@ -226,7 +242,7 @@ export function createReleaseOperator(io) {
     return boundDeployment(await io.api(`/v13/deployments/${intent.id}`), "preview", sha, intent, true)
   }
   return async function command(action, extra, evidenceHash) {
-    const simple = ["inspect", "prepare-preview", "prepare-production", "plan-preview", "plan-production", "deploy-preview", "deploy-production"]
+    const simple = ["inspect", "prepare-preview", "prepare-production", "plan-preview", "plan-production", "deploy-preview", "deploy-production", "retry-rejected-preview"]
     if (!simple.includes(action) && !["status", "reconcile-deployment", "mark-preview-passed"].includes(action)) stop("arguments")
     if ((simple.includes(action) && extra !== undefined) || (action !== "mark-preview-passed" && evidenceHash !== undefined) || (!simple.includes(action) && !/^dpl_[A-Za-z0-9]+$/.test(extra ?? "")) || (action === "mark-preview-passed" && !HASH.test(evidenceHash ?? ""))) stop("arguments")
     const project = await projectCheck()
@@ -257,26 +273,34 @@ export function createReleaseOperator(io) {
         return { ...info, reconciled: true, remoteTestsAttested: action === "mark-preview-passed", mutation: "local-journal-only" }
       }
       const target = action.endsWith("production") ? "production" : "preview"
-      if (action.startsWith("deploy")) {
+      if (action.startsWith("deploy") || action === "retry-rejected-preview") {
         const state = prepared(j, target, sha, envs)
         if (target === "production") {
           await readyTestedPreview(j, sha, envs)
           if (state.fingerprint !== j.targets.preview.fingerprint) stop("prepared_values_changed")
         }
-        let intent = state.deployments[sha]
+        let intent = state.deployments[sha], previousAttempts
+        if (action === "retry-rejected-preview") {
+          // One explicit Preview-only retry after a proven validation rejection.
+          // No unknown/timeout/5xx retry, no production retry, no auto invocation.
+          if (!intent || intent.id || intent.failure?.kind !== "http" || intent.failure.httpStatus !== 400 || intent.environmentDigest !== state.environmentDigest) stop("preview_retry_not_rejected")
+          if (intent.previousAttempts?.length) stop("preview_retry_limit")
+          previousAttempts = [intent]; intent = undefined
+        }
         if (intent) {
           if (intent.environmentDigest !== state.environmentDigest) stop("environment_drift")
           if (!intent.id) stop("deployment_outcome_unknown")
           return { ...boundDeployment(await io.api(`/v13/deployments/${intent.id}`), target, sha, intent), replayed: true }
         }
-        intent = { nonce: nonce(), environmentDigest: state.environmentDigest, sentAt: stamp() }; state.deployments[sha] = intent; io.saveJournal(j)
+        intent = { nonce: nonce(), environmentDigest: state.environmentDigest, sentAt: stamp(), ...(previousAttempts ? { previousAttempts } : {}) }; state.deployments[sha] = intent; io.saveJournal(j)
         let d
         // GitHub SDK accepts number|string repoId. Normalize, without claiming
         // numeric repoId caused the previous unclassified request failure.
         try { d = await io.api("/v13/deployments", "POST", { name: "ondo", project: PROJECT_ID, gitSource: { type: "github", repoId: String(project.link.repoId), ref: HOSTED_SUI_BRANCH, sha },
           meta: { ktourHostedSuiRelease: intent.nonce, ktourHostedSuiConfig: intent.environmentDigest }, ...(target === "production" ? { target: "production" } : {}) }) }
         catch (error) {
-          intent.failure = { ...safeDiagnostic(error instanceof ApiHttpError ? error.diagnostic : null), recordedAt: stamp() }; io.saveJournal(j)
+          intent.failure = { ...safeDiagnostic(error instanceof ApiHttpError ? error.diagnostic : null), recordedAt: stamp(),
+            ...(error instanceof ApiHttpError && error.privateMessage ? { privateMessage: error.privateMessage } : {}) }; io.saveJournal(j)
           throw new MutationError("deployment", intent.failure)
         }
         const info = boundDeployment(d, target, sha, intent); intent.id = info.id; io.saveJournal(j); return info
