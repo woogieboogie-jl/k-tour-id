@@ -26,6 +26,28 @@ test.afterEach(async ({ page }) => {
   expect(writes.get(page)).toEqual([])
 })
 
+test("capability hydration never repurposes the details button as payment", async ({ page }) => {
+  await seedB(page, { locale: "ja" })
+  await gotoB(page, `?venueId=${CANONICAL_VENUE_ID}&review=0`)
+  const peek = page.getByTestId("canonical-place-peek")
+  await expect(peek.locator("[data-peek-has-service]")).toHaveAttribute("data-peek-has-service", "false")
+  const details = page.getByTestId("canonical-place-details")
+  const original = await details.elementHandle()
+  expect(original).not.toBeNull()
+  await page.evaluate(() => {
+    const url = new URL(window.location.href)
+    url.searchParams.set("review", "1")
+    window.history.replaceState(window.history.state, "", url)
+    window.sessionStorage.setItem("ondo.review.flow.v1", "1")
+    window.dispatchEvent(new Event("ondo-review-flow-change"))
+  })
+  await expect(peek.locator("[data-peek-has-service]")).toHaveAttribute("data-peek-has-service", "true")
+  expect(await original!.evaluate(node => node.isConnected && node.getAttribute("data-testid") === "canonical-place-details")).toBe(true)
+  await details.click()
+  await expect(page.getByTestId("canonical-place-overlay")).toBeVisible()
+  await expect(page.getByTestId("commerce-place-context")).toHaveCount(0)
+})
+
 for (const locale of ["en", "ja"] as const) {
   for (const colorScheme of ["light", "dark"] as const) {
     test(`${locale} ${colorScheme} expanded temperature never overlaps later place actions`, async ({ page }, info) => {

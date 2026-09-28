@@ -1,7 +1,7 @@
 "use client"
 
 import { CalendarClock, ChevronRight, WalletCards } from "lucide-react"
-import type { ReactNode } from "react"
+import { Fragment, type ReactNode } from "react"
 import { resolveCommercePlaceB } from "../commerce-b/place-service-registry-b"
 import { capturePlaceServiceMapReturnB } from "../map/place-service-map-return-b"
 import { requestReservationSampleB } from "../reservation-b/reservation-model-b"
@@ -28,12 +28,17 @@ export function PlacePeekActionsB({ placeId, locale, className, details, directi
   const registered = resolveCommercePlaceB(placeId)
   const place = sampleMode && registered && (registered.commerce || registered.reservation) ? registered : null
   const copy = COPY[locale]
+  // Review mode is resolved after hydration. Keep each action's DOM identity
+  // when capability changes reorder the row: an in-flight details tap must
+  // never target a reused button whose handler has become payment.
+  const detailAction = <Fragment key="details">{details(Boolean(place))}</Fragment>
+  const directionsAction = <Fragment key="directions">{directions}</Fragment>
   return <div className={className} data-peek-has-service={Boolean(place)}>
-    {place ? <><button type="button" data-testid={actionTestId} data-place-service={place.commerce ? "offer" : "reservation"} data-place-return-section="offer" data-capability-mode="sample" data-service-place-id={place.id} data-visual-priority="primary" onClick={() => {
+    {place ? <><button key="service" type="button" data-testid={actionTestId} data-place-service={place.commerce ? "offer" : "reservation"} data-place-return-section="offer" data-capability-mode="sample" data-service-place-id={place.id} data-visual-priority="primary" onClick={() => {
       capturePlaceServiceMapReturnB(place.id)
       if (place.commerce) { if (onOffer) onOffer(); else actions.openMealBenefitFromPlace(place.id) }
       else requestReservationSampleB({ venueId: place.id })
-    }}>{place.commerce ? <WalletCards size={17} aria-hidden="true" /> : <CalendarClock size={17} aria-hidden="true" />}{place.commerce ? copy.offer : copy.reserve}</button>{details(true)}</> : directionsFirst ? <>{directions}{details(false)}</> : <>{details(false)}{directions}</>}
+    }}>{place.commerce ? <WalletCards size={17} aria-hidden="true" /> : <CalendarClock size={17} aria-hidden="true" />}{place.commerce ? copy.offer : copy.reserve}</button>{detailAction}</> : directionsFirst ? <>{directionsAction}{detailAction}</> : <>{detailAction}{directionsAction}</>}
   </div>
 }
 
