@@ -83,11 +83,15 @@ Enoki는 Testnet에서 일률적으로 필수인 것은 아니다. 공개 서버
   **기존 immutable writer의 안전한 중지와 누적 예산 cutover 구현·검수는 아직 남은 우리 작업**이다.
   제공자와 OpenDID가 준비되기 전에 현재 작동하는 hosted를 중단하지 않는다. 준비 후보의 Sui 실행은
   이 전환 전까지 명시적으로 막혀 있으며, 설정만 넣으면 바로 전체 연동된다고 설명하지 않는다.
-- 상세 소스·빌드 검증·남은 실행 작업은 별도 후보의 `docs/INTEGRATION_CANDIDATE_2026-09-29.md`에 기록한다.
+- 상세 소스·빌드 검증·남은 실행 작업은 [별도 준비 후보 인계 문서](https://github.com/woogieboogie-jl/k-tour-id/blob/prep/integration-candidate-20260929/docs/INTEGRATION_CANDIDATE_2026-09-29.md)에 기록한다.
 - zkLogin은 별도 준비 revision `9d982c97`에서 암묵적인 개발용 prover 선택을 제거했다.
   명시적 제공자 설정 없이는 JWT를 전송하지 않고, 알려진 Devnet host는 Testnet에서 거부한다.
   이 보완은 후속 후보용이며 현재 운영의 Ed25519 경로를 Google 로그인으로 바꾼 것이 아니다.
   공개 서버의 health/OPTIONS 4회는 도달 가능성만 확인했다. 실제 JWT·proof·ZkLogin 거래는 0이다.
+- 최종 후보 `f8181b4b`는 위 준비 branch에 보관했으며 **미배포 / runtime OFF**다. 독립 검토
+  GO, 단위 482/482, verification 70/70, build/profile/input fixture 94/94, static contract 4/4,
+  TypeScript 및 실제 격리 integration build까지 통과했다. 원격 실행용 기존 integration branch를
+  덮어쓰지 않았다. 배포 branch에 뒤따른 테스트·문서 커밋은 운영 실행 코드 `e304b865`를 바꾸지 않는다.
 
 ## 실행 제한과 검수 안내
 
