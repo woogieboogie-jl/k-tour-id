@@ -1,6 +1,7 @@
 // Credential-free, offline integration readiness. This module deliberately
 // does not import providers, construct signers, call fetch, or inspect the
 // ambient process environment. Callers must pass an explicit environment map.
+import { assessZkLoginReadiness, ZKLOGIN_READINESS_NAMES } from "./zklogin-readiness"
 
 export type ExplicitEnv = Record<string, string | undefined>
 
@@ -11,6 +12,7 @@ export const READINESS_ENV_NAMES = [
   "HK_SUI_NETWORK", "HK_SUI_GRPC_URL", "HK_SUI_PACKAGE_ID", "HK_SUI_CAMPAIGN_ID", "HK_SUI_CAMPAIGN_INITIAL_VERSION",
   "HK_SUI_ISSUER_SECRET_KEY", "HK_SUI_AGENT_SECRET_KEY", "HK_SUI_SPONSOR_SECRET_KEY",
   "NEXT_PUBLIC_GOOGLE_CLIENT_ID", "HK_ZKLOGIN_SALT_SEED", "ENOKI_API_KEY", "ENOKI_API_URL", "HK_ZKLOGIN_PROVER_URL",
+  "NEXT_PUBLIC_HK_HOSTED_SUI", "HK_HOSTED_SUI_ENABLED", "VERCEL_GIT_COMMIT_REF",
   "HK_OMNIONE_RPC_URL", "HK_OMNIONE_CHAIN_ID", "HK_OMNIONE_PRIVATE_KEY", "HK_OMNIONE_REGISTRY_ADDRESS",
   "HK_AI_MODE", "GEMINI_API_KEY", "GEMINI_MODEL",
 ] as const
@@ -139,11 +141,10 @@ export function runIntegrationReadiness(options: IntegrationReadinessOptions = {
 
   if (zkLoginRequested) {
     for (const name of ["NEXT_PUBLIC_GOOGLE_CLIENT_ID", "HK_ZKLOGIN_SALT_SEED"] as const) requireInput(name)
-    const enoki = present(env, "ENOKI_API_KEY"), prover = present(env, "HK_ZKLOGIN_PROVER_URL")
-    if (!enoki && !prover) ownerInputs.push(issue("zklogin_provider_path_missing", "ENOKI_API_KEY"))
-    if (enoki && present(env, "ENOKI_API_URL") && !validHttps(value(env, "ENOKI_API_URL"), false)) internalConfigWork.push(issue("zklogin_enoki_url_invalid", "ENOKI_API_URL"))
-    if (!enoki && prover && !validHttps(value(env, "HK_ZKLOGIN_PROVER_URL"), false)) internalConfigWork.push(issue("zklogin_prover_url_invalid", "HK_ZKLOGIN_PROVER_URL"))
-    internalConfigWork.push(issue("oauth_callback_registration_unverified"))
+    const zk = assessZkLoginReadiness(Object.fromEntries(ZKLOGIN_READINESS_NAMES.map(name => [name, env[name]])))
+    // Required input ownership was classified above; all remaining entries
+    // concern our provider/target verification, never duplicate key requests.
+    internalConfigWork.push(...zk.issues.filter(item => item.code !== "zklogin_input_missing"))
     futureHumanApproval.push(issue("google_login_and_wallet_approval_required"))
   } else separateWorkflow.push(issue("google_zklogin_user_approval_separate"))
 

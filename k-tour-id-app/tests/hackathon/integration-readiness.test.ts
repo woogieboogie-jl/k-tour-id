@@ -123,11 +123,15 @@ test("Redis must use one complete alias pair and a dedicated integration namespa
   assert.equal(report({ ...base, KV_REST_API_URL: "", KV_REST_API_TOKEN: "", UPSTASH_REDIS_REST_URL: "https://fixture.upstash.io", UPSTASH_REDIS_REST_TOKEN: PRIVATE }).ok, true)
 })
 
-test("existing Enoki wins over a configured prover, and explicit prover paths remain valid", () => {
+test("existing Enoki wins, but explicit prover paths still require network/access verification", () => {
   const both = report({ ...base, HK_ZKLOGIN_PROVER_URL: "https://prover.invalid/v1" }, true)
   assert.equal(both.issues.ownerInputs.some(x => x.code === "zklogin_provider_path_missing"), false)
   const prover = report({ ...base, ENOKI_API_KEY: "", HK_ZKLOGIN_PROVER_URL: "https://prover.invalid/v1" }, true)
   assert.equal(codes(prover).includes("zklogin_prover_url_invalid"), false)
+  assert.ok(codes(prover).includes("zklogin_prover_network_unverified"))
+  assert.ok(codes(prover).includes("zklogin_prover_access_unverified"))
+  assert.equal(prover.ok, false)
+  assert.ok(codes(both).includes("zklogin_enoki_app_configuration_unverified"))
   assert.ok(codes(report({ ...base, ENOKI_API_KEY: "", HK_ZKLOGIN_PROVER_URL: "http://prover.invalid/v1" }, true)).includes("zklogin_prover_url_invalid"))
   assert.ok(codes(prover).includes("oauth_callback_registration_unverified"))
   assert.ok(codes(prover).includes("google_login_and_wallet_approval_required"))
