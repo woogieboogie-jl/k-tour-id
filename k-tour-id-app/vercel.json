@@ -1,9 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "node scripts/hackathon-hosted-sui-build.mjs",
+  "buildCommand": "node scripts/hackathon-integration-build.mjs",
   "installCommand": "pnpm install --frozen-lockfile",
   "outputDirectory": ".next",
-  "git": { "deploymentEnabled": false },
+  "git": {
+    "deploymentEnabled": false
+  },
   "regions": ["icn1"]
 }

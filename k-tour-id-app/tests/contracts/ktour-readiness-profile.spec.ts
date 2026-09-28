@@ -9,9 +9,11 @@ const target = {
   VERCEL_GIT_COMMIT_SHA: "a".repeat(40),
 }
 
-test("readiness profile is full-stack in Seoul and cannot build for Production or another branch", () => {
-  expect(JSON.parse(read("vercel.json"))).toMatchObject({
-    buildCommand: "pnpm build:vercel:cx-preview", outputDirectory: ".next", regions: ["icn1"],
+test("selected integration profile is exact and locked; the preserved CX build still rejects foreign targets", () => {
+  const selected = JSON.parse(read("vercel.json"))
+  expect(selected).toEqual(JSON.parse(read("vercel.integration.json")))
+  expect(selected).toMatchObject({
+    buildCommand: "node scripts/hackathon-integration-build.mjs", outputDirectory: ".next", regions: ["icn1"], git: { deploymentEnabled: false },
   })
   expect(() => assertPreviewTarget(target)).not.toThrow()
   for (const override of [
@@ -72,7 +74,16 @@ test("all mutating endpoints guard before provider and session work; no new endp
       expect(post.indexOf(protectedStep)).toBeGreaterThanOrEqual(0)
       expect(post.indexOf(protectedStep)).toBeLessThan(readonly)
     }
-    expect(post.indexOf("requireIntegrationPreviewAccess(req)")).toBeLessThan(post.indexOf("checkedBody = await integrationPreviewBody(req)"))
+    // Both profiles reuse the bounded reader. Compare against each branch's
+    // protected business body, not the first occurrence in the other profile.
+    const integrationStart = post.indexOf("const integrationPreview = requiresIntegrationPreviewAccess()")
+    const integrationBody = post.indexOf("checkedBody = await integrationPreviewBody(req)", integrationStart)
+    expect(integrationBody).toBeGreaterThan(integrationStart)
+    expect(post.indexOf("requireIntegrationPreviewAccess(req)")).toBeLessThan(integrationBody)
+    const hostedBody = post.indexOf("checkedBody = await integrationPreviewBody(req)")
+    expect(post.indexOf("requireHostedSuiAccess(req)")).toBeGreaterThan(0)
+    expect(post.indexOf("requireHostedSuiAccess(req)")).toBeLessThan(hostedBody)
+    expect(hostedBody).toBeLessThan(integrationStart)
     for (const businessStep of ["await assertSameOrigin()", "await ensureSession()", "await proveZkLogin(", "await svc.createOperation("]) {
       expect(post.indexOf(businessStep)).toBeGreaterThan(readonly)
     }
