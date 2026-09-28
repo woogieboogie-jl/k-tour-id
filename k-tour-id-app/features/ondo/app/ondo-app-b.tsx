@@ -62,9 +62,9 @@ const B_NAV_ARIA_COPY = {
 } as const
 
 const SHELL_COPY = {
-  en: { app: "K-Tour ID Korea food and travel app", content: "content", nav: "Main navigation", skipNav: "Skip to main navigation", navigationError: "Couldn't switch tabs. Try again.", sample: "Sample", exitSample: "Exit sample and return to the regular app" },
-  ko: { app: "K-Tour ID 한국 먹거리·여행 앱", content: "콘텐츠", nav: "주요 메뉴", skipNav: "주요 메뉴로 건너뛰기", navigationError: "탭을 바꾸지 못했어요. 다시 시도해 주세요.", sample: "샘플", exitSample: "샘플을 종료하고 일반 앱으로 돌아가기" },
-  ja: { app: "K-Tour ID 韓国フード・旅行アプリ", content: "コンテンツ", nav: "メインメニュー", skipNav: "メインメニューへ移動", navigationError: "タブを切り替えられませんでした。もう一度お試しください。", sample: "サンプル", exitSample: "サンプルを終了して通常のアプリに戻る" },
+  en: { app: "K-Tour ID Korea food and travel app", content: "content", nav: "Main navigation", skipNav: "Skip to main navigation", navigationError: "Couldn't switch tabs. Try again.", sample: "Guide", exitSample: "Turn off practice features" },
+  ko: { app: "K-Tour ID 한국 먹거리·여행 앱", content: "콘텐츠", nav: "주요 메뉴", skipNav: "주요 메뉴로 건너뛰기", navigationError: "탭을 바꾸지 못했어요. 다시 시도해 주세요.", sample: "이용 안내", exitSample: "연습 기능 끄기" },
+  ja: { app: "K-Tour ID 韓国フード・旅行アプリ", content: "コンテンツ", nav: "メインメニュー", skipNav: "メインメニューへ移動", navigationError: "タブを切り替えられませんでした。もう一度お試しください。", sample: "使い方", exitSample: "練習機能をオフにする" },
 } as const
 
 function OndoBShell({ slots }: { slots: OndoBAppSlots }) {
@@ -393,14 +393,14 @@ function OndoBShell({ slots }: { slots: OndoBAppSlots }) {
         </nav>
         {slots.overlays}
         {sampleInfoOpen ? <SheetB locale={state.locale} label={SHELL_COPY[state.locale].sample} variant="decision" onClose={() => setSampleInfoOpen(false)} header={<span>{SHELL_COPY[state.locale].sample}</span>}>
-          <div className={styles.sampleInfo}>
-            <h2>{state.locale === "ko" ? "여행의 모든 흐름을 체험해 보세요" : state.locale === "ja" ? "旅の流れを体験しましょう" : "Try the whole journey"}</h2>
-            <p>{state.locale === "ko" ? "지도 활동·여행 잔액·예약·결제는 샘플이에요. 체험 혜택은 별도 안내와 동의를 거쳐 진행돼요." : state.locale === "ja" ? "地図のアクティビティ・残高・予約・決済はサンプルです。体験特典は個別の案内と同意を経て進みます。" : "Map activity, travel balance, bookings and payments are samples. The experience perk has its own connection information and consent steps."}</p>
-            {slots.demoEntry ? <div onClick={() => setSampleInfoOpen(false)}>{slots.demoEntry}</div> : null}
-            <button type="button" onClick={() => { setSampleInfoOpen(false); actions.setTab("id") }}>{state.locale === "ko" ? "내 자격으로 할 수 있는 일" : state.locale === "ja" ? "資格で利用できること" : "What your pass unlocks"}</button>
+          <div className={styles.sampleInfo} data-testid="product-guide">
+            <h2>{state.locale === "ko" ? "여행에 필요한 기능을 한곳에서" : state.locale === "ja" ? "旅に必要な機能を、ここから" : "Your travel essentials"}</h2>
+            <p>{state.locale === "ko" ? "필요한 기능을 선택하세요. 연결 상태와 동의할 내용은 각 단계에서 확인할 수 있어요." : state.locale === "ja" ? "使いたい機能を選んでください。接続状況と同意内容は各手順で確認できます。" : "Choose a feature. Each flow shows its connection status and what you agree to."}</p>
+            {slots.demoEntry ? <div className={styles.sampleJourneyEntry} onClick={() => setSampleInfoOpen(false)}>{slots.demoEntry}</div> : null}
+            <button type="button" onClick={() => { setSampleInfoOpen(false); actions.setTab("id") }}>{state.locale === "ko" ? "여행 패스 열기" : state.locale === "ja" ? "トラベルパスを開く" : "Open Travel Pass"}</button>
             <button type="button" data-testid="integration-demo-open" onClick={() => { setSampleInfoOpen(false); setIntegrationOpen(true) }}>{state.locale === "ko" ? "파트너 검증 · 정산 체험" : state.locale === "ja" ? "店舗の確認・精算を体験" : "Partner verification & settlement"}</button>
             <button type="button" data-testid="reservation-demo-open" onClick={() => { setSampleInfoOpen(false); requestReservationSampleB() }}>{state.locale === "ko" ? "매장 예약 체험" : state.locale === "ja" ? "席の予約を体験" : "Try a restaurant booking"}</button>
-            <details><summary>{state.locale === "ko" ? "연동 상태" : state.locale === "ja" ? "接続状況" : "Integration status"}</summary><p>{state.locale === "ko" ? "샘플 충전·예약·결제는 실제 주문이나 금액 이동을 만들지 않아요. 체험 혜택의 확인·기록 상태는 해당 여정에서 확인할 수 있어요." : state.locale === "ja" ? "サンプルの入金・予約・決済で実際の注文や資金移動は発生しません。体験特典の確認・記録状況は、その手順内で確認できます。" : "Sample top-ups, bookings and payments create no real order or money movement. Check the experience-perk journey for its verification and recording status."}</p><button type="button" onClick={exitReviewSample}>{SHELL_COPY[state.locale].exitSample}</button></details>
+            <details data-testid="product-guide-connection"><summary>{state.locale === "ko" ? "연결 상태 자세히 보기" : state.locale === "ja" ? "接続状況の詳細" : "Connection details"}</summary><p>{state.locale === "ko" ? "충전·예약·결제 연습은 외부 서비스와 연결되지 않아 실제 주문이나 자금 이동이 없습니다. 신원 확인과 체인 기록은 해당 여정에서 확인된 결과만 표시합니다." : state.locale === "ja" ? "入金・予約・決済の練習は外部サービスに接続されず、実際の注文や資金移動はありません。本人確認とチェーン記録は各手順の確認結果をご覧ください。" : "Practice top-ups, bookings and payments are not externally connected: no order or funds move. Identity verification and chain records have separate results in their own flows."}</p><button type="button" onClick={exitReviewSample}>{SHELL_COPY[state.locale].exitSample}</button></details>
           </div>
         </SheetB> : null}
         {reviewSample ? <IntegrationDemoB open={integrationOpen} onClose={() => setIntegrationOpen(false)} /> : null}

@@ -1,10 +1,14 @@
-.sampleInfo { display: grid; gap: 16px; padding: 24px; color: var(--ondo-ink); }
-.sampleInfo h2 { margin: 0; font-size: 24px; line-height: 1.2; letter-spacing: -.04em; }
-.sampleInfo p { margin: 0; color: var(--ondo-muted); font-size: 15px; line-height: 1.6; }
-.sampleInfo button { min-height: 48px; padding: 12px 16px; border: 1px solid var(--ondo-line); border-radius: 16px; background: var(--ondo-control); color: var(--ondo-control-ink); font: inherit; font-weight: 700; }
+.sampleInfo { display: grid; min-width: 0; gap: 12px; padding: 20px clamp(16px, 4vw, 24px) 24px; color: var(--ondo-ink); overflow-wrap: anywhere; }
+.sampleInfo > * { min-width: 0; max-width: 100%; }
+.sampleInfo h2 { margin: 0; font-size: 22px; line-height: 1.35; letter-spacing: -.025em; text-wrap: balance; }
+.sampleInfo p { margin: 0; color: var(--ondo-muted); font-size: 14px; line-height: 1.6; }
+.sampleInfo > button, .sampleInfo details > button, .sampleJourneyEntry > button { width: 100%; min-height: 48px; padding: 12px 14px; border: 1px solid var(--ondo-line); border-radius: 14px; background: var(--ondo-control); color: var(--ondo-control-ink); font: inherit; font-size: 14px; font-weight: 700; line-height: 1.5; white-space: normal; text-align: start; }
+.sampleJourneyEntry { min-width: 0; }
+.sampleJourneyEntry > button { display: flex; min-width: 0; align-items: center; gap: 9px; overflow-wrap: anywhere; }
+.sampleJourneyEntry svg { flex: 0 0 auto; }
 .sampleInfo details { color: var(--ondo-muted); font-size: 13px; }
-.sampleInfo summary { padding: 12px 0; cursor: pointer; }
-.sampleInfo details button { margin-top: 12px; background: var(--ondo-surface-soft); color: var(--ondo-ink); font-size: 13px; }
+.sampleInfo summary { min-height: 44px; align-content: center; padding: 10px 0; cursor: pointer; line-height: 1.5; }
+.sampleInfo details > button { margin-top: 12px; background: var(--ondo-surface-soft); color: var(--ondo-ink); font-size: 13px; }
 .stage {
   --ondo-paper: var(--ondo-surface-soft);
   --ondo-heat-warm: #c84936;

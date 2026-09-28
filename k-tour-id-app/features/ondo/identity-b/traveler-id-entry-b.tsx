@@ -436,22 +436,24 @@ export function TravelerIdEntryB() {
   return (
     <div className={styles.root}>
       <div className={styles.screen} data-testid="ondo-b-traveler-id" data-page-typography="root" data-visual-direction="apple-wallet-flow8">
-        <header className={styles.header} data-page-title-frame>
-          <h1 data-page-title>{copy.title}</h1>
-          <SampleInfoButtonB />
-        </header>
+        <div className={styles.passPane} data-page-typography="root">
+          <header className={styles.header} data-page-title-frame>
+            <h1 data-page-title>{copy.title}</h1>
+            <SampleInfoButtonB />
+          </header>
 
-        <div className={styles.passJourney}>
-          <section className={styles.pass} aria-label={accountActive ? copy.passStateActive : copy.passState} data-testid="travel-pass-card" data-flow8-object="pass">
-            <div className={styles.passGlow} aria-hidden="true" />
-            <div className={styles.passTop}><span>{copy.passLabel}</span><MapPinned size={27} strokeWidth={1.55} aria-hidden="true" /></div>
-            <div className={styles.passMain}>
-              <div><small>{accountActive ? copy.passStateActive : copy.passState}</small><strong>SEOUL — BUSAN — JEJU</strong></div>
-              <Compass size={23} aria-hidden="true" />
-            </div>
-            <small className={styles.passBoundary} data-testid="travel-pass-local-boundary">{copy.passBoundary}</small>
-          </section>
-          <JourneyStampsCardB locale={locale} />
+          <div className={styles.passJourney}>
+            <section className={styles.pass} aria-label={accountActive ? copy.passStateActive : copy.passState} data-testid="travel-pass-card" data-flow8-object="pass">
+              <div className={styles.passGlow} aria-hidden="true" />
+              <div className={styles.passTop}><span>{copy.passLabel}</span><MapPinned size={27} strokeWidth={1.55} aria-hidden="true" /></div>
+              <div className={styles.passMain}>
+                <div><small>{accountActive ? copy.passStateActive : copy.passState}</small><strong>SEOUL — BUSAN — JEJU</strong></div>
+                <Compass size={23} aria-hidden="true" />
+              </div>
+              <small className={styles.passBoundary} data-testid="travel-pass-local-boundary">{copy.passBoundary}</small>
+            </section>
+            <JourneyStampsCardB locale={locale} />
+          </div>
         </div>
 
         <div className={styles.walletPane}>
@@ -459,7 +461,7 @@ export function TravelerIdEntryB() {
           <IdWalletCommerceB />
         </div>
 
-        <SavedExperienceB locale={locale} />
+        <div className={styles.experiencePane}><SavedExperienceB locale={locale} /></div>
 
         <details className={styles.readiness} data-testid="travel-pass-status" aria-labelledby="travel-readiness-title">
           <summary className={styles.sectionHeading} data-testid="travel-pass-readiness-toggle">
