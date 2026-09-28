@@ -39,7 +39,7 @@ beforeEach(() => {
     if (path.endsWith("/trans")) { sequence += 1; result = { code: 200, token: `fixture-token-${sequence}`, txId: `tx-${sequence}` } }
     else if (path.endsWith("/qr/request")) result = { code: 200, token: `qr-token-${body.txId}`, txId: body.txId, cxId: `cx-${body.txId}`, data: { qrBase64: PNG } }
     else if (path.endsWith("/app/request")) result = { code: 200, token: `app-token-${body.txId}`, txId: body.txId, cxId: `cx-${body.txId}`, data: { iosLink: "fixture-mobile-id://verify?payload=fixture", androidLink: "intent://verify#Intent;scheme=fixture-mobile-id;package=example.fixture;end" } }
-    else if (path.endsWith("/result")) result = { code: resultCode, token: `result-token-${body.txId}`, txId: body.txId, cxId: body.cxId, oacxStatus: "AFTER_RESULT", data: { verified: true } }
+    else if (path.endsWith("/result")) result = { code: resultCode, token: `${resultCode === 200 ? "result" : "pending"}-token-${body.txId}`, txId: body.txId, cxId: body.cxId, oacxStatus: "AFTER_RESULT", data: { verified: true } }
     else if (path.endsWith("/trans/token")) {
       const txId = String(body.token).replace("result-token-", "")
       result = { code: 200, data: { txId, cxId: `cx-${txId}`, ci: "RAW-CI-NEVER-PERSIST", name: "RAW-NAME-NEVER-PERSIST", address: "RAW-ADDRESS-NEVER-PERSIST", adult: "Y" } }
@@ -142,7 +142,7 @@ test("pending replies retain a rotated provider token only in server state", asy
   const pending = await service.identityComplete(ids.sessionId, ids.operationId)
   assert.equal(pending.phase, "identity")
   const token = (await stored(ids.operationId)).secrets.cxToken
-  assert.ok(token?.startsWith("result-token-"))
+  assert.ok(token?.startsWith("pending-token-"))
   assert.equal(JSON.stringify(pending).includes(token!), false)
   resultCode = 200
   const verified = await service.identityComplete(ids.sessionId, ids.operationId)

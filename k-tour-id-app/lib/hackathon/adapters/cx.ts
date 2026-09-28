@@ -1,11 +1,11 @@
 // OmniOne CX adapter — Mobile ID verification (필수과제).
 //
-// mode "cx"  : real OmniOne CX VC-Verifier REST flow (manual v1.0, 2024-07-09):
+// mode "cx"  : real OmniOne CX VC-Verifier REST flow (supplied manual 2025-07-09):
 //              POST /oacx/api/v1.0/trans            -> { token, txId }
 //              POST /oacx/api/v1.0/authen/qr/request -> { qrBase64, cxId }   (PC/QR)
 //              POST /oacx/api/v1.0/authen/app/request-> { androidLink, iosLink, ssPayLink } (mobile handoff)
 //              POST /oacx/api/v1.0/authen/qr|app/result -> { verified, ... }
-//              POST /oacx/api/v1.0/trans/token       -> claims (with zkpType AdultVerify: adult flag only)
+//              POST /oacx/api/v1.0/trans/token       -> decoded claims (not guaranteed to repeat txId/cxId)
 //              Tokens are step-bound: the server re-validates the call order, so
 //              we keep token/txId server-side and never accept a client "success".
 // mode "mock": deterministic sample (labelled SIMULATION in the UI). The mock
@@ -18,9 +18,10 @@ import type { IdentityEvidence, IdentityHandoff } from "../types"
 
 export type CxStart = { handoff: IdentityHandoff; token?: string; txId?: string; cxId?: string }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value)
 /** CX nests payloads under `data` and reports progress in `oacxStatus` (not `status`). */
 const dataOf = (json: Record<string, unknown>): Record<string, unknown> =>
-  json.data && typeof json.data === "object" ? (json.data as Record<string, unknown>) : {}
+  isRecord(json.data) ? json.data : {}
 export type CxResult = { evidence: IdentityEvidence; raw?: Record<string, unknown> }
 
 const MAX_RESPONSE_BYTES = 512 * 1024
@@ -29,11 +30,24 @@ function handle(value: unknown, label: string, max = 8192): string {
   if (!validHandle(value, max)) throw new HkError("cx_response", `CX returned an invalid ${label}`, 502)
   return value
 }
-function transactionEcho(json: Record<string, unknown>, txId: string, cxId?: string) {
-  const returnedTx = json.txId ?? json.txid, returnedCx = json.cxId ?? json.cxid
-  if ((returnedTx !== undefined && returnedTx !== txId) || (cxId !== undefined && returnedCx !== undefined && returnedCx !== cxId)) {
-    throw new HkError("cx_transaction_mismatch", "CX result does not match this identity request", 502)
+function transactionEcho(json: Record<string, unknown>, txId: string, cxId?: string, requireEnvelope = false) {
+  // Manual 2.3.3/2.3.4: result-envelope txId + cxId, with reqTxId the same
+  // transaction. Appendix names also use lowercase txid/cxid. Check EVERY
+  // supplied alias; nullish coalescing could hide a contradictory second echo.
+  const txNames = ["txId", "txid", "reqTxId"] as const, cxNames = ["cxId", "cxid"] as const
+  if (requireEnvelope && (!txNames.some(key => Object.hasOwn(json, key)) || !cxNames.some(key => Object.hasOwn(json, key)))) {
+    throw new HkError("cx_transaction_missing", "CX did not return the verified transaction reference", 502)
   }
+  for (const source of [json, dataOf(json)]) {
+    for (const key of txNames) {
+      if (Object.hasOwn(source, key) && source[key] !== txId) throw new HkError("cx_transaction_mismatch", "CX result does not match this identity request", 502)
+    }
+    for (const key of cxNames) {
+      if (cxId !== undefined && Object.hasOwn(source, key) && source[key] !== cxId) throw new HkError("cx_transaction_mismatch", "CX result does not match this identity request", 502)
+    }
+  }
+  const key = txNames.find(name => Object.hasOwn(json, name))
+  return key ? json[key] as string : undefined
 }
 function safeAppLink(value: unknown): string | undefined {
   if (value === undefined || value === null || value === "") return undefined
@@ -147,7 +161,7 @@ export async function cxComplete(opts: {
     const s = opts.sample ?? { outcome: "verified", subjectSeed: "sample-person-1" }
     if (s.outcome !== "verified") return { failed: s.outcome }
     // subjectRef: keyed HMAC of a sample subject seed. In cx mode this comes
-    // from provider correlation (ci/txid), never from name/DOB hashing.
+    // from stable provider CI, never from txId or name/DOB hashing.
     const subjectRef = "subj_" + hmacHex(hkConfig().opendid.signingSeed, `mock-subject:${s.subjectSeed}`).slice(2, 34)
     return { evidence: {
       evidenceId: randomId("evd"), subjectRef, source: "cx_mobile_id", mode: "mock", provider: c.provider,
@@ -178,26 +192,34 @@ export async function cxComplete(opts: {
   if (status !== "AFTER_RESULT") return pending()
   const rd = dataOf(result)
   if (rd.verified !== true) return { failed: "failed" }
-  const parsed = await cxPost("/oacx/api/v1.0/trans/token", { token: handle(result.token ?? opts.token, "token") })
+  const verifiedTxId = handle(transactionEcho(result, opts.txId, opts.cxId, true), "transaction reference", 512)
+  // Manual 2.4 explicitly parses the token returned by the completed result
+  // call. An absent token must never fall back to the earlier request token.
+  const completionToken = handle(result.token, "completion token")
+  if (completionToken === opts.token) throw new HkError("cx_response", "CX did not return a completion token", 502)
+  const parsed = await cxPost("/oacx/api/v1.0/trans/token", { token: completionToken })
   // Claims are nested under `data` and include full PII (name/birth/ihidnum/address).
-  // Only the correlation handle and the adult flag are read; nothing else is returned or stored.
+  // Only stable CI, binding metadata and an optional adult flag are used;
+  // raw claims are never returned or stored.
   const claims = dataOf(parsed)
+  // The manual's token-parsing example contains jti/sub/CI but no txId/cxId.
+  // Binding comes from the verified result envelope AND parsing its exact
+  // completion token through CX, not from inventing a missing claims txId.
+  // If either layer does include transaction aliases, none may contradict it.
+  transactionEcho(parsed, opts.txId, opts.cxId)
+  if (claims.sub !== undefined && claims.sub !== "AFTER_RESULT") throw new HkError("cx_transaction_mismatch", "CX token is not a completed identity result", 502)
   const ci = typeof claims.ci === "string" ? claims.ci.trim() : ""
-  const txid = claims.txId ?? claims.txid
-  if (typeof txid !== "string" || !txid) throw new HkError("cx_transaction_missing", "CX did not return the verified transaction reference", 502)
-  const returnedCxId = claims.cxId ?? claims.cxid
-  if (txid !== opts.txId || (returnedCxId !== undefined && String(returnedCxId) !== opts.cxId)) {
-    throw new HkError("cx_transaction_mismatch", "CX result does not match this identity request", 502)
-  }
   // A new transaction is not a new person. This campaign promises one use per
   // person: an absent stable provider handle is a configuration blocker, not
   // permission to generate a fresh subject from txId on every attempt.
-  if (!ci) throw new HkError("cx_subject_unavailable", "A stable provider subject is required for this one-per-person campaign", 503)
+  if (!validHandle(ci, 1024)) throw new HkError("cx_subject_unavailable", "A stable provider subject is required for this one-per-person campaign", 503)
   const subjectRef = "subj_" + hmacHex(hkConfig().opendid.signingSeed, `cx-ci:${ci}`).slice(2, 34)
-  const adult = claims.adult ?? claims.adultYn ?? claims.isAdult ?? (rd.zkp === true ? true : undefined)
+  // data.zkp describes ZKP processing, not the affirmative AdultVerify claim.
+  // Without an explicit adult claim we must not invent an age assertion.
+  const adult = claims.adult ?? claims.adultYn ?? claims.isAdult
   return { evidence: {
     evidenceId: randomId("evd"), subjectRef, source: "cx_mobile_id", mode: "cx", provider: c.provider,
     personVerified: true, adultVerified: adult === undefined ? null : Boolean(adult === true || adult === "Y" || adult === "true"),
-    verifiedAt: nowIso(), expiresAt: plusMs(HK_TTL.evidenceMs), providerTransactionRef: txid,
+    verifiedAt: nowIso(), expiresAt: plusMs(HK_TTL.evidenceMs), providerTransactionRef: verifiedTxId,
   } }
 }
