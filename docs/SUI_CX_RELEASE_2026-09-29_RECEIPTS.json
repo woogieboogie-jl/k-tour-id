@@ -1,0 +1,250 @@
+{
+  "schema": "ktour-hosted-sui-release-evidence/v1",
+  "dateKST": "2026-09-29",
+  "preview": {
+    "ok": true,
+    "status": "passed",
+    "checkpoint": "complete",
+    "errorCode": null,
+    "actionSteps": [
+      "deployment_account_project_revision_verified",
+      "access_granted",
+      "sample_identity_approved",
+      "ed25519_approval_and_delegation",
+      "three_sui_receipts_verified",
+      "hosted_fulfillment_pending_no_redeem",
+      "returned_to_place"
+    ],
+    "txDigests": [
+      "7zqSXR19BJ1x2DkA7p4XLpbqSTUtTqvJPxxs8JRx8yxC",
+      "8t8CuTJKv6dfHHhhLzRF7dXRBGKtC3YJZXY2wmCw52Wh",
+      "HJnK6tqZog19Y6pZyyWtHUVGPWtwUnEEn5fmAm38HDMY"
+    ],
+    "pageErrors": 0,
+    "requestFailures": 4,
+    "httpFailures": [],
+    "chainRead": {
+      "reads": 5,
+      "bytes": 22669
+    },
+    "deployment": {
+      "id": "dpl_GiM81mYLDMkcPb9mN3RAsQd7xBJm",
+      "origin": "https://ondo-7mua7q3qi-jaewook-9643s-projects.vercel.app",
+      "immutableOrigin": "https://ondo-7mua7q3qi-jaewook-9643s-projects.vercel.app",
+      "target": "preview",
+      "sha": "a34f7be9b5e7a3d2d00b9a2bf47c05754db7f90f",
+      "branch": "deploy/sui-main-20260928"
+    },
+    "operationId": "op_b_MkNYkXmGFgGFoI",
+    "lastPhase": "fulfillment",
+    "lastOperationStatus": "pending",
+    "receipts": [
+      {
+        "digest": "7zqSXR19BJ1x2DkA7p4XLpbqSTUtTqvJPxxs8JRx8yxC",
+        "checkpoint": "388775895",
+        "success": true,
+        "sender": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+        "gasOwner": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+        "gasBudgetMIST": "10000000",
+        "signatureSchemes": [
+          "ED25519"
+        ],
+        "signerAddresses": [
+          "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76"
+        ],
+        "cryptographicallyVerified": true
+      },
+      {
+        "digest": "8t8CuTJKv6dfHHhhLzRF7dXRBGKtC3YJZXY2wmCw52Wh",
+        "checkpoint": "388775908",
+        "success": true,
+        "sender": "0xd641eb73fef37c368a139e3e3042e25abad5c938204782da60647729b87d4e41",
+        "gasOwner": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+        "gasBudgetMIST": "10000000",
+        "signatureSchemes": [
+          "ED25519",
+          "ED25519"
+        ],
+        "signerAddresses": [
+          "0xd641eb73fef37c368a139e3e3042e25abad5c938204782da60647729b87d4e41",
+          "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76"
+        ],
+        "cryptographicallyVerified": true
+      },
+      {
+        "digest": "HJnK6tqZog19Y6pZyyWtHUVGPWtwUnEEn5fmAm38HDMY",
+        "checkpoint": "388775918",
+        "success": true,
+        "sender": "0x17ee59f56d182c010732daaf509a2b35b221bf7ec62e4a59c3b2ceca2c3bbce4",
+        "gasOwner": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+        "gasBudgetMIST": "10000000",
+        "signatureSchemes": [
+          "ED25519",
+          "ED25519"
+        ],
+        "signerAddresses": [
+          "0x17ee59f56d182c010732daaf509a2b35b221bf7ec62e4a59c3b2ceca2c3bbce4",
+          "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76"
+        ],
+        "cryptographicallyVerified": true
+      }
+    ],
+    "holder": "0xd641eb73fef37c368a139e3e3042e25abad5c938204782da60647729b87d4e41",
+    "grantId": "0xd40dc13c933bf2882cc9f4d14aa8aa15a58c0fd4f30deed42551c941bfa094e1",
+    "grantUses": 1,
+    "maxUses": 1,
+    "recordId": "0x07323a523be5627af0e43b95a822656e34872102257d37e2ac4b75d1388ea4c1",
+    "recordRecipient": "0xd641eb73fef37c368a139e3e3042e25abad5c938204782da60647729b87d4e41",
+    "requests": {
+      "blocked": false,
+      "complete": true,
+      "mutations": {
+        "hosted/access": 1,
+        "sessions": 1,
+        "operations": 1,
+        "identity/start": 1,
+        "identity/complete": 1,
+        "credential/issue": 1,
+        "credential/holder-ack": 1,
+        "presentation/request": 1,
+        "presentation/submit": 1,
+        "proposal": 1,
+        "delegation/prepare": 1,
+        "delegation/submit": 1,
+        "agent/run": 1
+      }
+    }
+  },
+  "production": {
+    "ok": true,
+    "status": "passed",
+    "checkpoint": "complete",
+    "errorCode": null,
+    "actionSteps": [
+      "deployment_account_project_revision_verified",
+      "access_granted",
+      "sample_identity_approved",
+      "ed25519_approval_and_delegation",
+      "three_sui_receipts_verified",
+      "hosted_fulfillment_pending_no_redeem",
+      "returned_to_place"
+    ],
+    "txDigests": [
+      "DFfzxMWsvueFJqcQCpofGkpCv45UdT4Q3mssvYiXRHCu",
+      "C63nNftsgtJG9duJ1S9Ho6iQLYowWknwfThcFA1HTApw",
+      "97T1JermTRhWiJs8mqvFBkasnjsYWniHcUjHmXqXPkUD"
+    ],
+    "pageErrors": 0,
+    "requestFailures": 3,
+    "unexpectedRequestFailures": 0,
+    "blockedExternalAssets": 3,
+    "httpFailures": [],
+    "chainRead": {
+      "reads": 5,
+      "bytes": 22665
+    },
+    "deployment": {
+      "id": "dpl_9Z5fEmN4JzVuBifRtUPwqEQnEJah",
+      "origin": "https://ktour-id.vercel.app",
+      "immutableOrigin": "https://ondo-env7841v8-jaewook-9643s-projects.vercel.app",
+      "target": "production",
+      "sha": "a34f7be9b5e7a3d2d00b9a2bf47c05754db7f90f",
+      "branch": "deploy/sui-main-20260928"
+    },
+    "operationId": "op_GGzH_MMlRz2TFbVG",
+    "lastPhase": "fulfillment",
+    "lastOperationStatus": "pending",
+    "receipts": [
+      {
+        "digest": "DFfzxMWsvueFJqcQCpofGkpCv45UdT4Q3mssvYiXRHCu",
+        "checkpoint": "388777446",
+        "success": true,
+        "sender": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+        "gasOwner": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+        "gasBudgetMIST": "10000000",
+        "signatureSchemes": [
+          "ED25519"
+        ],
+        "signerAddresses": [
+          "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76"
+        ],
+        "cryptographicallyVerified": true
+      },
+      {
+        "digest": "C63nNftsgtJG9duJ1S9Ho6iQLYowWknwfThcFA1HTApw",
+        "checkpoint": "388777456",
+        "success": true,
+        "sender": "0x8b1a011bdcac11b9e6fba8e8b32110db577da74f5667717c9292cabc5d1e3473",
+        "gasOwner": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+        "gasBudgetMIST": "10000000",
+        "signatureSchemes": [
+          "ED25519",
+          "ED25519"
+        ],
+        "signerAddresses": [
+          "0x8b1a011bdcac11b9e6fba8e8b32110db577da74f5667717c9292cabc5d1e3473",
+          "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76"
+        ],
+        "cryptographicallyVerified": true
+      },
+      {
+        "digest": "97T1JermTRhWiJs8mqvFBkasnjsYWniHcUjHmXqXPkUD",
+        "checkpoint": "388777474",
+        "success": true,
+        "sender": "0x17ee59f56d182c010732daaf509a2b35b221bf7ec62e4a59c3b2ceca2c3bbce4",
+        "gasOwner": "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76",
+        "gasBudgetMIST": "10000000",
+        "signatureSchemes": [
+          "ED25519",
+          "ED25519"
+        ],
+        "signerAddresses": [
+          "0x17ee59f56d182c010732daaf509a2b35b221bf7ec62e4a59c3b2ceca2c3bbce4",
+          "0x900cd55f3d9de4541e306c6a3b1fe85cd4ddbf04319ee316ae21b6bb3ba95d76"
+        ],
+        "cryptographicallyVerified": true
+      }
+    ],
+    "holder": "0x8b1a011bdcac11b9e6fba8e8b32110db577da74f5667717c9292cabc5d1e3473",
+    "grantId": "0x7bcf2a6bff9a418fe27b70344785a14a7e4f675d820c46c0f68bc01d06b9ac23",
+    "grantUses": 1,
+    "maxUses": 1,
+    "recordId": "0xdbf5635ee78d8f50ae85141fcd487a6c2daef1ba714506bbfd6c0c1b75324e4c",
+    "recordRecipient": "0x8b1a011bdcac11b9e6fba8e8b32110db577da74f5667717c9292cabc5d1e3473",
+    "requests": {
+      "blocked": false,
+      "complete": true,
+      "mutations": {
+        "hosted/access": 1,
+        "sessions": 1,
+        "operations": 1,
+        "identity/start": 1,
+        "identity/complete": 1,
+        "credential/issue": 1,
+        "credential/holder-ack": 1,
+        "presentation/request": 1,
+        "presentation/submit": 1,
+        "proposal": 1,
+        "delegation/prepare": 1,
+        "delegation/submit": 1,
+        "agent/run": 1
+      }
+    }
+  },
+  "scope": {
+    "network": "testnet",
+    "identity": "sample",
+    "credential": "sample",
+    "signer": "ED25519 browser demo signer; not zkLogin",
+    "ai": "rule",
+    "cx": "separate protected preview; holder completion not yet reverified",
+    "opendid": "separate Claude workflow",
+    "omnione": "not enabled in this release",
+    "redemption": "not enabled"
+  },
+  "notes": [
+    "Preview requestFailures=4 predates classification; no claim that each is measured as an external asset block.",
+    "Production requestFailures=3 equal blockedExternalAssets=3; unexpectedRequestFailures=0.",
+    "No access codes, private keys, cookies, QR, tokens, or identity claims are included."
+  ]
+}
