@@ -57,5 +57,6 @@ test("dotenv files, including dangling symlinks, stop the plan without reading c
 test("hosted profile config keeps existing profiles untouched", () => {
   const profile = JSON.parse(readFileSync(resolve(subject.APP_ROOT, "vercel.hosted-sui.json"), "utf8")), current = JSON.parse(readFileSync(resolve(subject.APP_ROOT, "vercel.json"), "utf8")), pkg = JSON.parse(readFileSync(resolve(subject.APP_ROOT, "package.json"), "utf8"))
   assert.equal(profile.buildCommand, "node scripts/hackathon-hosted-sui-build.mjs"); assert.deepEqual(profile.regions, ["icn1"]); assert.equal(profile.git.deploymentEnabled, false)
+  assert.equal(Object.hasOwn(profile, "public"), false, "Vercel rejects the removed public property")
   assert.equal(current.buildCommand, "pnpm build:vercel:cx-preview"); assert.equal(pkg.scripts["build:vercel:hosted-sui"], "node scripts/hackathon-hosted-sui-build.mjs")
 })
