@@ -9,16 +9,17 @@ import http from "node:http"
 import https from "node:https"
 import { Interface, Transaction, getBytes, hexlify, keccak256, zeroPadValue } from "ethers"
 import { HkError } from "../../lib/hackathon/util"
-import { omnioneReadAbi } from "../../lib/hackathon/omnione-evidence"
+import { omnioneReadAbi, OMNIONE_STAGE } from "../../lib/hackathon/omnione-evidence"
 
 const directory = mkdtempSync(join(tmpdir(), "omnione-preflight-review-"))
 const commitment = "0x" + "2".repeat(64), eventKey = "0x" + "4".repeat(64)
-const registryAddress = "0x" + "3".repeat(40)
-const recorderAddress = "0x" + "5".repeat(40)
+const registryAddress = OMNIONE_STAGE.registry
+const recorderAddress = OMNIONE_STAGE.recorder
+const rpcUrl = `${OMNIONE_STAGE.rpcOrigin}/?token=offline-fixture-not-a-real-token`
 const abi = new Interface(["function recordRedemption(bytes32 eventKey, bytes32 payloadCommitment)"])
 const env = {
   HK_ISOLATED_MOCK: "0", HK_DATA_DIR: directory,
-  HK_OMNIONE_RPC_URL: "https://chain.invalid", HK_OMNIONE_PRIVATE_KEY: "fixture-never-used",
+  HK_OMNIONE_RPC_URL: rpcUrl, HK_OMNIONE_PRIVATE_KEY: "fixture-never-used",
   HK_OMNIONE_REGISTRY_ADDRESS: registryAddress, HK_OMNIONE_CHAIN_ID: "201210", HK_OMNIONE_GAS_LIMIT: "300000",
   HK_OMNIONE_RECORDER_ADDRESS: recorderAddress,
   UPSTASH_REDIS_REST_URL: "", UPSTASH_REDIS_REST_TOKEN: "", KV_REST_API_URL: "", KV_REST_API_TOKEN: "",
@@ -31,6 +32,8 @@ let registryExists = false, receipt: { status: number; blockNumber: number } | n
 let populated: Record<string, unknown> | null = null, signedFixture = ""
 let afterSign: (() => Promise<void>) | null = null
 let onBroadcast: (() => Promise<void>) | null = null
+let signerAddress: string = recorderAddress, chainId: number = OMNIONE_STAGE.chainId, recorderAllowed = true, registryCode = "0x6000"
+let authorityReads = 0, signingAttempts = 0
 
 mock.module("ethers", { namedExports: {
   getBytes, hexlify, keccak256, zeroPadValue, Interface,
@@ -46,12 +49,14 @@ mock.module("ethers", { namedExports: {
   },
   Wallet: class {
     constructor() { signerConstructions++ }
+    get address() { return signerAddress }
     async populateTransaction(request: Record<string, unknown>) {
       if (populateFailure) throw new Error("fixture populate failure")
       populated = { ...request, nonce: 7, chainId: 201210 }
       return populated
     }
     async signTransaction(request: Record<string, unknown>) {
+      signingAttempts++
       if (signFailure) throw new Error("fixture signing failure")
       // Assemble fixed RLP with an intentionally synthetic signature; no key
       // or cryptographic signer is used. Real ethers serialization/hash only.
@@ -77,10 +82,11 @@ before(() => {
   Object.assign(process.env, env)
   const forbidden = () => { networkAttempts++; throw new Error("network forbidden in preflight review") }
   globalThis.fetch = async (url, init) => {
-    if (String(url) !== "https://chain.invalid" || init?.method !== "POST") return forbidden()
+    if (String(url) !== rpcUrl || init?.method !== "POST") return forbidden()
     const body = JSON.parse(String(init.body)) as { id: number; method: string; params: unknown[] }
     let result: unknown
-    if (body.method === "eth_chainId") result = "0x" + (201210).toString(16)
+    if (body.method === "eth_chainId") result = "0x" + chainId.toString(16)
+    else if (body.method === "eth_getCode") { authorityReads++; result = registryCode }
     else if (body.method === "eth_getTransactionReceipt") {
       assert.equal(body.params[0], keccak256(signedFixture))
       result = receipt ? {
@@ -90,7 +96,7 @@ before(() => {
       } : null
     } else if (body.method === "eth_call") {
       const data = (body.params[0] as { data: string }).data
-      if (data.startsWith(omnioneReadAbi.getFunction("recorders")!.selector)) result = omnioneReadAbi.encodeFunctionResult("recorders", [true])
+      if (data.startsWith(omnioneReadAbi.getFunction("recorders")!.selector)) result = omnioneReadAbi.encodeFunctionResult("recorders", [recorderAllowed])
       else if (data.startsWith(omnioneReadAbi.getFunction("getRedemption")!.selector)) result = omnioneReadAbi.encodeFunctionResult("getRedemption", [registryExists, commitment, 1n, recorderAddress])
       else return forbidden()
     } else return forbidden()
@@ -102,6 +108,8 @@ beforeEach(() => {
   registryReads = 0; signerConstructions = 0; broadcasts = 0; failedRegistryRead = 0
   populateFailure = false; signFailure = false; broadcastFailure = false; wrongBroadcastHash = false
   registryExists = false; receipt = null; populated = null; signedFixture = ""; afterSign = null; onBroadcast = null
+  signerAddress = recorderAddress; chainId = OMNIONE_STAGE.chainId; recorderAllowed = true; registryCode = "0x6000"
+  authorityReads = 0; signingAttempts = 0
 })
 after(() => {
   globalThis.fetch = originalFetch
@@ -179,6 +187,19 @@ test("prepared hash is durable before broadcast and preserves legacy calldata/ga
   assert.equal(parsed.to?.toLowerCase(), registryAddress)
   assert.equal(parsed.data, abi.encodeFunctionData("recordRedemption", [eventKey, commitment]))
   assert.ok(populated); assert.equal(broadcasts, 1)
+  assert.equal(authorityReads, 1); assert.equal(signingAttempts, 1)
+})
+
+for (const failure of ["signer", "chain", "code", "permission"] as const) test(`write authorization refuses ${failure} mismatch before signing or broadcast`, async () => {
+  const { submitRedemption } = await import("../../lib/hackathon/adapters/omnione")
+  if (failure === "signer") signerAddress = "0x" + "f".repeat(40)
+  if (failure === "chain") chainId = 1
+  if (failure === "code") registryCode = "0x"
+  if (failure === "permission") recorderAllowed = false
+  let prepared = false
+  await assert.rejects(submitRedemption({ eventKeyHex: eventKey, payloadCommitmentHex: commitment, onPrepared: async () => { prepared = true } }),
+    (error: unknown) => error instanceof HkError && error.code === "omnione_submission_not_started")
+  assert.equal(prepared, false); assert.equal(populated, null); assert.equal(signingAttempts, 0); assert.equal(broadcasts, 0)
 })
 
 test("broadcast timeout retains the prepared hash and recovers without rebroadcast", async () => {

@@ -7,8 +7,9 @@
 import { Contract, JsonRpcProvider, Wallet, getBytes, hexlify, keccak256, zeroPadValue } from "ethers"
 import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { HkError } from "../util"
-import { OMNIONE_STAGE, sameHex, validateOmnioneExpectation } from "../omnione-evidence"
+import { OMNIONE_STAGE, evidenceFail, nonzeroHex32, sameHex, validateOmnioneExpectation } from "../omnione-evidence"
 import { omnioneRpcReader, readOmnioneReceiptEvidence, type OmnioneReceiptResult } from "../omnione-readonly"
+import { checkedOmnioneSigningTarget, verifyOmnioneSigningAuthority } from "../omnione-signing-preflight"
 
 const ABI = [
   "function recordRedemption(bytes32 eventKey, bytes32 payloadCommitment)",
@@ -53,9 +54,12 @@ export async function submitRedemption(opts: { eventKeyHex: string; payloadCommi
   let broadcastStarted = false
   try {
     const c = hkConfig().omnione
+    const target = checkedOmnioneSigningTarget({ rpcUrl: c.rpcUrl, chainId: c.chainId, registryAddress: c.registryAddress, recorderAddress: process.env.HK_OMNIONE_RECORDER_ADDRESS })
+    if (!nonzeroHex32(opts.eventKeyHex) || !nonzeroHex32(opts.payloadCommitmentHex)) evidenceFail("evidence_configuration_invalid")
     const existing = await getRedemption(opts.eventKeyHex)
     if (existing.exists) return { txHash: null as string | null, alreadyRecorded: true, matches: existing.payloadCommitment.toLowerCase() === opts.payloadCommitmentHex.toLowerCase() }
     const wallet = signer()
+    await verifyOmnioneSigningAuthority(target, wallet.address, omnioneRpcReader(c.rpcUrl, { maxCalls: 3, deadline: Date.now() + 15000 }))
     const request = await registry(false).recordRedemption.populateTransaction(b32(opts.eventKeyHex), b32(opts.payloadCommitmentHex), { type: 0, gasPrice: 0n, gasLimit: c.gasLimit })
     const signed = await wallet.signTransaction(await wallet.populateTransaction(request))
     const txHash = keccak256(signed)
