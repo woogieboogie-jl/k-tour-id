@@ -63,14 +63,14 @@ export function PlaceServiceActionsB({ placeId, locale, onOffer, offerTestId, of
   const copy = COPY[locale]
   const guide = includeGuide ? <ExperienceEntryB placeId={placeId} locale={locale} /> : null
   return <>{presentation === "place-detail" ? guide : null}{(!offerInFooter && place.commerce) || place.reservation ? <section className={styles.actions} data-testid="place-service-actions" data-service-layout={presentation === "place-detail" ? "rows" : "tiles"} data-service-place-id={place.id} data-place-return-section="offer" data-capability-mode="sample">
-    {place.commerce && !offerInFooter ? <button type="button" className={styles.primary} data-testid={offerTestId ?? "place-offer-open"} data-place-service="offer" data-offer-id={place.commerce.offerId} onClick={() => {
+    {place.commerce && !offerInFooter ? <button type="button" className={styles.primary} data-testid={offerTestId ?? "place-offer-open"} data-place-service="offer" data-service-place-id={place.id} data-offer-id={place.commerce.offerId} onClick={() => {
       capturePlaceServiceMapReturnB(place.id)
       if (onOffer) onOffer()
       else actions.openMealBenefitFromPlace(place.id)
     }}>
       <WalletCards size={20} aria-hidden="true" /><span><strong>{copy.offer}</strong><small>{copy.benefit} ₩{place.commerce.benefitKrw.toLocaleString("en-US")} {copy.discount}</small></span><ChevronRight size={18} aria-hidden="true" />
     </button> : null}
-    {place.reservation ? <button type="button" className={styles.secondary} data-testid="place-reservation-open" data-place-service="reservation" onClick={() => {
+    {place.reservation ? <button type="button" className={styles.secondary} data-testid="place-reservation-open" data-place-service="reservation" data-service-place-id={place.id} onClick={() => {
       capturePlaceServiceMapReturnB(place.id)
       requestReservationSampleB({ venueId: place.id })
     }}>

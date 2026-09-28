@@ -35,6 +35,7 @@ for (const locale of ["en", "ja"] as const) test(`UX16 research detail shares in
   await expect(footer.getByTestId("place-offer-open")).toHaveCount(0)
   await expect(detail.getByTestId("place-detail-actions")).toHaveAttribute("data-service-place-id", "research-seoul-zest")
   await expect(detail.getByTestId("place-service-actions")).toHaveAttribute("data-service-layout", "rows")
+  await expect(pay).toHaveAttribute("data-service-place-id", "research-seoul-zest")
   await pay.scrollIntoViewIfNeeded()
   await usable(pay, 480)
   await usable(map, 480)
@@ -86,7 +87,7 @@ test("UX16 a content-only place retains map and directions without gaining payme
   await page.screenshot({ path: testInfo.outputPath("content-only-place.png"), scale: "css" })
 })
 
-test("UX16 a pending research return yields to a new pointer gesture", async ({ page }) => {
+test("UX16 a research return never reclaims a newer keyboard task", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 480 })
   await page.emulateMedia({ reducedMotion: "no-preference" })
   await page.addInitScript(() => localStorage.setItem("ondo-b.device.v1", JSON.stringify({ locale: "ja", onboarding: "ONB-COMPLETE" })))
@@ -96,15 +97,11 @@ test("UX16 a pending research return yields to a new pointer gesture", async ({ 
   const pay = detail.getByTestId("place-offer-open")
   await pay.click()
   await page.getByTestId("commerce-origin-return").click()
-  await expect(detail).toBeAttached()
-  expect(await detail.evaluate(node => Boolean(node.closest("[inert]")))).toBe(true)
-  // A genuine pointer gesture while the old commerce layer is retained must
-  // cancel the queued automatic return, rather than stealing focus later.
-  await page.mouse.click(10, 10)
   await expect(page.getByTestId("commerce-origin-return")).toHaveCount(0)
-  await page.waitForTimeout(400)
-  await expect(pay).not.toBeFocused()
-  await pay.click()
+  await expect(pay).toBeFocused()
+  // The exact restored button starts a NEW task via keyboard. The previous
+  // return's delayed focus work must not claim focus through the new modal.
+  await pay.press("Enter")
   await expect(page.getByTestId("commerce-origin-return")).toBeFocused()
   await page.waitForTimeout(400)
   await expect(page.getByTestId("commerce-origin-return")).toBeFocused()

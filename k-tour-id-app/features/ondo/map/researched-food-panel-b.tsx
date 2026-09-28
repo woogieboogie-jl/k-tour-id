@@ -1,13 +1,11 @@
 "use client"
 
-import { useEffect, useRef } from "react"
 import { ChevronRight, MapPin, Navigation, Utensils } from "lucide-react"
 import { SheetB } from "../shared/ui/sheet-b"
 import { FoodPhotoB } from "./food-photo-b"
 import { SampleActivityMeterB } from "./sample-activity-meter-b"
 import { researchFoodDirectionsB, researchFoodMediaB, type ResearchedFoodB } from "./researched-food-b"
 import { PlaceDetailActionsB } from "../place/place-detail-actions-b"
-import { isRenderedProgrammaticFocusTarget } from "../shared/ui/is-rendered-focusable"
 import styles from "./researched-food-panel-b.module.css"
 
 type Locale = "en" | "ko" | "ja"
@@ -31,41 +29,6 @@ export function ResearchedFoodListB({ places, locale, onSelect }: { places: read
 
 export function ResearchedFoodPanelB({ place, locale, onClose, onMap, returnFocus }: { place: ResearchedFoodB; locale: Locale; onClose: () => void; onMap: () => void; returnFocus?: "offer" | "reservation" | "table" }) {
   const copy = COPY[locale]
-  const detailRef = useRef<HTMLElement>(null)
-  useEffect(() => {
-    if (!returnFocus) return
-    // Commerce retains its exiting modal above this remounted detail. A fixed
-    // two-frame focus attempt runs while the destination is still inert.
-    // Claim the exact action once isolation releases, unless the user starts
-    // another interaction; never let an old return steal a newer task's focus.
-    let frame = 0
-    let stopped = false
-    const stop = () => {
-      stopped = true
-      observer.disconnect()
-      window.cancelAnimationFrame(frame)
-      window.clearTimeout(timeout)
-      document.removeEventListener("pointerdown", stop, true)
-      document.removeEventListener("keydown", stop, true)
-      document.removeEventListener("wheel", stop, true)
-    }
-    const attempt = () => {
-      frame = 0
-      if (stopped) return
-      const target = detailRef.current?.querySelector<HTMLElement>(`[data-place-service='${returnFocus}']`)
-      if (!target || !isRenderedProgrammaticFocusTarget(target)) return
-      target.focus({ preventScroll: true })
-      if (document.activeElement === target) stop()
-    }
-    const observer = new MutationObserver(() => { if (!frame && !stopped) frame = window.requestAnimationFrame(attempt) })
-    observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["inert", "aria-hidden"], childList: true })
-    const timeout = window.setTimeout(stop, 1500)
-    document.addEventListener("pointerdown", stop, true)
-    document.addEventListener("keydown", stop, true)
-    document.addEventListener("wheel", stop, { capture: true, passive: true })
-    frame = window.requestAnimationFrame(attempt)
-    return stop
-  }, [place.id, returnFocus])
   const directions = <a href={researchFoodDirectionsB(place)} target="_blank" rel="noopener noreferrer" data-testid="research-directions"><Navigation size={18} aria-hidden="true" />{copy.directions}</a>
   return <SheetB locale={locale} label={place.name[locale]} onClose={onClose} variant="detail" initialFocusSelector={returnFocus ? `[data-place-service='${returnFocus}']` : undefined} header={<span>{copy.title}</span>} footer={
     <div className={styles.actions}>
@@ -73,7 +36,7 @@ export function ResearchedFoodPanelB({ place, locale, onClose, onMap, returnFocu
       {directions}
     </div>
   }>
-    <article ref={detailRef} className={styles.detail} data-testid="researched-food-detail" data-research-id={place.id} data-origin="EDITORIAL_RESEARCH">
+    <article className={styles.detail} data-testid="researched-food-detail" data-research-id={place.id} data-origin="EDITORIAL_RESEARCH">
       <div className={styles.identity}><FoodPhotoB {...researchFoodMediaB(place)} locale={locale} compact /><div><small>{copy.guide} · {copy[place.kind]}</small><h2>{place.name[locale]}</h2><p>{place.signature[locale]}</p><span>{place.district[locale]}</span></div></div>
       <div className={styles.reason}><h3>{copy.why}</h3><p>{place.reason[locale]}</p></div>
       <div className={styles.location}><MapPin size={16} aria-hidden="true" /><span>{place.address}</span></div>
