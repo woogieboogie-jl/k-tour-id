@@ -7,8 +7,8 @@
 // verify the proving key or OAuth audience access; those need separate evidence.
 // The browser keeps the ephemeral private key; the server never sees it. The JWT
 // is used once here and not stored.
-// Note: address derivation differs between the two paths (Enoki salt vs local salt), so
-// switching paths changes users' zkLogin addresses. Fine for the demo perk (no assets).
+// Retain the established provider and salt convention: switching between Enoki
+// and local salts changes users' addresses and requires an intentional migration.
 import { createHmac } from "node:crypto"
 import { decodeJwt, genAddressSeed, jwtToAddress } from "@mysten/sui/zklogin"
 import { assertExternalServicesEnabled, hkConfig } from "../config"
