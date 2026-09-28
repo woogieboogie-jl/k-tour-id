@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
-import { gotoB, prepareBPage, seedB } from "../helpers/ondo-b-qa"
+import { CANONICAL_VENUE_ID, gotoB, prepareBPage, seedB } from "../helpers/ondo-b-qa"
 
 test.describe.configure({ timeout: 90_000 })
 const browserErrors = new WeakMap<Page, string[]>()
@@ -11,10 +11,10 @@ test.beforeEach(async ({ page, request, baseURL }) => {
   expect(target.hostname).toBe("127.0.0.1")
   expect(target.port).toBe("3166")
   const config = await request.get("/api/hackathon/v1/config")
-  // This branch keeps Production's hosted build profile. Local credentials
-  // are intentionally absent; that exact denial proves provider isolation.
-  expect(config.status()).toBe(503)
-  expect(await config.json()).toMatchObject({ error: { code: "hosted_sui_unavailable" } })
+  // The credential-free local runner selects the isolated mock profile.
+  // Never allow these UI seeds against a real-provider deployment.
+  expect(config.status()).toBe(200)
+  expect(await config.json()).toMatchObject({ isolatedMock: true })
   await page.route("**/*", async route => {
     if (!["GET", "HEAD", "OPTIONS"].includes(route.request().method())) {
       await route.abort("blockedbyclient")
@@ -120,6 +120,23 @@ test("wide short window keeps the header and story in separate usable lanes", as
   await page.getByTestId("ondo-b-map-search-toggle").click()
   await expect(page.getByTestId("ondo-b-search")).toBeFocused()
   await page.screenshot({ path: info.outputPath("wide-short-search.png") })
+})
+
+test("After19 handoff with a selected mobile place leaves search interactive", async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await seedB(page, { locale: "ja" })
+  await gotoB(page, `?venueId=${CANONICAL_VENUE_ID}&review=0`)
+  await expect(page.getByTestId("canonical-place-peek")).toBeVisible()
+  await page.getByTestId("ondo-b-map-options-open").click()
+  await page.getByTestId("ondo-b-map-options-after19-open").click()
+  await page.getByTestId("global-after19-confirm").click()
+  await expect(page.getByTestId("global-after19-prompt-layer")).toHaveCount(0)
+  await expect(page.getByTestId("ondo-b-map-entry")).toHaveAttribute("data-after19-active", "true")
+  await page.getByTestId("ondo-b-map-search-toggle").click()
+  await page.getByTestId("ondo-b-search").fill("로바")
+  await expect(page.getByTestId("ondo-b-search")).toBeFocused()
+  await expect(page.getByTestId("ondo-b-search")).toHaveValue("로바")
+  await page.screenshot({ path: info.outputPath("after19-selected-place-search.png") })
 })
 
 test("nation welcome has no ambience control, is finite and reduced-motion safe", async ({ page }) => {

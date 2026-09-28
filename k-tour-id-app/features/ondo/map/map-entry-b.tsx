@@ -1063,8 +1063,11 @@ function focusCollectionPlaces(map: MapLibreMap, places: readonly { longitude: n
   const header = shell?.querySelector('[data-testid="ondo-b-city-header"]')?.getBoundingClientRect()
   const tray = shell?.querySelector('[data-testid="map-discovery-results"], [data-testid="map-discovery-dock"]')?.getBoundingClientRect()
   // A centered discovery dock is a bottom obstruction, even on a wide map.
-  // Only a genuinely left-docked result sheet needs asymmetric camera padding.
-  const sidePanel = tray && tray.left - bounds.left < 48 && tray.width < bounds.width * .55 && bounds.width >= 600
+  // The short landscape uses a right-hand dock, while collection results may
+  // still use the left: reserve the actual occupied side, not a guessed lane.
+  const sidePanel = tray && tray.width < bounds.width * .55 && bounds.width >= 600
+    ? tray.left - bounds.left < 48 ? "left" : bounds.right - tray.right < 48 ? "right" : null
+    : null
   const chrome = shell?.querySelector('[data-testid="ondo-b-map-chrome"]')?.getBoundingClientRect()
   const pinClearance = bounds.height < 640 ? 28 : 35
   const top = Math.max(80, (header?.bottom ?? bounds.top + 120) - bounds.top + pinClearance)
@@ -1072,7 +1075,7 @@ function focusCollectionPlaces(map: MapLibreMap, places: readonly { longitude: n
   const camera = map.cameraForBounds([
     [Math.min(...places.map(p => p.longitude)), Math.min(...places.map(p => p.latitude))],
     [Math.max(...places.map(p => p.longitude)), Math.max(...places.map(p => p.latitude))],
-  ], { padding: { top, bottom: Math.min(bottom, Math.max(60, bounds.height - top - 24)), left: sidePanel ? tray.right - bounds.left + 45 : 54, right: 54 }, maxZoom: places.length === 1 ? 14.2 : 13 })
+  ], { padding: { top, bottom: Math.min(bottom, Math.max(60, bounds.height - top - 24)), left: sidePanel === "left" ? tray!.right - bounds.left + 45 : 54, right: sidePanel === "right" ? bounds.right - tray!.left + 45 : 54 }, maxZoom: places.length === 1 ? 14.2 : 13 })
   // cameraForBounds incorporates the panel inset into the center. Keep runtime
   // padding zero so the app's existing camera history restores exact pixels.
   if (camera) {
