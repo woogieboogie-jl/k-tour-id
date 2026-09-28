@@ -86,6 +86,30 @@ test("UX16 a content-only place retains map and directions without gaining payme
   await page.screenshot({ path: testInfo.outputPath("content-only-place.png"), scale: "css" })
 })
 
+test("UX16 a pending research return yields to a new pointer gesture", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 480 })
+  await page.emulateMedia({ reducedMotion: "no-preference" })
+  await page.addInitScript(() => localStorage.setItem("ondo-b.device.v1", JSON.stringify({ locale: "ja", onboarding: "ONB-COMPLETE" })))
+  await page.goto("/?city=seoul&view=list", { waitUntil: "domcontentloaded" })
+  await page.locator('[data-research-id="research-seoul-zest"]').first().click()
+  const detail = page.getByTestId("researched-food-detail")
+  const pay = detail.getByTestId("place-offer-open")
+  await pay.click()
+  await page.getByTestId("commerce-origin-return").click()
+  await expect(detail).toBeAttached()
+  expect(await detail.evaluate(node => Boolean(node.closest("[inert]")))).toBe(true)
+  // A genuine pointer gesture while the old commerce layer is retained must
+  // cancel the queued automatic return, rather than stealing focus later.
+  await page.mouse.click(10, 10)
+  await expect(page.getByTestId("commerce-origin-return")).toHaveCount(0)
+  await page.waitForTimeout(400)
+  await expect(pay).not.toBeFocused()
+  await pay.click()
+  await expect(page.getByTestId("commerce-origin-return")).toBeFocused()
+  await page.waitForTimeout(400)
+  await expect(page.getByTestId("commerce-origin-return")).toBeFocused()
+})
+
 test("UX16 pulse uses the same prepared frame with legible and motion-free counts", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 320, height: 568 })
   await page.emulateMedia({ reducedMotion: "reduce" })
