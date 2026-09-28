@@ -24,6 +24,13 @@ test("hosted-Sui target accepts only the approved project, repo, branch and Prev
   }
 })
 
+test("target diagnostics expose only fixed check names", () => {
+  const failures = subject.hostedSuiTargetFailures({ ...metadata(), VERCEL_PROJECT_ID: "secret-project", VERCEL_GIT_COMMIT_SHA: "secret-sha" })
+  assert.deepEqual(failures, ["project", "sha"])
+  assert.equal(JSON.stringify(failures).includes("secret"), false)
+  assert.deepEqual(subject.hostedSuiTargetFailures({}), [])
+})
+
 test("local planning needs no Vercel metadata but rejects wrong cwd, args and inherited loaders", () => {
   assert.doesNotThrow(() => subject.hostedSuiBuildPlan({ env: {}, exists: () => false }))
   assert.throws(() => subject.hostedSuiBuildPlan({ env: {}, args: ["--prod"], exists: () => false }), { message: "hosted_sui_build_arguments" })
@@ -54,9 +61,11 @@ test("dotenv files, including dangling symlinks, stop the plan without reading c
   finally { try { unlinkSync(file) } catch {} try { rmdirSync(root) } catch {} }
 })
 
-test("hosted profile config keeps existing profiles untouched", () => {
+test("hosted profile config preserves source CX or matches the explicitly selected release profile", () => {
   const profile = JSON.parse(readFileSync(resolve(subject.APP_ROOT, "vercel.hosted-sui.json"), "utf8")), current = JSON.parse(readFileSync(resolve(subject.APP_ROOT, "vercel.json"), "utf8")), pkg = JSON.parse(readFileSync(resolve(subject.APP_ROOT, "package.json"), "utf8"))
   assert.equal(profile.buildCommand, "node scripts/hackathon-hosted-sui-build.mjs"); assert.deepEqual(profile.regions, ["icn1"]); assert.equal(profile.git.deploymentEnabled, false)
   assert.equal(Object.hasOwn(profile, "public"), false, "Vercel rejects the removed public property")
-  assert.equal(current.buildCommand, "pnpm build:vercel:cx-preview"); assert.equal(pkg.scripts["build:vercel:hosted-sui"], "node scripts/hackathon-hosted-sui-build.mjs")
+  if (current.buildCommand === profile.buildCommand) assert.deepEqual(current, profile)
+  else assert.equal(current.buildCommand, "pnpm build:vercel:cx-preview")
+  assert.equal(pkg.scripts["build:vercel:hosted-sui"], "node scripts/hackathon-hosted-sui-build.mjs")
 })
