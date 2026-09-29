@@ -1,20 +1,26 @@
 import { hkConfig, HK_SERVICE_ACCESS } from "./config"
 import { GUIDE_SAVE_V2, isGuideJourney, type GuideReadiness, type GuideReadinessCheck } from "./guide-contract"
 import { isHostedSuiProfile } from "./hosted-sui-profile"
-import { assertIntegrationSuiActivation, requiresIntegrationSuiLimits } from "./integration-sui-limits"
+import { requiresIntegrationSuiLimits, integrationSuiPreflightIssues } from "./integration-sui-limits"
+import { readIntegrationSuiActivation } from "./store"
+import { isGuideProductionProfile, guideProductionPreflightIssues } from "./guide-production-profile"
+import { requiresIntegrationPreviewAccess } from "./integration-preview-access"
 import { providerIntegrationAvailable } from "./provider-operation"
 import type { OperationRecord } from "./store"
 import { selectZkLoginProvider } from "./zklogin-provider-selection"
 import { HkError } from "./util"
 
-/** Public configuration assessment only; never contacts providers or creates a session. */
-export function guideReadiness(now = Date.now()): GuideReadiness {
+/** Never contacts providers or creates a session. An otherwise eligible profile
+ * checks durable cutover state read-only; configuration is not real E2E evidence. */
+export async function guideReadiness(now = Date.now()): Promise<GuideReadiness> {
   const c = hkConfig()
   const provider = !c.isolatedMock && !c.cxPreview && !isHostedSuiProfile()
   let execution = false
-  if (provider && requiresIntegrationSuiLimits()) {
-    try { assertIntegrationSuiActivation(); execution = true } catch { /* Not migrated: never spend a fresh budget. */ }
+  if (provider && requiresIntegrationSuiLimits() && integrationSuiPreflightIssues(process.env, now).length === 0) {
+    try { await readIntegrationSuiActivation(); execution = true } catch { /* Not migrated: never spend a fresh budget. */ }
   }
+  const accessProfile = isGuideProductionProfile() ? guideProductionPreflightIssues(process.env, now).length === 0 ? "guide-production" : "unavailable"
+    : requiresIntegrationPreviewAccess() ? "integration-preview" : "unavailable"
   const configured: Record<GuideReadinessCheck, boolean> = {
     identity: c.cx.mode === "cx" && !c.isolatedMock,
     credential: provider && c.opendid.mode === "opendid" && providerIntegrationAvailable(),
@@ -26,13 +32,13 @@ export function guideReadiness(now = Date.now()): GuideReadiness {
   }
   const checks = (Object.keys(configured) as GuideReadinessCheck[]).map(id => ({ id, status: configured[id] ? "configured" as const : id === "campaign" ? "expired" as const : "setup_required" as const }))
   const blockers = checks.filter(c => c.status !== "configured").map(c => c.id)
-  return { supported: true, ready: blockers.length === 0, verification: "configuration_only", venueId: GUIDE_SAVE_V2.venueId, guideId: GUIDE_SAVE_V2.guideId,
+  return { supported: true, ready: blockers.length === 0 && accessProfile !== "unavailable", verification: "configuration_only", venueId: GUIDE_SAVE_V2.venueId, guideId: GUIDE_SAVE_V2.guideId,
     campaignId: GUIDE_SAVE_V2.campaignId, action: GUIDE_SAVE_V2.action, consentVersion: GUIDE_SAVE_V2.consentVersion, checks, blockers,
-    identityCheckAvailable: configured.identity && isHostedSuiProfile() }
+    identityCheckAvailable: configured.identity && isHostedSuiProfile(), accessProfile }
 }
 
-export function assertGuideReady() {
-  if (!guideReadiness().ready) throw new HkError("guide_setup_required", "Guide saving is not connected yet. You can keep reading this guide.", 503, true)
+export async function assertGuideReady() {
+  if (!(await guideReadiness()).ready) throw new HkError("guide_setup_required", "Guide saving is not connected yet. You can keep reading this guide.", 503, true)
 }
 
 export function operationCampaign(op: Pick<OperationRecord, "journey" | "venueId" | "campaignId" | "policyVersion">) {

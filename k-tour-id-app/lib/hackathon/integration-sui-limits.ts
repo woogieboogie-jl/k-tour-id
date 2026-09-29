@@ -3,6 +3,8 @@
 import { INTEGRATION_SUI_TARGETS, integrationSuiRolesMatch } from "./integration-sui-targets"
 import { HkError } from "./util"
 import { assertCommittedCutover, type CutoverDb } from "./integration-cutover"
+import { createHash } from "node:crypto"
+import { isGuideProductionProfile, guideProductionPreflightIssues } from "./guide-production-profile"
 
 type Env = Record<string, string | undefined>
 export const INTEGRATION_SUI_LIMITS = Object.freeze({
@@ -20,16 +22,17 @@ const keyPresent = (value: string | undefined) => typeof value === "string" && v
 /** A removed runtime flag cannot downgrade a protected build or branch. */
 export function requiresIntegrationSuiLimits(env: Env = process.env) {
   return (env === process.env && process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1") || env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1" ||
-    env.HK_INTEGRATION_PREVIEW_ENABLED === "1" || env.VERCEL_GIT_COMMIT_REF === INTEGRATION_SUI_LIMITS.branch
+    env.HK_INTEGRATION_PREVIEW_ENABLED === "1" || env.VERCEL_GIT_COMMIT_REF === INTEGRATION_SUI_LIMITS.branch || isGuideProductionProfile(env)
 }
 
 /** Public fixed issue names only. Key presence is NOT proof of role ownership. */
 export function integrationSuiPreflightIssues(env: Env = process.env, now = Date.now()): string[] {
-  const end = env.HK_INTEGRATION_PREVIEW_EXPIRES_AT ?? "", expiry = Date.parse(end)
+  const guide = isGuideProductionProfile(env)
+  const end = (guide ? env.HK_GUIDE_EXPIRES_AT : env.HK_INTEGRATION_PREVIEW_EXPIRES_AT) ?? "", expiry = Date.parse(end)
   const checks: Record<string, boolean> = {
     sui_target: env.HK_INTEGRATION_SUI_TARGET === target.id,
-    integration_build: env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1" && (env !== process.env || process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1"),
-    runtime_enabled: env.HK_INTEGRATION_PREVIEW_ENABLED === "1",
+    integration_build: guide ? guideProductionPreflightIssues(env, now).length === 0 : env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1" && (env !== process.env || process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1"),
+    runtime_enabled: guide ? env.HK_GUIDE_PRODUCTION_ENABLED === "1" : env.HK_INTEGRATION_PREVIEW_ENABLED === "1",
     no_profile_overlap: env.NEXT_PUBLIC_HK_HOSTED_SUI !== "1" && env.HK_HOSTED_SUI_ENABLED !== "1" && env.NEXT_PUBLIC_HK_CX_PREVIEW === "0" && env.HK_CX_PREVIEW_ENABLED !== "1" && env.NEXT_PUBLIC_HK_PREVIEW_READ_ONLY === "0",
     provider_modes: env.HK_ISOLATED_MOCK === "0" && env.HK_MODE_CX === "cx" && env.HK_MODE_OPENDID === "opendid",
     no_cx_fallback: !env.HK_CX_SAMPLE_FALLBACK || env.HK_CX_SAMPLE_FALLBACK === "0",
@@ -57,6 +60,23 @@ export function assertIntegrationSuiLimits(env: Env = process.env, now = Date.no
 }
 export function assertIntegrationSuiRoles(roles: { issuer: string; agent: string; sponsor: string }) {
   if (!integrationSuiRolesMatch(target, roles)) throw unavailable()
+}
+
+/** Private request-local scope fingerprint. Only fixed relevant fields are read;
+ * never serialize/log this binding or the secret values used to compute it. */
+export function integrationSuiAuthorizationScopeDigest(env: Env = process.env) {
+  const names = ["NEXT_PUBLIC_HK_INTEGRATION_PREVIEW", "HK_INTEGRATION_PREVIEW_ENABLED", "HK_INTEGRATION_PREVIEW_EXPIRES_AT",
+    "NEXT_PUBLIC_HK_GUIDE_PRODUCTION", "HK_GUIDE_PRODUCTION_ENABLED", "HK_GUIDE_EXPIRES_AT", "HK_GUIDE_LOCAL_TEST", "HK_GUIDE_ACCESS_SECRET", "HK_GUIDE_ACCESS_CODE",
+    "HK_API_ENABLED", "NEXT_PUBLIC_HK_ENABLED", "HK_AI_MODE", "HK_CX_BASE_URL", "HK_CX_PROVIDER", "HK_CX_ZKP_TYPE", "HK_ISSUER_SIGNING_SEED",
+    "HK_CAMPAIGN_ID", "HK_CAMPAIGN_VENUE_ID", "NEXT_PUBLIC_HK_CAMPAIGN_VENUE_ID", "NODE_ENV",
+    "NEXT_PUBLIC_HK_HOSTED_SUI", "HK_HOSTED_SUI_ENABLED", "NEXT_PUBLIC_HK_CX_PREVIEW", "HK_CX_PREVIEW_ENABLED", "NEXT_PUBLIC_HK_PREVIEW_READ_ONLY",
+    "HK_ISOLATED_MOCK", "HK_MODE_CX", "HK_MODE_OPENDID", "HK_CX_SAMPLE_FALLBACK", "HK_INTEGRATION_SUI_TARGET",
+    "HK_SUI_NETWORK", "HK_SUI_GRPC_URL", "HK_SUI_PACKAGE_ID", "HK_SUI_CAMPAIGN_ID", "HK_SUI_CAMPAIGN_INITIAL_VERSION", "HK_SUI_CHAIN_IDENTIFIER",
+    "HK_SUI_EXPLORER", "HK_SUI_GRAPHQL_URL", "HK_SUI_ISSUER_SECRET_KEY", "HK_SUI_AGENT_SECRET_KEY", "HK_SUI_SPONSOR_SECRET_KEY",
+    "HK_STORE_KEY", "HK_STORE_CANARY_UUID", "HK_STORE_CANARY_OWNER", "HK_STORE_CANARY_ALLOW_WRITE", "HK_INTEGRATION_SUI_MAX_OPERATIONS", "HK_INTEGRATION_SUI_GAS_BUDGET_MIST",
+    "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "KV_REST_API_URL", "KV_REST_API_TOKEN",
+    "VERCEL", "VERCEL_ENV", "VERCEL_TARGET_ENV", "VERCEL_URL", "VERCEL_REGION", "VERCEL_PROJECT_ID", "VERCEL_ORG_ID", "VERCEL_GIT_PROVIDER", "VERCEL_GIT_COMMIT_REF", "VERCEL_GIT_COMMIT_SHA", "VERCEL_GIT_REPO_SLUG", "VERCEL_GIT_REPO_OWNER"]
+  return createHash("sha256").update(JSON.stringify(names.map(name => [name, env[name] ?? null]))).digest("hex")
 }
 
 /** No env switch or client JSON is an activation capability. Runtime callers

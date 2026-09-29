@@ -7,6 +7,7 @@ import { withStore, readStore, readIntegrationSuiActivation, type Db, type Opera
 import { GUIDE_SAVE_V2 } from "../../lib/hackathon/guide-contract"
 import { guideCollectionKey, type GuideCollectionRecord } from "../../lib/hackathon/guide-collection"
 import { createHash } from "node:crypto"
+import { INTEGRATION_SUI_TARGETS } from "../../lib/hackathon/integration-sui-targets"
 
 const savedEnv = { ...process.env }, savedFetch = globalThis.fetch
 const sourceRaw = '{"fixture":"source-history"}'
@@ -29,10 +30,16 @@ function seed(db: Db = base()) {
 }
 before(() => {
   for (const key of Object.keys(process.env)) delete process.env[key]
+  const t = INTEGRATION_SUI_TARGETS["selfhosted-testnet"]
   Object.assign(process.env, { NODE_ENV: "test", HK_ISOLATED_MOCK: "0", NEXT_PUBLIC_HK_INTEGRATION_PREVIEW: "1", HK_INTEGRATION_SUI_TARGET: "selfhosted-testnet",
-    UPSTASH_REDIS_REST_URL: "https://fixture-cutover.invalid", UPSTASH_REDIS_REST_TOKEN: "offline-fixture", HK_STORE_KEY: P.targetKey })
+    HK_INTEGRATION_PREVIEW_ENABLED: "1", HK_INTEGRATION_PREVIEW_EXPIRES_AT: INTEGRATION_SUI_LIMITS.maxExpiresAt,
+    NEXT_PUBLIC_HK_HOSTED_SUI: "0", HK_HOSTED_SUI_ENABLED: "0", NEXT_PUBLIC_HK_CX_PREVIEW: "0", NEXT_PUBLIC_HK_PREVIEW_READ_ONLY: "0", HK_MODE_CX: "cx", HK_MODE_OPENDID: "opendid",
+    HK_SUI_NETWORK: t.network, HK_SUI_GRPC_URL: t.rpcUrls[0], HK_SUI_PACKAGE_ID: t.packageId, HK_SUI_CAMPAIGN_ID: t.campaignId,
+    HK_SUI_CAMPAIGN_INITIAL_VERSION: t.campaignInitialVersion, HK_SUI_CHAIN_IDENTIFIER: t.chainIdentifier,
+    HK_SUI_ISSUER_SECRET_KEY: "sui_fixture_" + "a".repeat(64), HK_SUI_AGENT_SECRET_KEY: "sui_fixture_" + "b".repeat(64),
+    UPSTASH_REDIS_REST_URL: "https://fixture-cutover.upstash.io", UPSTASH_REDIS_REST_TOKEN: "offline-fixture", HK_STORE_KEY: P.targetKey })
   globalThis.fetch = async (input, init) => {
-    if (String(input) !== "https://fixture-cutover.invalid") { unexpected++; throw new Error("unexpected_network") }
+    if (String(input) !== "https://fixture-cutover.upstash.io") { unexpected++; throw new Error("unexpected_network") }
     const cmd = JSON.parse(String(init?.body)) as Array<string | number>
     let result: unknown
     if (cmd[0] === "SET" && cmd[3] === "NX") { lock = String(cmd[2]); result = "OK" }
@@ -88,9 +95,9 @@ test("partial/corrupt control, ledger rollback and removed profile cannot downgr
   await assert.rejects(readStore(() => true), { code: "store_corrupt" })
   seed(); const c = JSON.parse(control!); c.phase = "prepared"; c.targetDigest = null; control = JSON.stringify(c)
   await assert.rejects(withStore(() => undefined), { code: "integration_cutover_unverified" })
-  seed(); delete process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW
+  seed(); delete process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW; delete process.env.HK_INTEGRATION_PREVIEW_ENABLED
   try { await assert.rejects(readStore(() => true), { code: "store_configuration" }) }
-  finally { process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW = "1" }
+  finally { process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW = "1"; process.env.HK_INTEGRATION_PREVIEW_ENABLED = "1" }
 })
 
 test("competing control update/late source or target write/expired lease prevent both replacement writes", async () => {
@@ -114,6 +121,18 @@ test("ordinary writes cannot remove/reassign the migration marker or decrease re
     seed(); const t = target, c = control
     await assert.rejects(withStore(mutation))
     assert.equal(target, t); assert.equal(control, c); assert.equal(writes, 0)
+  }
+})
+
+test("mutation cannot persist after valid-shaped configuration drift or configured expiry", async () => {
+  const key = process.env.HK_SUI_ISSUER_SECRET_KEY, expiry = process.env.HK_INTEGRATION_PREVIEW_EXPIRES_AT
+  for (const change of [() => { process.env.HK_SUI_ISSUER_SECRET_KEY = "different_fixture_" + "d".repeat(64) },
+    () => { process.env.HK_INTEGRATION_PREVIEW_EXPIRES_AT = "2026-09-28T00:00:00Z" }]) {
+    seed(); const t = target, c = control
+    try {
+      await assert.rejects(withStore(db => { claimIntegrationSuiOperation(db, "op_nolatepersist01"); change() }), { code: "integration_sui_scope" })
+      assert.equal(target, t); assert.equal(control, c); assert.equal(writes, 0)
+    } finally { process.env.HK_SUI_ISSUER_SECRET_KEY = key; process.env.HK_INTEGRATION_PREVIEW_EXPIRES_AT = expiry }
   }
 })
 

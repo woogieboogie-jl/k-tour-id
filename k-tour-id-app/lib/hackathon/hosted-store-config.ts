@@ -1,6 +1,7 @@
 import { HkError } from "./util"
 import type { RedisConnection } from "./redis-config"
 import { isHostedSuiProfile } from "./hosted-sui-profile"
+import { isGuideProductionProfile } from "./guide-production-profile"
 
 type Env = Record<string, string | undefined>
 export type HostedIntegrationRedisConfig = RedisConnection & { key: string }
@@ -9,7 +10,7 @@ const invalid = () => new HkError("store_configuration", "Hosted integration req
 /** Only the full hosted lane uses this guard; CX/canary and isolated profiles
  * keep their existing backend rules. Runtime/API flags cannot waive durability. */
 export function requiresHostedIntegrationRedis(env: Env, isolatedMock: boolean): boolean {
-  return !isolatedMock && (env.VERCEL === "1" || env.VERCEL_ENV === "preview" || env.VERCEL_ENV === "production")
+  return isGuideProductionProfile(env) || (!isolatedMock && (env.VERCEL === "1" || env.VERCEL_ENV === "preview" || env.VERCEL_ENV === "production"))
 }
 
 /** Offline validation only: never reads ambient environment, creates a file,

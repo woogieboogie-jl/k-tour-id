@@ -25,6 +25,7 @@ export type GuideReadiness = {
   checks: Array<{ id: GuideReadinessCheck; status: "configured" | "setup_required" | "expired" }>
   blockers: GuideReadinessCheck[]
   identityCheckAvailable: boolean
+  accessProfile: "guide-production" | "integration-preview" | "unavailable"
 }
 
 export type GuideCollectionEntry = {

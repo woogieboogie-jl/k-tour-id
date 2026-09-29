@@ -9,6 +9,7 @@ import { parseStoredJourney } from "../../lib/hackathon/store-integrity"
 import { safeHkError } from "../../lib/hackathon/public-error"
 import { HkError } from "../../lib/hackathon/util"
 import type { OperationRecord } from "../../lib/hackathon/store"
+import { GUIDE_PRODUCTION } from "../../lib/hackathon/guide-production-profile"
 
 const target = INTEGRATION_SUI_TARGETS["selfhosted-testnet"], NOW = Date.parse("2026-09-29T00:00:00Z")
 const originalEnv = { ...process.env }, originalFetch = globalThis.fetch
@@ -34,6 +35,23 @@ test("integration guards cannot be removed through runtime flags, profile overla
   assert.deepEqual(integrationSuiPreflightIssues(fixture(), NOW), [])
   for (const value of [undefined, "", "harvey-original", "selfhosted-testnet ", "arbitrary"]) assert.ok(integrationSuiPreflightIssues({ ...fixture(), HK_INTEGRATION_SUI_TARGET: value }, NOW).includes("sui_target"))
   assert.throws(() => assertIntegrationSuiLimits({}, NOW), isCode("integration_sui_scope"))
+})
+
+test("guide production profile protects the exact same budget; branch and partial flags cannot downgrade", () => {
+  for (const e of [{ NEXT_PUBLIC_HK_GUIDE_PRODUCTION: "1" }, { HK_GUIDE_PRODUCTION_ENABLED: "1" }, { VERCEL_GIT_COMMIT_REF: GUIDE_PRODUCTION.branch }]) assert.equal(requiresIntegrationSuiLimits(e), true)
+  assert.equal(requiresIntegrationSuiLimits({ VERCEL_GIT_COMMIT_REF: "deploy/sui-main-20260928", NEXT_PUBLIC_HK_HOSTED_SUI: "1" }), false)
+  const guide = { ...fixture(), NODE_ENV: "test", NEXT_PUBLIC_HK_INTEGRATION_PREVIEW: "0", HK_INTEGRATION_PREVIEW_ENABLED: "0",
+    NEXT_PUBLIC_HK_GUIDE_PRODUCTION: "1", HK_GUIDE_PRODUCTION_ENABLED: "1", HK_GUIDE_EXPIRES_AT: LIMIT.maxExpiresAt, HK_GUIDE_LOCAL_TEST: "1",
+    HK_API_ENABLED: "1", NEXT_PUBLIC_HK_ENABLED: "1", HK_AI_MODE: "gemini", HK_CX_BASE_URL: "https://cx.raonsecure.co.kr:18543", HK_CX_PROVIDER: "comdl", HK_CX_ZKP_TYPE: "AdultVerify",
+    HK_ISSUER_SIGNING_SEED: "fixture_" + "z".repeat(64), HK_GUIDE_ACCESS_SECRET: "a".repeat(64), HK_GUIDE_ACCESS_CODE: "fixture_access_" + "b".repeat(32) }
+  assert.deepEqual(integrationSuiPreflightIssues(guide, NOW), [])
+  for (const patch of [{ NEXT_PUBLIC_HK_INTEGRATION_PREVIEW: "1" }, { HK_GUIDE_PRODUCTION_ENABLED: "0" }, { HK_GUIDE_EXPIRES_AT: "2099-01-01T00:00:00Z" },
+    { HK_STORE_KEY: "ktour:integration-preview:new-budget" }, { HK_INTEGRATION_SUI_MAX_OPERATIONS: "11" }, { HK_SUI_NETWORK: "mainnet" }, { HK_INTEGRATION_SUI_TARGET: "harvey-original" }]) {
+    assert.ok(integrationSuiPreflightIssues({ ...guide, ...patch }, NOW).length)
+  }
+  const guardedBranch = { ...guide, VERCEL_GIT_COMMIT_REF: GUIDE_PRODUCTION.branch, NEXT_PUBLIC_HK_GUIDE_PRODUCTION: "0", HK_GUIDE_PRODUCTION_ENABLED: "0" }
+  assert.equal(requiresIntegrationSuiLimits(guardedBranch), true)
+  assert.ok(integrationSuiPreflightIssues(guardedBranch, NOW).length)
 })
 
 test("exact approved chain tuple, keys, namespace, expiry and unchanged provider modes are required", () => {
@@ -111,7 +129,7 @@ test("BCS gas ceiling is enforced even if runtime enable flags are removed from 
   assert.throws(() => assertSerializedGasBudget(tooLarge), isCode("sui_gas_budget"))
 })
 
-test("preparation fence has no env override and Sui side effects stop before key, file or network work", async () => {
+test("unscoped signing has no env override and missing durable activation stops before key, file or network work", async () => {
   configure({ ...fixture(), HK_INTEGRATION_SUI_MIGRATION_COMPLETE: "1", HK_INTEGRATION_SUI_BUDGET_INITIALIZED: "1", HK_DATA_DIR: "/must-not-create-integration-fixture" })
   const config = await import("../../lib/hackathon/config"), adapter = await import("../../lib/hackathon/adapters/sui"), service = await import("../../lib/hackathon/service")
   assert.throws(assertIntegrationSuiActivation, isCode("integration_sui_migration_required"))
@@ -120,7 +138,7 @@ test("preparation fence has no env override and Sui side effects stop before key
   assert.throws(adapter.suiKeys, isCode("integration_sui_migration_required"))
   assert.doesNotThrow(adapter.suiTargets)
   await assert.rejects(adapter.executeDelegation({ txBytesB64: "not-parsed", userSignature: "not-read", sponsorSignature: "not-read", expected: {} as never }), isCode("integration_sui_migration_required"))
-  await assert.rejects(service.createOperation({ sessionId: "session", venueId: "venue", consentVersion: "version", locale: "en", venueName: "fixture" }), isCode("integration_sui_migration_required"))
+  await assert.rejects(service.createOperation({ sessionId: "session", venueId: "venue", consentVersion: "version", locale: "en", venueName: "fixture" }), isCode("store_configuration"))
   const publicConfig = config.hkPublicConfig()
   assert.equal(publicConfig.modes.opendid, "opendid"); assert.equal(publicConfig.modes.cx, "cx")
   assert.equal(publicConfig.capabilities.chainExecutionEnabled, false); assert.equal(publicConfig.capabilities.redemptionEnabled, false)

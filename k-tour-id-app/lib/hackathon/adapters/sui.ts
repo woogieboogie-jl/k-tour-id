@@ -17,6 +17,7 @@ import { chainId, commitment, verifyDelegationEvidence, verifyExecutionEvidence,
 import { readTransactionWithHistoricalFallback } from "../sui-historical-read"
 import { isHostedSuiProfile, assertHostedSuiRoles, PIN as HOSTED_SUI_PIN } from "../hosted-sui-profile"
 import { requiresIntegrationSuiLimits, assertIntegrationSuiRoles, INTEGRATION_SUI_LIMITS } from "../integration-sui-limits"
+import { refreshIntegrationSuiAuthorization } from "../store"
 
 export type ObjRef = { objectId: string; version: string; digest: string }
 
@@ -158,6 +159,7 @@ export async function issueEntitlement(opts: { intentRefHex: string; holder: str
   tx.moveCall({ target: t.fn.issue, arguments: [campaignArg(tx, true), bytes32(tx, opts.intentRefHex), tx.pure.address(opts.holder), tx.pure.u64(BigInt(opts.expiresAtMs)), clockArg(tx)] })
   const bytes = await tx.build({ client: suiClient() })
   assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
+  if (requiresIntegrationSuiLimits()) await refreshIntegrationSuiAuthorization()
   const sigs = [(await k.issuer.signTransaction(bytes)).signature]
   if (k.sponsorAddress !== k.issuerAddress) sigs.push((await k.sponsor.signTransaction(bytes)).signature)
   await opts.beforeBroadcast?.(transactionDigest(bytes))
@@ -185,6 +187,7 @@ export async function buildDelegationPtb(opts: { userAddress: string; entitlemen
   tx.moveCall({ target: t.fn.attestConsent, arguments: [campaignArg(tx, false), grantId, bytes32(tx, opts.consentCommitmentHex)] })
   const bytes = await tx.build({ client: suiClient() })
   assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
+  if (requiresIntegrationSuiLimits()) await refreshIntegrationSuiAuthorization()
   const sponsorSignature = (await k.sponsor.signTransaction(bytes)).signature
   return { txBytesB64: toBase64(bytes), txBytesDigest: sha256Hex(bytes), sponsorSignature }
 }
@@ -219,6 +222,7 @@ export async function agentConsume(opts: { grant: { objectId: string; initialSha
   tx.moveCall({ target: t.fn.attestExecution, arguments: [campaignArg(tx, false), recordId, bytes32(tx, opts.expected.manifestCommitment)] })
   const bytes = await tx.build({ client: suiClient() })
   assertSerializedGasBudget(bytes, opts.gasBudgetMIST)
+  if (requiresIntegrationSuiLimits()) await refreshIntegrationSuiAuthorization()
   const sigs = [(await k.agent.signTransaction(bytes)).signature]
   if (k.sponsorAddress !== k.agentAddress) sigs.push((await k.sponsor.signTransaction(bytes)).signature)
   await opts.beforeBroadcast?.(transactionDigest(bytes))

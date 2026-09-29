@@ -12,13 +12,14 @@
 // on this module's API (withStore / readStore), so swapping to PostgreSQL stays local.
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs"
 import { resolve } from "node:path"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { hkConfig } from "./config"
 import type { OperationResult } from "./types"
 import { HkError } from "./util"
 import { parseStoredJourney } from "./store-integrity"
 import { previewRedisConfig, storeRedisCommand, type StoreCanaryOwnership } from "./redis-config"
 import { hostedIntegrationRedisConfig, requiresHostedIntegrationRedis } from "./hosted-store-config"
-import { assertIntegrationSuiBudget, assertIntegrationSuiBudgetMonotonic, requiresIntegrationSuiLimits, type IntegrationSuiBudget } from "./integration-sui-limits"
+import { assertIntegrationSuiBudget, assertIntegrationSuiBudgetMonotonic, assertIntegrationSuiOperation, assertIntegrationSuiLimits, integrationSuiAuthorizationScopeDigest, requiresIntegrationSuiLimits, type IntegrationSuiBudget } from "./integration-sui-limits"
 import { assertGuideCollectionMonotonic, type GuideCollectionRecord } from "./guide-collection"
 import type { OpenDidProviderState } from "./opendid-provider-lifecycle"
 import { CUTOVER_SCOPE, assertCommittedCutover, assertCutoverSourceUnchanged, assertIntegrationCutoverMonotonic, nextCutoverControl, parseIntegrationCutoverControl,
@@ -88,7 +89,7 @@ function backend(): Backend {
     backendSingleton ??= { kind: "redis", ...config }
     return backendSingleton
   }
-  if (requiresHostedIntegrationRedis(process.env, hkConfig().isolatedMock)) {
+  if (cutoverStoreRequired() || requiresHostedIntegrationRedis(process.env, hkConfig().isolatedMock)) {
     // Validate before the cache: removing/changing a branch's settings must not
     // reuse an old ledger or downgrade a provider journey to per-instance files.
     const config = hostedIntegrationRedisConfig(process.env)
@@ -153,7 +154,7 @@ async function redisLoad(b: RedisBackend): Promise<Db> {
   return db
 }
 
-type CutoverRead = { db: Db; control: IntegrationCutoverControl; raw: string; controlRaw: string; sourceRaw: string }
+type CutoverRead = { db: Db; control: IntegrationCutoverControl; raw: string; controlRaw: string; sourceRaw: string; configuration: string }
 function cutoverStoreRequired() { return requiresIntegrationSuiLimits() }
 function assertCutoverBackend(b: Backend): asserts b is RedisBackend {
   if (b.kind !== "redis" || b.canary || b.key !== CUTOVER_SCOPE.targetKey || process.env.HK_INTEGRATION_SUI_TARGET !== "selfhosted-testnet") {
@@ -162,6 +163,8 @@ function assertCutoverBackend(b: Backend): asserts b is RedisBackend {
 }
 async function redisCutoverLoad(b: RedisBackend): Promise<CutoverRead> {
   assertCutoverBackend(b)
+  assertIntegrationSuiLimits()
+  const configuration = integrationSuiAuthorizationScopeDigest()
   // MGET is one atomic snapshot. Independent GETs could combine two revisions.
   const pair = await redisCmd<unknown>(b, ["MGET", b.key, CUTOVER_SCOPE.controlKey, CUTOVER_SCOPE.sourceKey])
   if (!Array.isArray(pair) || pair.length !== 3 || typeof pair[0] !== "string" || typeof pair[1] !== "string") {
@@ -172,12 +175,16 @@ async function redisCutoverLoad(b: RedisBackend): Promise<CutoverRead> {
   const db = parseStoredJourney(pair[0])
   assertCommittedCutover(db, control)
   assertCutoverSourceUnchanged(pair[2], control.marker)
-  return { db, control, raw: pair[0], controlRaw: pair[1], sourceRaw: pair[2] as string }
+  assertIntegrationSuiLimits()
+  if (configuration !== integrationSuiAuthorizationScopeDigest()) throw new HkError("integration_sui_scope", "Integration configuration changed while checking execution authority.", 503)
+  return { db, control, raw: pair[0], controlRaw: pair[1], sourceRaw: pair[2] as string, configuration }
 }
 const CUTOVER_PERSIST_LUA = `-- ktour-cutover-runtime-commit-v1
 if redis.call('GET',KEYS[1])~=ARGV[1] or redis.call('GET',KEYS[2])~=ARGV[2] or redis.call('GET',KEYS[3])~=ARGV[3] or redis.call('GET',KEYS[4])~=ARGV[6] then return 0 end
 redis.call('SET',KEYS[2],ARGV[4]); redis.call('SET',KEYS[3],ARGV[5]); return 1`
 async function redisCutoverPersist(b: RedisBackend, previous: CutoverRead, db: Db, token: string) {
+  assertIntegrationSuiLimits()
+  if (previous.configuration !== integrationSuiAuthorizationScopeDigest()) throw new HkError("integration_sui_scope", "Integration configuration changed before saving execution authority.", 503)
   const control = nextCutoverControl(previous.db, previous.control, db)
   const committed = await redisCmd<number>(b, ["EVAL", CUTOVER_PERSIST_LUA, 4, `${b.key}:lock`, b.key, CUTOVER_SCOPE.controlKey, CUTOVER_SCOPE.sourceKey,
     token, previous.raw, previous.controlRaw, JSON.stringify(db), JSON.stringify(control), previous.sourceRaw])
@@ -297,9 +304,70 @@ export async function readStore<T>(fn: (db: Db) => T): Promise<T> {
  * This alone does not grant provider/signing authorization or create a budget. */
 export async function readIntegrationSuiActivation() {
   if (!cutoverStoreRequired()) throw new HkError("integration_sui_scope", "The integration profile is unavailable.", 503)
+  assertIntegrationSuiLimits()
   const b = backend(); assertCutoverBackend(b)
   const { db, control } = await redisCutoverLoad(b)
+  // A provider read may straddle the configured expiry or a runtime change.
+  assertIntegrationSuiLimits()
   return { db, control }
+}
+
+type IntegrationSuiOwner = Readonly<{ sessionId: string; operationId: string }>
+type IntegrationSuiAuthorization = {
+  readonly owner: IntegrationSuiOwner; readonly configuration: string; active: boolean; generation: number;
+  verifiedAt: number | null; expiresAt: number; migrationId: string | null;
+}
+const suiAuthorization = new AsyncLocalStorage<IntegrationSuiAuthorization>()
+const AUTHORIZATION_FRESH_MS = 5_000
+const authorizationUnavailable = (): never => { throw new HkError("integration_sui_migration_required", "Fresh shared-budget authorization is required before execution.", 503) }
+function activeAuthorization(): IntegrationSuiAuthorization {
+  const current = suiAuthorization.getStore()
+  if (!current?.active) return authorizationUnavailable()
+  try {
+    if (!requiresIntegrationSuiLimits()) return authorizationUnavailable()
+    assertIntegrationSuiLimits()
+    if (current.configuration !== integrationSuiAuthorizationScopeDigest()) return authorizationUnavailable()
+  } catch (error) { current.verifiedAt = null; throw error }
+  return current
+}
+/** Synchronous key/signing guard. No HTTP input, marker JSON or env flag can
+ * create this private, request-local capability. Refresh before each broadcast. */
+export function assertIntegrationSuiAuthorized(owner?: IntegrationSuiOwner): void {
+  const current = activeAuthorization(), now = Date.now()
+  if (current.verifiedAt === null || now < current.verifiedAt || now - current.verifiedAt >= AUTHORIZATION_FRESH_MS || now >= current.expiresAt ||
+    (owner && (owner.operationId !== current.owner.operationId || owner.sessionId !== current.owner.sessionId))) return authorizationUnavailable()
+}
+/** Fresh durable check at an existing beforeBroadcast checkpoint. Failure clears
+ * earlier authority; concurrent refresh cannot resurrect an older observation. */
+export async function refreshIntegrationSuiAuthorization(): Promise<void> {
+  const existing = suiAuthorization.getStore()
+  if (existing) existing.verifiedAt = null
+  const current = activeAuthorization(), generation = ++current.generation
+  const observed = await readIntegrationSuiActivation()
+  if (!current.active || generation !== current.generation || current.configuration !== integrationSuiAuthorizationScopeDigest()) return authorizationUnavailable()
+  const op = observed.db.operations[current.owner.operationId], now = Date.now()
+  assertIntegrationSuiOperation(observed.db, current.owner.operationId)
+  if (!op || op.operationId !== current.owner.operationId || op.sessionId !== current.owner.sessionId || op.status !== "pending" || !["delegation", "agent", "fulfillment"].includes(op.phase) ||
+    !Number.isFinite(Date.parse(op.expiresAt)) || Date.parse(op.expiresAt) <= now ||
+    (current.migrationId !== null && current.migrationId !== observed.control.marker.migrationId)) return authorizationUnavailable()
+  current.expiresAt = Math.min(Date.parse(op.expiresAt), Date.parse(observed.control.marker.expiresAt))
+  current.migrationId = observed.control.marker.migrationId
+  current.verifiedAt = now
+}
+/** Narrow server-only adapter boundary. Hosted/isolated callers retain their
+ * existing guards; protected integration must freshly prove owned allocation.
+ * Do not wrap a whole route or let background work escape the awaited callback. */
+export async function withIntegrationSuiAuthorization<T>(owner: IntegrationSuiOwner, fn: () => T | Promise<T>): Promise<T> {
+  if (suiAuthorization.getStore()) return authorizationUnavailable() // No nested owner swap/escalation, including after flags drift.
+  if (!requiresIntegrationSuiLimits()) return fn()
+  if (!owner || typeof owner.sessionId !== "string" || !owner.sessionId || typeof owner.operationId !== "string" || !/^op_[A-Za-z0-9_-]{8,64}$/.test(owner.operationId)) return authorizationUnavailable()
+  assertIntegrationSuiLimits()
+  const current: IntegrationSuiAuthorization = { owner: Object.freeze({ ...owner }), configuration: integrationSuiAuthorizationScopeDigest(), active: true,
+    generation: 0, verifiedAt: null, expiresAt: 0, migrationId: null }
+  return suiAuthorization.run(current, async () => {
+    try { await refreshIntegrationSuiAuthorization(); return await fn() }
+    finally { current.active = false; current.verifiedAt = null; current.generation++ }
+  })
 }
 
 export function redemptionKey(subjectRef: string, campaignId: string) { return `${subjectRef}::${campaignId}` }

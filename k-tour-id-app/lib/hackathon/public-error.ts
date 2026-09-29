@@ -6,6 +6,7 @@ import { HkError } from "./util"
 const CODES = new Set(`
 address bad_request campaign_closed cannot_cancel consent_version csrf
 guide_setup_required guide_ai_unavailable guide_collection_invalid guide_already_saved guide_save_in_progress zklogin_required
+guide_production_unavailable guide_access_denied guide_production_scope
 opendid_provider_required opendid_permission_required opendid_permission_expired opendid_status_required
 opendid_cx_mapping_unavailable opendid_configuration opendid_busy opendid_phase opendid_expired opendid_request_required
 opendid_provider_binding opendid_credential_expired opendid_policy_unsupported
@@ -36,6 +37,9 @@ const STATUSES = new Set([400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500,
 type PublicFailure = { status: number; error: { code: string; message: string; retryable: boolean } }
 
 const FIXED: Record<string, string> = {
+  guide_production_unavailable: "Guide saving is not available yet. You can keep reading.",
+  guide_access_denied: "Enter the journey access code to continue.",
+  guide_production_scope: "This action is not available in the guide journey.",
   guide_setup_required: "Guide saving is not connected yet. You can keep reading this guide.",
   guide_already_saved: "This guide is already in your pass. Open it from your collection.",
   guide_save_in_progress: "A save is already in progress. Check its status instead of starting again.",

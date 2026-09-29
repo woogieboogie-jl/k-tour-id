@@ -23,6 +23,17 @@ class GuideFixture {
   denial = false
   qrPayload = "fixture://not-a-provider/no-identity-data"
   wrongProviderMode = false
+  accessProfile: "guide-production" | "integration-preview" | "unavailable" | undefined = "guide-production"
+  configProfile: string | undefined = "guide-production"
+  configGuide = true
+  codeRequired = false
+  authorized = false
+  denyCode = false
+  dropAccessCookie = false
+  expireProviderAccess = false
+  expiredCampaign = false
+  accessResponseDelay = 0
+  operationResponseDelay = 0
   op: OperationResult | null = null
   collection: GuideCollection = { items: [], pendingOperation: null }
   constructor(readonly page: Page, readonly origin: string) {}
@@ -41,17 +52,25 @@ class GuideFixture {
       this.calls.push({ path, method: req.method(), body })
       const send = (data: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data), headers: { "cache-control": "no-store", "x-fixture-only": "no-provider-evidence" } })
       if (path === "/guide/readiness") {
-        const checks: GuideReadiness["checks"] = (["identity", "credential", "execution", "audit", "login", "ai", "campaign"] as const).map(id => ({ id, status: this.ready ? "configured" : "setup_required" }))
-        await send({ ...V, supported: true, ready: this.ready, verification: "configuration_only", checks, blockers: this.ready ? [] : checks.map(check => check.id), identityCheckAvailable: false }); return
+        const checks: GuideReadiness["checks"] = (["identity", "credential", "execution", "audit", "login", "ai", "campaign"] as const).map(id => ({ id, status: id === "campaign" && this.expiredCampaign ? "expired" : this.ready ? "configured" : "setup_required" }))
+        const ready = this.ready && !this.expiredCampaign
+        await send({ ...V, supported: true, ready, verification: "configuration_only", accessProfile: ready ? this.accessProfile : "unavailable", checks, blockers: checks.filter(check => check.status !== "configured").map(check => check.id), identityCheckAvailable: false }); return
       }
       if (path === "/guide/collection") { await send(this.collection); return }
       if (path === "/config") {
-        await send({ isolatedMock: false, campaign: { ...V, title: { ko: "가이드 담기", en: "Save guide", ja: "ガイドを保存" }, description: { ko: "", en: "", ja: "" } }, consentVersion: V.consentVersion,
+        if (this.codeRequired && !this.authorized) { await send({ error: { code: "guide_production_access_denied" } }, 401); return }
+        await send({ isolatedMock: false, guideProfile: this.configProfile, ...(this.configGuide ? { guide: { ...V } } : {}), campaign: { ...V, purpose: V.action, ...(this.configProfile === "integration-preview" ? { campaignId: "legacy-v1-preview-campaign" } : {}), title: { ko: "가이드 담기", en: "Save guide", ja: "ガイドを保存" }, description: { ko: "", en: "", ja: "" } }, consentVersion: V.consentVersion,
           modes: { cx: "cx", opendid: "opendid", ai: "gemini", sui: "testnet", omnione: "stage", zklogin: "google" }, sui: { network: "testnet", packageId: "", campaignId: "", explorer: "", googleClientId: "fixture-client" }, omnione: { chainId: 0, registryAddress: "" } }); return
+      }
+      if (path === "/guide/access" || path === "/integration/access") {
+        if (this.accessResponseDelay) await new Promise(resolve => setTimeout(resolve, this.accessResponseDelay))
+        if (this.denyCode) { await send({ error: { code: "guide_production_access_denied" } }, 401); return }
+        if (!this.dropAccessCookie) this.authorized = true
+        await send({ ok: true }); return
       }
       if (path === "/sessions") { await send({ ok: true, sessionId: "fixture-only" }); return }
       if (path === "/guide/operations" && req.method() === "POST") { this.op = operation(); await send(this.op); return }
-      if (path === `/operations/${OP}`) { await send(this.missingResume ? { error: { code: "not_found" } } : this.op, this.missingResume ? 404 : 200); return }
+      if (path === `/operations/${OP}`) { if (this.operationResponseDelay) await new Promise(resolve => setTimeout(resolve, this.operationResponseDelay)); await send(this.missingResume ? { error: { code: "not_found" } } : this.op, this.missingResume ? 404 : 200); return }
       if (path === `/operations/${OP}/reconcile`) { await send(this.op); return }
       if (path === `/operations/${OP}/redeem`) {
         this.op = operation({ phase: "done", status: "succeeded", allowedActions: ["return", "reconcile"], fulfillment: { status: "redeemed", redemptionRef: "fixture-guide-save", redeemedAt: now, reason: null, recheck: null }, chain: { outboxId: "fixture-outbox", eventKey: "fixture-event", payloadCommitment: "fixture", status: "pending", txHash: null, blockNumber: null, attempts: 0, lastError: null, confirmedAt: null } })
@@ -59,6 +78,7 @@ class GuideFixture {
         await send(this.op); return
       }
       if (path.includes(`/operations/${OP}/provider/`)) {
+        if (this.expireProviderAccess) { this.expireProviderAccess = false; this.codeRequired = true; this.authorized = false; await send({ error: { code: "guide_production_access_denied" } }, 401); return }
         if (this.providerFailure) { await send({ error: { code: "provider_timeout" } }, 503); return }
         if (path.endsWith("/cancel")) { this.op = operation({ phase: "cancelled", status: "cancelled", allowedActions: ["return"] }); await send({ operation: this.op, provider: { phase: "cancelled", offer: null } }); return }
         if (path.endsWith("issuance/refresh")) { this.op = operation({ phase: "presentation", allowedActions: ["present", "cancel"] }); await send({ operation: this.op, provider: { phase: "presentation", offer: null } }); return }
@@ -144,6 +164,7 @@ test("GUIDE-05 final save reaches server-backed Pass collection and survives rel
   await expect(page.getByTestId("server-guide-collection")).toContainText("保存済み・記録を確認中")
   await expect(page.getByTestId("experience-saved-guides")).toHaveCount(0)
   await page.getByTestId("server-guide-collection").scrollIntoViewIfNeeded()
+  await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" })
   await page.screenshot({ path: info.outputPath("guide-pass-ja.png") })
   await page.reload({ waitUntil: "domcontentloaded" }); await page.getByTestId("nav-id").click()
   await expect(page.getByTestId("server-guide-collection")).toContainText("保存済み・記録を確認中")
@@ -214,7 +235,138 @@ test("GUIDE-06 missing resume and v1 DTO never become a new v2 operation", async
   await page.getByTestId("hackathon-close").click()
   f.missingResume = false; f.op = operation({ journey: undefined, campaignId: "hk-identity-perk-v1", execution: "sample" }); f.collection.pendingOperation = f.op
   await page.getByTestId("experience-open").click(); await f.save()
-  await expect(page.getByTestId("hackathon-layer").getByRole("alert")).toContainText("guide_operation_mismatch")
+  await expect(page.getByTestId("guide-error-code")).toContainText("guide_operation_mismatch")
   await expect(page.getByTestId("hackathon-start")).toBeDisabled()
   f.assertSafe()
+})
+
+const ACCESS_CODE = "fixture_only_access_not_a_real_secret_20260929"
+
+test("GUIDE-12 production access is private, transient and separate from identity consent", async ({ page, baseURL }, info) => {
+  await page.setViewportSize({ width: 320, height: 740 })
+  const f = new GuideFixture(page, baseURL!); f.ready = true; f.codeRequired = true; await f.install(); await f.place(); await f.save()
+  await expect(page.getByTestId("guide-access")).toHaveAttribute("data-profile", "guide-production")
+  await expect(page.getByTestId("guide-access-submit")).toBeDisabled()
+  expect(f.calls.filter(call => call.method === "POST")).toEqual([])
+  const input = page.getByTestId("guide-access-code")
+  await input.fill("too-short"); await expect(page.getByTestId("guide-access-submit")).toBeDisabled()
+  f.denyCode = true; await input.fill(ACCESS_CODE); await page.getByTestId("guide-access-submit").click()
+  await expect(page.getByTestId("guide-access").getByRole("alert")).toBeVisible(); await expect(input).toHaveValue("")
+  expect(f.calls.some(call => call.path === "/sessions")).toBe(false)
+  const dialog = page.getByRole("dialog").filter({ has: page.getByTestId("guide-access") })
+  expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true)
+  await page.screenshot({ path: info.outputPath("guide-access-ja-320.png") })
+  f.denyCode = false; await input.fill(ACCESS_CODE); await page.getByTestId("guide-access-submit").click()
+  await expect(page.getByTestId("hackathon-start")).toBeDisabled(); await expect(page.locator("#hk-consent")).not.toBeChecked()
+  expect(f.calls.filter(call => call.path.endsWith("/access"))).toEqual([
+    { method: "POST", path: "/guide/access", body: { accessCode: ACCESS_CODE } },
+    { method: "POST", path: "/guide/access", body: { accessCode: ACCESS_CODE } },
+  ])
+  expect(await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))).not.toContain(ACCESS_CODE)
+  expect(f.calls.some(call => call.path === "/guide/operations")).toBe(false); f.assertSafe()
+})
+
+test("GUIDE-13 explicit integration profile alone selects the integration access endpoint", async ({ page, baseURL }) => {
+  const f = new GuideFixture(page, baseURL!); f.ready = true; f.codeRequired = true; f.accessProfile = "integration-preview"; f.configProfile = "integration-preview"
+  await f.install(); await f.place(); await f.save()
+  await page.getByTestId("guide-access-code").fill(ACCESS_CODE); await page.getByTestId("guide-access-submit").click()
+  await expect(page.locator("#hk-consent")).toBeVisible()
+  expect(f.calls.filter(call => call.path.endsWith("/access"))).toEqual([{ method: "POST", path: "/integration/access", body: { accessCode: ACCESS_CODE } }])
+  expect(f.calls.some(call => call.path === "/guide/operations")).toBe(false); f.assertSafe()
+})
+
+test("GUIDE-14 missing readiness profile or mismatched protected config never falls back to preview", async ({ page, baseURL }) => {
+  const f = new GuideFixture(page, baseURL!); f.ready = true; f.accessProfile = undefined; await f.install(); await f.place(); await f.save()
+  await expect(page.getByTestId("guide-save-readiness")).toContainText("現在、パスには保存できません")
+  expect(f.calls.some(call => call.path === "/config")).toBe(false)
+  await page.getByTestId("guide-keep-reading").click(); f.accessProfile = "guide-production"; f.configProfile = "integration-preview"; await f.save()
+  await expect(page.getByTestId("guide-access")).toHaveAttribute("data-state", "unavailable")
+  f.configProfile = "guide-production"; f.configGuide = false; await page.getByTestId("guide-access-retry").click()
+  await expect(page.getByTestId("guide-access")).toHaveAttribute("data-state", "unavailable")
+  expect(f.calls.filter(call => call.method === "POST")).toEqual([])
+  await page.getByTestId("guide-access-keep-reading").click(); await expect(page.getByTestId("experience-public-guide")).toBeVisible(); f.assertSafe()
+})
+
+test("GUIDE-15 successful access response without a usable cookie cannot authorize the journey", async ({ page, baseURL }) => {
+  const f = new GuideFixture(page, baseURL!); f.ready = true; f.codeRequired = true; f.dropAccessCookie = true; await f.install(); await f.place(); await f.save()
+  await page.getByTestId("guide-access-code").fill(ACCESS_CODE); await page.getByTestId("guide-access-submit").click()
+  await expect(page.getByTestId("guide-access")).toHaveAttribute("data-state", "code")
+  await expect(page.getByTestId("guide-access-code")).toHaveValue(""); await expect(page.getByTestId("hackathon-layer")).toHaveCount(0)
+  expect(f.calls.filter(call => call.method === "POST").map(call => call.path)).toEqual(["/guide/access"]); f.assertSafe()
+})
+
+test("GUIDE-16 expired access clears QR and resumes only the same operation after explicit recheck", async ({ page, baseURL }) => {
+  const f = new GuideFixture(page, baseURL!); await f.install(); await f.pending("issuance")
+  await page.getByTestId("guide-provider-start").click(); await expect(page.getByTestId("guide-provider-step").locator("img")).toBeVisible()
+  f.expireProviderAccess = true; await page.getByTestId("guide-provider-refresh").click()
+  await expect(page.getByTestId("guide-access")).toHaveAttribute("data-state", "recheck")
+  await expect(page.getByTestId("guide-provider-step")).toHaveCount(0)
+  const countBeforeRecheck = f.calls.length
+  await page.waitForTimeout(150); expect(f.calls.length).toBe(countBeforeRecheck)
+  await page.getByTestId("guide-access-retry").click(); await page.getByTestId("guide-access-code").fill(ACCESS_CODE); await page.getByTestId("guide-access-submit").click()
+  await expect(page.getByTestId("hackathon-layer")).toHaveAttribute("data-phase", "issuance")
+  await expect(page.getByTestId("guide-provider-step").locator("img")).toHaveCount(0)
+  expect(f.calls.filter(call => call.path === `/operations/${OP}`)).toHaveLength(2)
+  expect(f.calls.filter(call => call.path.endsWith("issuance/start"))).toHaveLength(1)
+  expect(f.calls.filter(call => call.path.endsWith("issuance/refresh"))).toHaveLength(1)
+  expect(f.calls.some(call => call.path === "/guide/operations")).toBe(false); f.assertSafe()
+})
+
+test("GUIDE-17 campaign expiry keeps free reading open without creating access or operation", async ({ page, baseURL }) => {
+  const f = new GuideFixture(page, baseURL!); f.ready = true; f.expiredCampaign = true; await f.install(); await f.place(); await f.save()
+  await expect(page.getByTestId("guide-save-readiness")).toContainText("保存の受付は終了しました")
+  expect(f.calls.filter(call => call.method === "POST")).toEqual([])
+  await page.getByTestId("guide-keep-reading").click(); await expect(page.getByTestId("experience-public-guide")).toBeVisible(); f.assertSafe()
+})
+
+test("GUIDE-18 missing-operation retry never replaces the known operation with a new save", async ({ page, baseURL }) => {
+  const f = new GuideFixture(page, baseURL!); f.ready = true; f.op = operation(); f.collection.pendingOperation = f.op; f.missingResume = true
+  await f.install(); await f.place(); await f.save(); await expect(page.getByTestId("guide-bootstrap-retry")).toBeVisible()
+  f.collection.pendingOperation = null; await page.getByTestId("guide-bootstrap-retry").click()
+  await expect.poll(() => f.calls.filter(call => call.path === `/operations/${OP}`).length).toBe(2)
+  await expect(page.getByTestId("hackathon-start")).toBeDisabled()
+  expect(f.calls.some(call => call.path === "/guide/operations")).toBe(false); f.assertSafe()
+})
+
+test("GUIDE-19 leaving while access is pending cannot mount a late journey or start a session", async ({ page, baseURL }) => {
+  const f = new GuideFixture(page, baseURL!); f.ready = true; f.codeRequired = true; f.accessResponseDelay = 600; await f.install(); await f.place(); await f.save()
+  await page.getByTestId("guide-access-code").fill(ACCESS_CODE); await page.getByTestId("guide-access-submit").click()
+  await page.getByTestId("guide-access-keep-reading").click(); await expect(page.getByTestId("experience-public-guide")).toBeVisible()
+  await page.waitForTimeout(650); await expect(page.getByTestId("hackathon-layer")).toHaveCount(0)
+  expect(f.calls.some(call => call.path === "/sessions")).toBe(false); f.assertSafe()
+})
+
+test("GUIDE-20 a closed journey's late terminal GET cannot erase a newer pending pointer", async ({ page, baseURL }) => {
+  const f = new GuideFixture(page, baseURL!); f.ready = true; f.op = operation({ phase: "done", status: "succeeded" }); f.collection.pendingOperation = operation(); f.operationResponseDelay = 700
+  await f.install(); await f.place(); await f.save()
+  await expect.poll(() => f.calls.some(call => call.path === `/operations/${OP}`)).toBe(true)
+  await page.getByTestId("hackathon-close").click()
+  const newer = JSON.stringify({ venueId: V.venueId, locale: "ja", source: "guide", resumeOperationId: "op_newer_fixture_only", savedAt: Date.now() })
+  await page.evaluate(value => sessionStorage.setItem("ondo-b.hackathon.pending.v1", value), newer)
+  await page.waitForTimeout(750)
+  expect(await page.evaluate(() => sessionStorage.getItem("ondo-b.hackathon.pending.v1"))).toBe(newer)
+  await expect(page.getByTestId("hackathon-layer")).toHaveCount(0); f.assertSafe()
+})
+
+test("GUIDE-21 a provider body arriving after timeout cannot restore QR or advance", async ({ page, baseURL }) => {
+  const f = new GuideFixture(page, baseURL!); await f.install(); await f.pending("issuance")
+  // Deliberately emulate a transport that cannot abort an already received body.
+  // Only this fixture's 15s provider deadline is shortened; no product motion changes.
+  await page.evaluate(() => {
+    const originalFetch = window.fetch.bind(window), originalTimeout = window.setTimeout.bind(window)
+    window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => originalTimeout(handler, timeout === 15000 ? 80 : timeout, ...args)) as typeof window.setTimeout
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args)
+      if (String(args[0]).includes("/provider/issuance/start")) {
+        const json = response.json.bind(response)
+        response.json = async () => { const value = await json(); await new Promise(resolve => originalTimeout(resolve, 200)); return value }
+      }
+      return response
+    }
+  })
+  await page.getByTestId("guide-provider-start").click()
+  await expect(page.getByTestId("guide-provider-step").getByRole("alert")).toBeVisible()
+  await expect(page.getByTestId("guide-provider-step").locator("img")).toHaveCount(0)
+  await expect(page.getByTestId("hackathon-layer")).toHaveAttribute("data-phase", "issuance")
+  expect(f.collection.items).toEqual([]); f.assertSafe()
 })

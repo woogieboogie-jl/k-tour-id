@@ -9,7 +9,8 @@ import { Ticket, X } from "lucide-react"
 import type { OperationResult } from "@/lib/hackathon/types"
 import { GUIDE_SAVE_V2, isGuideJourney } from "@/lib/hackathon/guide-contract"
 import { GuideReadinessBoundaryB } from "../experience-b/guide-readiness-b"
-import { createGuideOperationB, GUIDE_COLLECTION_CHANGED_B, readGuideCollectionB } from "../experience-b/guide-client-b"
+import { createGuideOperationB, GUIDE_COLLECTION_CHANGED_B, isGuideAccessErrorB, readGuideCollectionB } from "../experience-b/guide-client-b"
+import { validGuideConfigB, type GuideAccessProfileB } from "../experience-b/guide-access-contract-b"
 import { requestExperienceB } from "../experience-b/experience-model-b"
 import { GUIDE_JOURNEY_COPY } from "./guide-journey-copy"
 import { GuideProviderStepB } from "./guide-provider-step-b"
@@ -112,7 +113,10 @@ function IntegrationJourney(props: { detail: HackathonOpenDetail; onClose: () =>
 }
 
 function GuideJourney(props: { detail: HackathonOpenDetail; onClose: (restore?: boolean) => void }) {
-  return <GuideReadinessBoundaryB {...props}><Journey {...props} /></GuideReadinessBoundaryB>
+  const [recovery, setRecovery] = useState({ generation: 0, operationId: props.detail.resumeOperationId })
+  const recoverAccess = useCallback((operationId?: string) => setRecovery(current => ({ generation: current.generation + 1, operationId: operationId ?? current.operationId })), [])
+  const detail = useMemo(() => ({ ...props.detail, ...(recovery.operationId ? { resumeOperationId: recovery.operationId } : {}) }), [props.detail, recovery.operationId])
+  return <GuideReadinessBoundaryB key={recovery.generation} detail={detail} onClose={props.onClose} requiresAccessRecheck={recovery.generation > 0}>{profile => <Journey detail={detail} onClose={props.onClose} guideProfile={profile} onAccessRequired={recoverAccess} />}</GuideReadinessBoundaryB>
 }
 
 function HostedSuiJourney(props: { detail: HackathonOpenDetail; onClose: () => void }) {
@@ -131,16 +135,20 @@ export function HackathonDemoEntryB() {
   )
 }
 
-function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: (restore?: boolean) => void }) {
+function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: HackathonOpenDetail; onClose: (restore?: boolean) => void; guideProfile?: GuideAccessProfileB; onAccessRequired?(operationId?: string): void }) {
   const locale: Locale = detail.locale
   const guide = detail.source === "guide"
   const c = useMemo(() => ({ ...copyFor(locale), ...(guide ? GUIDE_JOURNEY_COPY[locale] : {}) }), [locale, guide])
   const tr = (ko: string, en: string, ja: string) => locale === "ko" ? ko : locale === "ja" ? ja : en
   const [info, setInfo] = useState<EntitlementInfo | null>(null)
   const [config, setConfig] = useState<PublicConfig | null>(null)
+  const closedRef = useRef(false)
+  const operationIdRef = useRef(detail.resumeOperationId)
   const [op, setOperation] = useState<OperationResult | null>(null)
   const setOp = useCallback((next: OperationResult | null) => {
+    if (closedRef.current) return
     if (guide && next && (!isGuideJourney(next) || next.execution !== "provider" || next.identity?.mode === "mock" || next.identity?.handoff?.kind === "mock" || next.credential?.mode === "mock")) throw new Error("guide_operation_mismatch")
+    operationIdRef.current = next?.operationId ?? operationIdRef.current
     setOperation(next)
     if (guide && next?.fulfillment?.status === "redeemed") window.dispatchEvent(new Event(GUIDE_COLLECTION_CHANGED_B))
   }, [guide])
@@ -151,8 +159,8 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: (r
   const [evidence, setEvidence] = useState<Record<string, unknown> | null>(null)
   const [signer, setSigner] = useState<StoredSigner | null>(null)
   const [viewStep, setViewStep] = useState<number | null>(null)
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0)
   const inFlightRef = useRef(false)
-  const closedRef = useRef(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const vcRef = useRef<unknown>(null)
   const isMobile = typeof navigator !== "undefined" && /Android|iPhone|iPad/i.test(navigator.userAgent)
@@ -168,8 +176,13 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: (r
     if (inFlightRef.current) return
     inFlightRef.current = true
     setBusy(label); setError(null)
-    try { await fn() } catch (e) { setError(e instanceof ApiError ? `${e.message} (${e.code})` : e instanceof Error ? e.message : "unknown error") } finally { inFlightRef.current = false; setBusy(null) }
-  }, [])
+    try { await fn() } catch (e) {
+      if (!closedRef.current) {
+        if (guide && isGuideAccessErrorB(e)) onAccessRequired?.(operationIdRef.current)
+        else { if (guide && label === "start") setInfo(null); setError(e instanceof ApiError ? `${e.message} (${e.code})` : e instanceof Error ? e.message : "unknown error") }
+      }
+    } finally { inFlightRef.current = false; if (!closedRef.current) setBusy(null) }
+  }, [guide, onAccessRequired])
 
   // Scope or recipient changes cannot inherit a previous checkbox approval.
   useEffect(() => { setApprove(false) }, [op?.proposal?.proposalDigest, op?.presentation?.decisionRef, signer?.address])
@@ -187,26 +200,30 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: (r
   // bootstrap: config + entitlement + resume
   useEffect(() => {
     let alive = true
+    setError(null)
+    setConsent(false)
     ;(async () => {
       await api.session() // one cookie first; never proceed after a failed session bootstrap
       const cfg = await api.config()
-      if (guide && (cfg.isolatedMock !== false || cfg.modes.cx !== "cx" || cfg.modes.opendid !== "opendid" || cfg.modes.sui !== "testnet" || cfg.modes.zklogin !== "google" || cfg.modes.omnione !== "stage" || cfg.modes.ai !== "gemini")) throw new Error("guide_connection_unavailable")
+      if (guide && (!guideProfile || !validGuideConfigB(cfg, guideProfile))) throw new Error("guide_connection_unavailable")
       const collection = guide ? await readGuideCollectionB() : null
       const ent: EntitlementInfo = guide ? { supported: true, campaign: { ...cfg.campaign, venueId: GUIDE_SAVE_V2.venueId, campaignId: GUIDE_SAVE_V2.campaignId, title: { ko: GUIDE_JOURNEY_COPY.ko.title, en: GUIDE_JOURNEY_COPY.en.title, ja: GUIDE_JOURNEY_COPY.ja.title } }, consentVersion: GUIDE_SAVE_V2.consentVersion,
         modes: cfg.modes, operation: collection?.pendingOperation ?? null, redeemed: null } : await api.entitlements(detail.venueId)
       if (!alive) return
       setConfig(cfg); setInfo(ent)
-      const resumeId = detail.resumeOperationId ?? ent.operation?.operationId
+      const resumeId = operationIdRef.current ?? detail.resumeOperationId ?? ent.operation?.operationId
       if (resumeId) {
+        operationIdRef.current = resumeId
         const current = guide ? await api.get(resumeId) : await api.get(resumeId).catch(() => null)
+        if (!alive || closedRef.current) return
         if (guide && !current) throw new Error("guide_operation_unavailable")
         if (current && current.status !== "pending") writePendingHackathon(null)
         if (current && alive) { setOp(current); const restored = readSigner(current.operationId); setSigner(guide && restored?.kind !== "zklogin" ? null : restored); if (!guide) { try { vcRef.current = JSON.parse(sessionStorage.getItem(`ondo-b.hackathon.vc:${current.operationId}`) ?? "null") } catch { vcRef.current = null } } }
         // OAuth return restores the view only; finishing sign-in requires a fresh tap.
       }
-    })().catch((e) => { if (alive) { if (guide) setInfo(null); setError(e instanceof Error ? e.message : "load failed") } })
+    })().catch((e) => { if (alive) { if (guide) setInfo(null); if (guide && isGuideAccessErrorB(e)) onAccessRequired?.(operationIdRef.current); else setError(e instanceof Error ? e.message : "load failed") } })
     return () => { alive = false }
-  }, [detail.venueId, detail.resumeOperationId, run, guide, setOp])
+  }, [detail.venueId, detail.resumeOperationId, run, guide, guideProfile, setOp, onAccessRequired, bootstrapAttempt])
 
   useEffect(() => { if (op && op.status === "pending") writePendingHackathon({ ...detail, resumeOperationId: op.operationId }) }, [op, detail])
 
@@ -372,7 +389,9 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: (r
             </dl>
           </section> : <>
           {isolated ? <div className={styles.notice} data-testid="hackathon-isolated-notice">{tr("외부 서비스에 연결하지 않는 샘플 체험입니다. 실제 신원 확인이나 혜택 사용은 이루어지지 않습니다.", "This isolated sample does not connect to external services or verify a real identity or perk use.", "外部サービスに接続しないサンプル体験です。実際の本人確認や特典利用は行いません。")}</div> : null}
-          {error ? <div className={styles.notice} data-tone="error" role="alert">{error}</div> : null}
+          {error ? <div className={styles.notice} data-tone="error" role="alert">{guide ? tr("저장 결과를 확인하지 못했어요. 같은 요청을 다시 확인하거나 원래 화면으로 돌아가 주세요. 확인 없이 실행을 반복하지 않아요.", "We couldn’t confirm the saving result. Check this same request or return to the original screen. Execution is not repeated automatically.", "保存結果を確認できませんでした。同じ要求を再確認するか、元の画面に戻ってください。実行は自動で繰り返しません。") : error}</div> : null}
+          {guide && error && !op ? <button type="button" className={styles.secondary} data-testid="guide-bootstrap-retry" onClick={() => setBootstrapAttempt(value => value + 1)}>{c.reconcile}</button> : null}
+          {guide && error ? <details className={styles.card}><summary>{tr("연결 정보", "Connection details", "接続情報")}</summary><code data-testid="guide-error-code">{error}</code></details> : null}
 
           {!op ? (
             <section className={styles.card}>
@@ -412,7 +431,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: (r
             </section>
           ) : null}
 
-          {guide && op && (activePhase === "issuance" || activePhase === "presentation") ? <GuideProviderStepB key={`${op.operationId}:${activePhase}`} operation={op} locale={locale} onOperation={setOp} /> : null}
+          {guide && op && (activePhase === "issuance" || activePhase === "presentation") ? <GuideProviderStepB key={`${op.operationId}:${activePhase}`} operation={op} locale={locale} onOperation={setOp} onAccessRequired={onAccessRequired} /> : null}
           {activePhase === "issuance" && op && !guide ? <section className={styles.card}>
             <h3>{c.steps[2]}</h3>
             {hostedSui ? <p>{tr("앱 내 체험 패스입니다. OpenDID 신분증은 발급하지 않습니다.", "An in-app sample pass, not an OpenDID identity credential.", "アプリ内の体験パスです。OpenDIDの身分証は発行しません。")}</p> : null}

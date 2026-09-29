@@ -27,8 +27,11 @@ const address = "0x" + "1".repeat(64), grantId = "0x" + "2".repeat(64)
 const digest = "fixture-paid-failed-transaction"
 mock.module(new URL("../../lib/hackathon/config.ts", import.meta.url).href, { namedExports: {
   ...realConfig,
-  // This suite targets the post-preflight claim, not environment validation.
-  assertExternalServicesEnabled: (name: string) => assert.equal(name, "Sui agent execution"),
+  // The service performs the read-only Sui preflight before claiming an attempt.
+  // Real signing stays inside authorizedSui; the actual adapter's suiKeys and
+  // executeSigned both enforce "Sui signing". This suite replaces that adapter
+  // and tests durable budget/claim semantics, not its credential capability.
+  assertExternalServicesEnabled: (name: string) => assert.equal(name, "Sui"),
 } })
 mock.module(new URL("../../lib/hackathon/adapters/sui.ts", import.meta.url).href, { namedExports: {
   agentConsume: async ({ beforeBroadcast }: { beforeBroadcast: (digest: string) => Promise<void> }) => {

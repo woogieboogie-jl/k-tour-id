@@ -6,7 +6,7 @@ The main app now has a real server-only `bridge-v1` transport and durable operat
 
 Production activation is **blocked**, not complete: there is no approved authenticated CX-evidence → native holder/CAS mapping resolver, and the current native bridge authorizes `redeem_demo_entitlement`, policy version `1`, not the main guide-save action. An environment flag cannot make either contract exist. `providerIntegrationAvailable()` deliberately returns `false`; `HK_OPENDID_CX_MAPPING=verified-evidence-v1` alone does not enable anything. Missing mapping fails with `opendid_cx_mapping_unavailable`; guide/unknown journey scope fails with `opendid_policy_unsupported`.
 
-Reviewed native contract snapshot: `.codex-worktrees/opendid-native-20260928`, HEAD `f906bf2854a2179eef7485228e33ed53481f4738`. It may be concurrently updated by Claude. Source references: `opendid-workflow/contracts/bridge-v1/README.md`, `docs/opendid/INTEGRATION_PROPOSAL.md`, `docs/opendid/RESULTS.md`, bridge `main.ts`, `lifecycle.ts`, and `provider/http-opendid.ts`. The isolated 16/16 report in `RESULTS.md` is prior native-lane evidence, **not** this application's integrated E2E result.
+Initially reviewed native contract snapshot: `.codex-worktrees/opendid-native-20260928`, HEAD `f906bf2854a2179eef7485228e33ed53481f4738`. Read-only recheck on 2026-09-29 found HEAD `ab2b20b7cf7c6d7ee9d91b6c6536a44de39aed89`, including manual-consent and official-wallet/build-review work. The bridge still scopes `redeem_demo_entitlement`; the approved CX→CAS mapping and guide policy remain separate prerequisites. It may be concurrently updated by Claude. Source references: `opendid-workflow/contracts/bridge-v1/README.md`, `docs/opendid/INTEGRATION_PROPOSAL.md`, `docs/opendid/RESULTS.md`, bridge `main.ts`, `lifecycle.ts`, and `provider/http-opendid.ts`. The isolated 16/16 report in `RESULTS.md` is prior native-lane evidence, **not** this application's integrated E2E result.
 
 ## Implemented modules and boundaries
 
@@ -65,7 +65,7 @@ Do not paste real values into this document, chat, screenshots, browser bundles,
 
 ## What Claude/vendor must supply; what remains app integration work
 
-1. **Authenticated CX→holder/CAS mapping**: a approved route/contract that independently binds the current CX evidence reference to the intended native holder and its actual CAS `kycRef`. No deterministic hash of an arbitrary evidence ID is a substitute. Implement a bounded resolver and mismatch/expiry/cross-holder tests before wiring it into the production factory.
+1. **Authenticated CX→holder/CAS mapping**: an approved route/contract that independently binds the current CX evidence reference to the intended native holder and its actual CAS `kycRef`. No deterministic hash of an arbitrary evidence ID is a substitute. Implement a bounded resolver and mismatch/expiry/cross-holder tests before wiring it into the production factory.
 2. **Guide-save policy support**: native issuer/verifier must expose or pin `save-neighborhood-guide-to-pass`, correct policy/consent/campaign scope, and tests refusing V1 redemption authority for V2 guides. The main BFF must verify this response/contract before expanding `supportedPolicy`.
 3. **Deployment and trust**: bridge HTTPS origin, service credential, HMAC owner secret, exact issuer/schema and durable native storage. Do not activate before the missing contracts are approved; passing environment presence checks is not sufficient.
 4. **Holder handoff**: current bridge provides QR/paste only. A same-device URL scheme/universal link and secure return correlation are absent. Do not invent app links or claim that the browser opened a native app; if Claude adds them, define an allowlisted DTO and return/resume tests first.
@@ -79,7 +79,7 @@ Do not paste real values into this document, chat, screenshots, browser bundles,
 >
 > 매핑의 요청/응답 DTO, 호출자 인증, 소유자/증거 만료·재사용 규칙, holder mismatch 거절을 명확히 정하고 실제 CAS에 연결해 주세요. 가이드용 issuer/verifier 정책도 서버가 신뢰할 수 있는 계약으로 노출/고정하고 wrong-action/wrong-campaign/old-consent/expired/revoked/suspended/cross-holder 테스트를 남겨 주세요. 확인된 VP만 허용하며 현재 안전하게 지원되지 않는 ZKP로 우회하지 않습니다.
 >
-> 현재 브라우저는 QR/paste만 지원하는 것으로 이해합니다. 실제 같은 기기 앱 열기/복귀 기능을 만들었다면 URL scheme/universal link, allowlist, operation/owner binding 및 cancel/late-return 동작을 문서화해 주세요. 없으면 QR-only라고 정확히 남겨 주세요. VC ID/holderBinding은 서버용 가명 식별자이므로 프론트 전달/로그 금지, QR도 저장하지 않습니다.
+> 메인 브라우저 UI는 QR 표시·결과 확인·취소를 지원하며, native 쪽 paste 지원과 구분합니다. 실제 같은 기기 앱 열기/복귀 기능을 만들었다면 URL scheme/universal link, allowlist, operation/owner binding 및 cancel/late-return 동작을 문서화해 주세요. 없으면 메인 연결은 QR-only라고 정확히 남겨 주세요. VC ID/holderBinding은 서버용 가명 식별자이므로 프론트 전달/로그 금지, QR도 저장하지 않습니다.
 >
 > 완료 후 변경 커밋, 실행 명령과 결과, 실제 네이티브·provider 호출 증거, 외부 HTTPS bridge 접근 방법, issuer/schema 식별자 및 비밀값 전달 경로를 알려 주세요. **비밀값 자체는 문서/채팅/커밋에 쓰지 마세요.** 메인 앱 담당이 계약을 검토한 뒤 resolver + V2 정책을 연결하고, 실제 CX → native VC/VP → fresh status → zkLogin 사용자 승인 → Sui → Pass 저장 → OmniOne 수신 확인을 검증할 예정입니다. 단독 native 16/16을 메인 통합 E2E 완료로 표시하지 말아 주세요.
 

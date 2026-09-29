@@ -16,7 +16,7 @@ const COPY = {
 
 /** Ephemeral provider offer only. No QR, VC, issuer transaction or personal
  * claims enter browser persistence, and no mock holder acknowledgement exists. */
-export function GuideProviderStepB({ operation, locale, onOperation }: { operation: OperationResult; locale: "ko" | "en" | "ja"; onOperation(value: OperationResult): void }) {
+export function GuideProviderStepB({ operation, locale, onOperation, onAccessRequired }: { operation: OperationResult; locale: "ko" | "en" | "ja"; onOperation(value: OperationResult): void; onAccessRequired?(operationId: string): void }) {
   const t = COPY[locale]
   const phase = operation.phase === "issuance" ? "issuance" : "presentation"
   const [view, setView] = useState<ProviderView | null>(null)
@@ -33,8 +33,11 @@ export function GuideProviderStepB({ operation, locale, onOperation }: { operati
     const timer = window.setTimeout(() => controller.abort(), 15000)
     try {
       const response = await fetch(`/api/hackathon/v1/operations/${encodeURIComponent(operation.operationId)}/provider/${action}`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: "{}", signal: controller.signal })
+      if (requestRef.current !== controller || controller.signal.aborted) throw new Error("provider_request_closed")
+      if (response.status === 401 && requestRef.current === controller) { setView(null); if (onAccessRequired) onAccessRequired(operation.operationId); else setError(true); return }
       if (!response.ok) throw new Error("provider_unavailable")
       const result = await response.json() as { operation: OperationResult; provider: ProviderView }
+      if (requestRef.current !== controller || controller.signal.aborted) throw new Error("provider_request_closed")
       if (!isGuideJourney(result.operation) || result.operation.execution !== "provider" || result.operation.identity?.mode === "mock" || result.operation.identity?.handoff?.kind === "mock" || result.operation.credential?.mode === "mock" || result.operation.operationId !== operation.operationId || !result.provider || !["issuance", "presentation", "allowed", "denied", "failed", "cancelled", "expired"].includes(result.provider.phase)) throw new Error("provider_mismatch")
       if (result.provider.offer && (typeof result.provider.offer.qrPayload !== "string" || result.provider.offer.qrPayload.length > 8192)) throw new Error("provider_offer_invalid")
       if (requestRef.current === controller) { setView(result.provider); onOperation(result.operation) }

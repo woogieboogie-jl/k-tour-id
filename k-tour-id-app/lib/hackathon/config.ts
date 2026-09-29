@@ -4,8 +4,12 @@
 import { HkError } from "./util"
 import { isCxPreview, isReadinessPreview } from "./preview-readiness"
 import { isHostedSuiProfile, hostedSuiPreflightIssues } from "./hosted-sui-profile"
-import { requiresIntegrationSuiLimits, assertIntegrationSuiActivation, assertIntegrationSuiLimits } from "./integration-sui-limits"
+import { requiresIntegrationSuiLimits, assertIntegrationSuiLimits } from "./integration-sui-limits"
 import { selectZkLoginProvider } from "./zklogin-provider-selection"
+import { isGuideProductionProfile } from "./guide-production-profile"
+import { GUIDE_SAVE_V2 } from "./guide-contract"
+import { requiresIntegrationPreviewAccess } from "./integration-preview-access"
+import { assertIntegrationSuiAuthorized } from "./store"
 
 export type CxMode = "mock" | "cx"
 export type OpenDidMode = "mock" | "opendid"
@@ -112,7 +116,7 @@ export type HkConfig = ReturnType<typeof hkConfig>
 
 /** Isolation is an execution boundary, not a simulated chain confirmation. */
 export function assertExternalServicesEnabled(service: string) {
-  if (requiresIntegrationSuiLimits() && ["Sui signing", "Sui delegation", "Sui agent execution"].includes(service)) { assertIntegrationSuiActivation(); assertIntegrationSuiLimits() }
+  if (requiresIntegrationSuiLimits() && ["Sui signing", "Sui delegation", "Sui agent execution"].includes(service)) { assertIntegrationSuiAuthorized(); assertIntegrationSuiLimits() }
   if (isHostedSuiProfile() && (hostedSuiPreflightIssues().length || !["Sui", "Sui signing", "Sui delegation", "Sui agent execution", "Sui grant lookup"].includes(service))) {
     throw new HkError("hosted_sui_scope", "Only the approved Testnet journey is available.", 503)
   }
@@ -123,7 +127,11 @@ export function assertExternalServicesEnabled(service: string) {
 /** Public, non-secret view for the UI and evidence screens. */
 export function hkPublicConfig() {
   const c = hkConfig()
+  const guide = isGuideProductionProfile()
+  const guideProfile = guide ? "guide-production" : requiresIntegrationPreviewAccess() ? "integration-preview" : "unavailable"
   return {
+    guideProfile,
+    guide: GUIDE_SAVE_V2,
     previewReadOnly: isReadinessPreview(),
     hostedSui: isHostedSuiProfile(),
     cxPreview: c.cxPreview,
@@ -133,7 +141,7 @@ export function hkPublicConfig() {
       region: env("VERCEL_REGION", "local"),
     } : undefined,
     isolatedMock: c.isolatedMock,
-    campaign: c.campaign,
+    campaign: guide ? { ...c.campaign, ...GUIDE_SAVE_V2, purpose: GUIDE_SAVE_V2.action } : c.campaign,
     modes: {
       cx: c.cx.mode,
       opendid: c.cxPreview ? "disabled-cx-preview" : c.opendid.mode,
@@ -146,7 +154,7 @@ export function hkPublicConfig() {
     sui: { network: c.sui.network, packageId: c.isolatedMock || c.cxPreview ? "" : c.sui.packageId, campaignId: c.isolatedMock || c.cxPreview ? "" : c.sui.campaignId, explorer: c.isolatedMock || c.cxPreview ? "" : c.sui.explorer, googleClientId: c.sui.googleClientId },
     omnione: { chainId: c.omnione.chainId, registryAddress: c.isolatedMock || c.cxPreview ? "" : c.omnione.registryAddress },
     ttl: HK_TTL,
-    consentVersion: HK_CONSENT_VERSION,
+    consentVersion: guide ? GUIDE_SAVE_V2.consentVersion : HK_CONSENT_VERSION,
     schemaVersion: HK_SCHEMA_VERSION,
   }
 }

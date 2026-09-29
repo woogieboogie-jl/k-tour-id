@@ -7,7 +7,7 @@ import { verifyPersonalMessageSignature } from "@mysten/sui/verify"
 import { fromBase64, toBase64 } from "@mysten/sui/utils"
 import { parseSerializedSignature } from "@mysten/sui/cryptography"
 import { assertExternalServicesEnabled, hkConfig, HK_CONSENT_VERSION, HK_SCHEMA_VERSION, HK_SERVICE_ACCESS, HK_TTL } from "./config"
-import { withStore, readStore, redemptionKey, type OperationRecord, type OutboxRecord } from "./store"
+import { withStore, readStore, redemptionKey, readIntegrationSuiActivation, withIntegrationSuiAuthorization, refreshIntegrationSuiAuthorization, type OperationRecord, type OutboxRecord } from "./store"
 import { canonicalJson, digestOf, isPast, nowIso, plusMs, randomHex32, randomId, sha256Hex, HkError, assert } from "./util"
 import type { AllowedAction, NextAction, OperationResult, ProposalOutput } from "./types"
 import { cxComplete, cxStart } from "./adapters/cx"
@@ -25,7 +25,16 @@ import { GUIDE_SAVE_V2, guideJourney, isGuideJourney, type GuideCollection } fro
 import { assertGuideReady, operationAction, operationCampaign } from "./guide-policy"
 import { commitGuideCollection, guideCollectionForSession, mirrorGuideCollection, guideSaveConflict } from "./guide-collection"
 import { refreshProviderPermission, assertProviderPermissionForOperation } from "./provider-operation"
-import { requiresIntegrationSuiLimits, assertIntegrationSuiActivation, assertIntegrationSuiLimits, assertIntegrationSuiOperation, claimIntegrationSuiOperation, INTEGRATION_SUI_LIMITS } from "./integration-sui-limits"
+import { requiresIntegrationSuiLimits, assertIntegrationSuiLimits, assertIntegrationSuiOperation, claimIntegrationSuiOperation, INTEGRATION_SUI_LIMITS } from "./integration-sui-limits"
+
+/** Public role pin for evidence/read-only UI. Private signing keys are loaded
+ * only by consequential adapters inside a fresh, owned budget capability. */
+export function chainAgentAddress(): string {
+  return requiresIntegrationSuiLimits() ? assertIntegrationSuiLimits().agentAddress : suiKeys().agentAddress
+}
+function authorizedSui<T>(sessionId: string, operationId: string, fn: () => T | Promise<T>): Promise<T> {
+  return requiresIntegrationSuiLimits() ? withIntegrationSuiAuthorization({ sessionId, operationId }, fn) : Promise.resolve().then(fn)
+}
 
 /** SDK/provider errors may contain authenticated URLs or signed bytes. */
 function safeServiceError(error: unknown, code: string): HkError {
@@ -179,8 +188,8 @@ function assertIdentityPending(op: OperationRecord) {
 
 // ── create ────────────────────────────────────────────────────────────
 export async function createOperation(input: { sessionId: string; venueId: string; consentVersion: string; locale: "ko" | "en" | "ja"; venueName: string }, guide = false) {
-  if (guide) assertGuideReady()
-  if (requiresIntegrationSuiLimits() && process.env.HK_INTEGRATION_SUI_TARGET === INTEGRATION_SUI_LIMITS.targetId) { assertIntegrationSuiActivation(); assertIntegrationSuiLimits() }
+  if (guide) await assertGuideReady()
+  if (requiresIntegrationSuiLimits()) { assertIntegrationSuiLimits(); await readIntegrationSuiActivation() }
   const c = guide ? { ...GUIDE_SAVE_V2, purpose: GUIDE_SAVE_V2.action } : hkConfig().campaign
   assert(input.venueId === c.venueId, "venue_unsupported", "this place has no demo entitlement", 404)
   assert(input.consentVersion === (guide ? GUIDE_SAVE_V2.consentVersion : HK_CONSENT_VERSION), "consent_version", "consent version mismatch")
@@ -485,7 +494,7 @@ export async function proposalCreate(sessionId: string, operationId: string, ctx
 
 // ── delegation (Sui, user PTB) ────────────────────────────────────────
 export async function delegationPrepare(sessionId: string, operationId: string, input: { userAddress: string; signer: "zklogin" | "demo"; walletProof: { message: string; signature: string }; approvedProposalDigest: string }) {
-  assertExternalServicesEnabled("Sui delegation")
+  assertExternalServicesEnabled("Sui")
   const op = await loadWithFreshProviderPermission(sessionId, operationId)
   if (isGuideJourney(op)) assert(input.signer === "zklogin", "zklogin_required", "Sign in to approve this guide save", 409)
   assertCurrentIdentityPolicy(op.identity)
@@ -542,12 +551,18 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
   const consentCommitment = digestOf({ consentDigest: op.consent!.digest, proposalDigest: op.proposal.proposalDigest, userAddress: input.userAddress, recipient: input.userAddress, expiresAtMs, maxUses: 1 })
   const prepared = await prepareDelegationOnce({ sessionId, operationId, expectedRevision: op.revision,
     scope: { intentRef, actionCommitment, consentCommitment, userAddress: input.userAddress, signer: input.signer, recipient: input.userAddress, expiresAtMs },
-  }, { issue: issueEntitlement, build: buildDelegationPtb, authorize: assertProviderPermission })
+  }, {
+    issue: input => authorizedSui(sessionId, operationId, () => issueEntitlement({ ...input, beforeBroadcast: async digest => {
+      await input.beforeBroadcast(digest)
+      if (requiresIntegrationSuiLimits()) await refreshIntegrationSuiAuthorization()
+    } })),
+    build: input => authorizedSui(sessionId, operationId, () => buildDelegationPtb(input)), authorize: assertProviderPermission,
+  })
   return { result: toResult(prepared), txBytesB64: prepared.secrets.lastTxBytesB64! }
 }
 
 export async function delegationSubmit(sessionId: string, operationId: string, input: { txBytesDigest: string; userSignature: string }) {
-  assertExternalServicesEnabled("Sui delegation")
+  assertExternalServicesEnabled("Sui")
   const op = await loadWithFreshProviderPermission(sessionId, operationId)
   assertCurrentIdentityPolicy(op.identity)
   if (requiresIntegrationSuiLimits()) await readStore(db => assertIntegrationSuiOperation(db, operationId))
@@ -556,7 +571,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
   assert(op.delegation.expiresAtMs > Date.now(), "grant_window_expired", "delegation window expired", 409)
   assert(credentialEligibility(op) === null && presentationEligibility(op) === null, "eligibility", "current credential and presentation required", 409)
   const sponsorSignature = String((op.secrets as Record<string, unknown>).sponsorSignature ?? "")
-  const expected = delegationExpectation(op, chainBindingConfig(), suiKeys().agentAddress)
+  const expected = delegationExpectation(op, chainBindingConfig(), chainAgentAddress())
   const expectedTxDigest = transactionDigest(fromBase64(op.secrets.lastTxBytesB64))
   // Persist the dispatch claim before broadcasting; a concurrent request cannot
   // submit the same signed transaction and overwrite the winner with its failure.
@@ -572,7 +587,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
   let executed: Awaited<ReturnType<typeof executeDelegation>> | null = null
   let error: HkError | null = null
   try {
-    executed = await executeDelegation({ txBytesB64: op.secrets.lastTxBytesB64, userSignature: input.userSignature, sponsorSignature, expected, beforeBroadcast: async (digest) => {
+    executed = await authorizedSui(sessionId, operationId, () => executeDelegation({ txBytesB64: op.secrets.lastTxBytesB64!, userSignature: input.userSignature, sponsorSignature, expected, beforeBroadcast: async (digest) => {
       await mutate(sessionId, operationId, (o) => {
         assertSnapshot(o, dispatch)
         assertCurrentIdentityPolicy(o.identity)
@@ -581,7 +596,8 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
         assert(o.status === "pending" && o.phase === "delegation" && o.delegation.status === "prepared", "phase", "delegation dispatch was stopped", 409)
         assert(!isPast(o.expiresAt) && o.delegation.expiresAtMs > Date.now(), "grant_window_expired", "approved delegation window expired before broadcast", 409)
       })
-    } })
+      if (requiresIntegrationSuiLimits()) await refreshIntegrationSuiAuthorization()
+    } }))
   } catch (e) { error = safeServiceError(e, "sui_delegate") }
   return mutate(sessionId, operationId, (o) => {
     if (o.delegation?.status === "delegated" && o.delegation.userTxDigest === expectedTxDigest) return toResult(o)
@@ -602,7 +618,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
 
 // ── agent (Sui, consume PTB) ──────────────────────────────────────────
 export async function agentRun(sessionId: string, operationId: string) {
-  assertExternalServicesEnabled("Sui agent execution")
+  assertExternalServicesEnabled("Sui")
   const op = await loadWithFreshProviderPermission(sessionId, operationId)
   assertCurrentIdentityPolicy(op.identity)
   if (requiresIntegrationSuiLimits()) await readStore(db => assertIntegrationSuiOperation(db, operationId))
@@ -625,7 +641,7 @@ export async function agentRun(sessionId: string, operationId: string) {
   assert(credentialEligibility(op) === null && presentationEligibility(op) === null, "eligibility", "current credential and presentation required", 409)
   assert(!grantState.revoked, "grant_revoked", "grant revoked", 409)
   assert(grantState.expiresAtMs > Date.now(), "grant_expired", "grant expired", 409)
-  const k = suiKeys()
+  const k = { agentAddress: chainAgentAddress() }
   const expectedGrant = delegationExpectation(op, chainBindingConfig(), k.agentAddress)
   verifyGrantEvidence(grantState, expectedGrant, 0)
   // de-identified execution manifest (provenance): links inputs → proposal → consent → grant → decision
@@ -643,7 +659,7 @@ export async function agentRun(sessionId: string, operationId: string) {
   let executed: Awaited<ReturnType<typeof agentConsume>> | null = null
   let error: HkError | null = null
   try {
-    executed = await agentConsume({ grant: op.delegation.grant, expected: { ...expectedGrant, grantId: op.delegation.grant.objectId, decisionCommitment, manifestCommitment }, beforeBroadcast: async (digest) => {
+    executed = await authorizedSui(sessionId, operationId, () => agentConsume({ grant: op.delegation!.grant!, expected: { ...expectedGrant, grantId: op.delegation!.grant!.objectId, decisionCommitment, manifestCommitment }, beforeBroadcast: async (digest) => {
       dispatch = await mutate(sessionId, operationId, (o) => {
         assertSnapshot(o, dispatch)
         assertCurrentIdentityPolicy(o.identity)
@@ -654,7 +670,8 @@ export async function agentRun(sessionId: string, operationId: string) {
         touch(o, "agent.dispatching")
         return o
       })
-    } })
+      if (requiresIntegrationSuiLimits()) await refreshIntegrationSuiAuthorization()
+    } }))
   } catch (e) { error = safeServiceError(e, "sui_consume") }
   return mutate(sessionId, operationId, (o) => {
     if (o.agent?.status === "executed" && o.agent.txDigest && o.agent.txDigest === dispatch.agent?.txDigest) return toResult(o)
@@ -687,7 +704,7 @@ export async function redeem(sessionId: string, operationId: string, input: { id
   op = await loadWithFreshProviderPermission(sessionId, operationId)
   assert(op.status === "pending" && op.phase === "fulfillment" && op.agent?.status === "executed" && op.agent.txDigest, "phase", "verified Sui execution required", 409)
   // independent re-verification of the Sui execution before committing service state
-  const expected = executionExpectation(op, chainBindingConfig(), suiKeys().agentAddress)
+  const expected = executionExpectation(op, chainBindingConfig(), chainAgentAddress())
   const verified = await verifyReadExecution(op.agent.txDigest, expected)
   const outboxRecord = await mutate(sessionId, operationId, (o, db) => {
     const idem = db.idempotency[`${operationId}:redeem:${input.idempotencyKey}`]
@@ -884,7 +901,7 @@ export async function reconcile(sessionId: string, operationId: string) {
   if (op.status === "pending" && (op.agent?.status === "unknown" || op.agent?.status === "queued") && op.delegation?.grant && op.agent.txDigest) {
     // A consumed grant alone cannot identify which operation/transaction consumed it.
     try {
-      const expected = executionExpectation(op, chainBindingConfig(), suiKeys().agentAddress)
+      const expected = executionExpectation(op, chainBindingConfig(), chainAgentAddress())
       const verified = await verifyReadExecution(op.agent.txDigest, expected)
       await mutate(sessionId, operationId, (o) => {
         assertSnapshot(o, op)
@@ -899,7 +916,7 @@ export async function reconcile(sessionId: string, operationId: string) {
   }
   if (op.status === "pending" && (op.delegation?.status === "unknown" || op.delegation?.status === "prepared") && op.delegation.userTxDigest) {
     try {
-      const expected = delegationExpectation(op, chainBindingConfig(), suiKeys().agentAddress)
+      const expected = delegationExpectation(op, chainBindingConfig(), chainAgentAddress())
       const verified = await verifyReadDelegation(op.delegation.userTxDigest, expected)
       await mutate(sessionId, operationId, (o) => {
         assertSnapshot(o, op)

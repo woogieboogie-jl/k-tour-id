@@ -9,7 +9,7 @@ import { providerOperationAction } from "@/lib/hackathon/provider-operation"
 import { safeHkError } from "@/lib/hackathon/public-error"
 import { readStore } from "@/lib/hackathon/store"
 import * as svc from "@/lib/hackathon/service"
-import { currentEpoch, suiKeys } from "@/lib/hackathon/adapters/sui"
+import { currentEpoch } from "@/lib/hackathon/adapters/sui"
 import { proveZkLogin, zkLoginConfigured } from "@/lib/hackathon/adapters/zklogin"
 import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
 import { isCxPreview, isReadinessPreview, previewReadOnlyResponse } from "@/lib/hackathon/preview-readiness"
@@ -18,6 +18,9 @@ import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewBody, cxPreviewR
 import { assertIntegrationPreviewBody, assertIntegrationPreviewOrigin, assertIntegrationPreviewTarget, grantIntegrationPreviewAccess, integrationPreviewBody, integrationPreviewRouteAllowed, requireIntegrationPreviewAccess, requiresIntegrationPreviewAccess } from "@/lib/hackathon/integration-preview-access"
 import { isHostedSuiProfile, hostedSuiRouteAllowed, assertHostedSuiBody } from "@/lib/hackathon/hosted-sui-profile"
 import { assertHostedSuiTarget, assertHostedSuiOrigin, requireHostedSuiAccess, grantHostedSuiAccess } from "@/lib/hackathon/hosted-sui-access"
+import { isGuideProductionProfile } from "@/lib/hackathon/guide-production-profile"
+import { assertGuideProductionTarget, assertGuideProductionOrigin, requireGuideProductionAccess, grantGuideProductionAccess, guideProductionRouteAllowed, assertGuideProductionBody } from "@/lib/hackathon/guide-production-access"
+import { isGuideJourney } from "@/lib/hackathon/guide-contract"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -57,11 +60,18 @@ function venueCtx(venueId: string, loc: "ko" | "en" | "ja") {
 
 export async function GET(req: Request, ctx: Ctx) {
   const requestedPath = (await ctx.params).path
-  // Public fixed configuration summary only. No session, provider request,
-  // credential, endpoint, or key is read or returned by this route.
+  // Public fixed readiness summary. No session/provider request or credential
+  // is created; eligible integration profiles may read committed budget state.
   if (req.method === "GET" && requestedPath.length === 2 && requestedPath[0] === "guide" && requestedPath[1] === "readiness" &&
     !new URL(req.url).search && !new URL(req.url).hash && process.env.HK_API_ENABLED === "1" && process.env.NEXT_PUBLIC_HK_ENABLED === "1") {
-    return json(guideReadiness())
+    return json(await guideReadiness())
+  }
+  if (isGuideProductionProfile()) {
+    try {
+      assertGuideProductionTarget(req)
+      if (!guideProductionRouteAllowed(req.method, requestedPath) || new URL(req.url).search || new URL(req.url).hash) throw new HkError("guide_production_scope", "Guide scope required", 403)
+      requireGuideProductionAccess(req)
+    } catch (e) { return err(e) }
   }
   if (isHostedSuiProfile()) {
     try {
@@ -107,7 +117,14 @@ export async function GET(req: Request, ctx: Ctx) {
       const s = await requireSession()
       return json(await svc.guideCollection(s.sessionId))
     }
-    if (path[0] === "config") return json(hkPublicConfig())
+    if (path[0] === "config") {
+      const config = hkPublicConfig()
+      if (isGuideProductionProfile()) {
+        const ready = (await guideReadiness()).ready
+        return json({ ...config, capabilities: { opendidProviderReady: ready, chainExecutionEnabled: ready, redemptionEnabled: ready } })
+      }
+      return json(config)
+    }
     if (path[0] === "me") { const s = await ensureSession(); return json({ sessionId: s.sessionId.slice(0, 8) + "…", hasSubject: Boolean(s.subjectRef) }) }
     if (path[0] === "places" && path[2] === "demo-entitlements") {
       const s = await ensureSession()
@@ -121,6 +138,7 @@ export async function GET(req: Request, ctx: Ctx) {
     if (path[0] === "operations" && path[1]) {
       const s = await requireSession()
       const op = await svc.loadOperation(s.sessionId, path[1])
+      if (isGuideProductionProfile() && !isGuideJourney(op)) throw new HkError("guide_production_scope", "Guide scope required", 403)
       if (path[2] === "evidence") return json(svc.evidence(op))
       return json(svc.toResult(op))
     }
@@ -134,6 +152,23 @@ export async function GET(req: Request, ctx: Ctx) {
 
 export async function POST(req: Request, ctx: Ctx) {
   let checkedBody: Record<string, unknown> | undefined
+  const guideProduction = isGuideProductionProfile()
+  if (guideProduction) {
+    try {
+      assertGuideProductionTarget(req)
+      const { path } = await ctx.params
+      if (!guideProductionRouteAllowed(req.method, path) || new URL(req.url).search || new URL(req.url).hash) throw new HkError("guide_production_scope", "Guide scope required", 403)
+      assertGuideProductionOrigin(req)
+      if (path[0] === "guide" && path[1] === "access") {
+        const b = await integrationPreviewBody(req)
+        assertGuideProductionBody(path, b)
+        return grantGuideProductionAccess(req, b.accessCode)
+      }
+      requireGuideProductionAccess(req)
+      checkedBody = await integrationPreviewBody(req)
+      assertGuideProductionBody(path, checkedBody)
+    } catch (e) { return err(e) }
+  }
   const hostedSui = isHostedSuiProfile()
   if (hostedSui) {
     try {
@@ -194,7 +229,7 @@ export async function POST(req: Request, ctx: Ctx) {
   const { path } = await ctx.params
   try {
     // Integration already required exact Origin + immutable proxy agreement.
-    if (!integrationPreview && !hostedSui) await assertSameOrigin()
+    if (!integrationPreview && !hostedSui && !guideProduction) await assertSameOrigin()
     if (path[0] === "sessions") { const s = await ensureSession(); return json({ ok: true, sessionId: s.sessionId.slice(0, 8) + "…" }) }
     if (path[0] === "zklogin" && path[1] === "prove") {
       const b = checkedBody ?? await body(req)
@@ -216,6 +251,7 @@ export async function POST(req: Request, ctx: Ctx) {
     }
     if (path[0] === "operations" && path[1]) {
       const id = path[1]; const action = path.slice(2).join("/")
+      if (guideProduction && !isGuideJourney(await svc.loadOperation(s.sessionId, id))) throw new HkError("guide_production_scope", "Guide scope required", 403)
       const b = checkedBody ?? await (path[2] === "provider" ? integrationPreviewBody(req) : body(req))
       switch (action) {
         case "provider/issuance/start": case "provider/issuance/refresh":
@@ -244,7 +280,10 @@ export async function POST(req: Request, ctx: Ctx) {
         case "redeem": return json(await svc.redeem(s.sessionId, id, { idempotencyKey: str(b.idempotencyKey, 80) || "default", bodyDigest: digestOf({ idempotencyKey: b.idempotencyKey ?? "default" }) }))
         case "cancel": return json(await svc.cancel(s.sessionId, id))
         case "reconcile": return json(await svc.reconcile(s.sessionId, id))
-        case "sui/agent-address": return json({ agent: suiKeys().agentAddress })
+        case "sui/agent-address": {
+          await svc.loadOperation(s.sessionId, id)
+          return json({ agent: svc.chainAgentAddress() })
+        }
         default: return json({ error: { code: "not_found", message: "The requested action could not be found." } }, 404)
       }
     }
