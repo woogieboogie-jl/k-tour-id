@@ -2,6 +2,7 @@
 // secrets, deploys, changes Production, enables runtime, or touches any ledger.
 import { constants, openSync, fstatSync, readFileSync, writeFileSync, fsyncSync, closeSync, lstatSync, mkdirSync, realpathSync } from "node:fs"
 import { execFileSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import { GUIDE_BRANCH } from "./hackathon-guide-build.mjs"
 
@@ -36,13 +37,23 @@ export const GUIDE_PRIVATE_INPUT_NAMES = Object.freeze([
 const fail = code => { throw new Error(`guide_preparation_${code}`) }
 const metadata = row => ({ id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt })
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+const HTTP_CODES = new Set(["bad_request", "invalid_request", "invalid_request_body", "invalid_request_parameter", "invalid_git_branch", "git_branch_not_found", "git_ref_not_found", "not_found", "project_not_found", "unauthorized", "forbidden", "conflict", "env_key_already_exists", "environment_variable_already_exists", "too_many_requests", "rate_limited"])
+class PreparationHttpError extends Error {
+  constructor(status, code, method) {
+    super(`guide_preparation_${method === "GET" ? "read_failed" : "unconfirmed_write"}`)
+    this.diagnostic = { kind: "http", httpStatus: Number.isInteger(status) && status >= 400 && status <= 599 ? status : null,
+      providerCode: HTTP_CODES.has(code) ? code : null,
+      outcome: [400, 401, 402, 403, 404, 405, 409, 410, 413, 415, 422].includes(status) ? "rejected" : "unknown" }
+  }
+}
+const writeDiagnostic = error => error instanceof PreparationHttpError ? error.diagnostic : { kind: "unknown", httpStatus: null, providerCode: null, outcome: "unknown" }
 
 /** Read public API responses with an allocation bound, not just a post-read
  * length check. The caller's request deadline also covers these body reads. */
 export async function readGuidePreparationResponse(response, method = "GET") {
   const reader = response.body?.getReader()
+  let parsed
   try {
-    if (!response.ok) fail(method === "GET" ? "read_failed" : "unconfirmed_write")
     const length = response.headers.get("content-length")
     if (length && (!/^\d+$/.test(length) || Number(length) > 2_000_000)) fail("response")
     if (!reader) fail("response")
@@ -54,11 +65,17 @@ export async function readGuidePreparationResponse(response, method = "GET") {
       if (size > 2_000_000) fail("response")
       chunks.push(chunk.value)
     }
-    try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))) }
+    try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))) }
     catch { fail("response") }
+  } catch (error) {
+    // Keep only fixed status/code fields. Error body/message/value never escapes.
+    if (!response.ok) throw new PreparationHttpError(response.status, null, method)
+    throw error
   } finally {
     if (reader) { void reader.cancel().catch(() => undefined); reader.releaseLock() }
   }
+  if (!response.ok) throw new PreparationHttpError(response.status, parsed?.error?.code, method)
+  return parsed
 }
 
 function scoped(rows, key) {
@@ -105,6 +122,8 @@ export async function prepareGuideConfiguration(io, apply = false) {
     automatedOperatorWork: ["copy_existing_authorized_sui_and_redis_inputs", "generate_guide_access_values", "preserve_zklogin_salt_continuity", "deploy_same_sha_and_verify_main_flow"],
   }
   if (!apply || !pending.length) return { ...summary, mutation: false }
+  const branchSha = io.checkBranch?.()
+  if (!/^[a-f0-9]{40}$/.test(branchSha ?? "")) fail("branch_not_pushed")
   // The kill switch is always first. No code path ever changes its value to1.
   if (!prior[FLAG] && pending[0] !== FLAG) fail("flag_order")
   const log = { schema: "ktour-guide-preparation/v1", ...S, at: new Date(now()).toISOString(), prior, entries: [], complete: false }
@@ -123,8 +142,11 @@ export async function prepareGuideConfiguration(io, apply = false) {
     const entry = { key, intentAt: new Date(now()).toISOString() }; log.entries.push(entry); io.save(log)
     // Revalidate time immediately before the request. Outcome-unknown is NOT retried.
     timeCheck()
+    if (io.checkBranch?.() !== branchSha) fail("branch_drift")
     const body = { key, value: GUIDE_INACTIVE_VALUES[key], target: ["preview"], gitBranch: S.branch, type: "encrypted", comment: MARKER }
-    const response = await io.api(`/v10/projects/${S.project}/env`, "POST", body)
+    let response
+    try { response = await io.api(`/v10/projects/${S.project}/env`, "POST", body) }
+    catch (error) { entry.failure = { ...writeDiagnostic(error), recordedAt: new Date(now()).toISOString() }; io.save(log); throw error }
     const row = scoped([created(response)], key)
     if (!row) fail("unconfirmed_write")
     await checkValue(row)
@@ -132,6 +154,43 @@ export async function prepareGuideConfiguration(io, apply = false) {
   }
   await fresh(); log.complete = true; io.save(log)
   return { ...summary, mutation: "inactive-guide-preview-public-configuration-only", created: pending }
+}
+
+/** Explicit one-off recovery ONLY for a first unknown public kill-switch=0
+ * create. Stable absence is not transaction proof; safety comes from this fixed
+ * inert value, no upsert, preserved original journal, exclusive second journal,
+ * repeated complete inventories and fail-closed duplicate/foreign-row checks.
+ * There is no generic retry, delete, overwrite, active flag or secret recovery. */
+export async function reconcileGuideFirstWrite(io, original) {
+  const old = original?.log, hash = original?.sha256
+  if (!old || old.schema !== "ktour-guide-preparation/v1" || old.project !== S.project || old.team !== S.team || old.branch !== S.branch ||
+    old.complete !== false || old.recovery || !old.prior || Object.keys(old.prior).length || !Array.isArray(old.entries) || old.entries.length !== 1 ||
+    old.entries[0].key !== FLAG || old.entries[0].after || !/^[a-f0-9]{64}$/.test(hash ?? "")) fail("recovery_scope")
+  const intentAt = Date.parse(old.entries[0].intentAt), startedAt = Date.parse(old.at)
+  const now = () => io.now?.() ?? Date.now()
+  if (!Number.isFinite(intentAt) || !Number.isFinite(startedAt) || intentAt < startedAt || !Number.isFinite(now()) || now() - intentAt < 60_000 || now() >= MAX_END) fail("recovery_age")
+  const branchSha = io.checkBranch?.()
+  if (!/^[a-f0-9]{40}$/.test(branchSha ?? "")) fail("branch_not_pushed")
+  const checks = []
+  for (let i = 0; i < 3; i++) {
+    if (i) await io.sleep(5000)
+    const time = now()
+    if (!Number.isFinite(time) || time - intentAt < 60_000 || time >= MAX_END || (i && time - Date.parse(checks[i - 1].at) < 5000) || io.checkBranch?.() !== branchSha) fail("recovery_drift")
+    const result = await io.api(`/v10/projects/${S.project}/env`)
+    if (!Array.isArray(result.envs) || result.envs.length > 1024 || result.pagination?.next != null || result.continuationToken) fail("inventory")
+    const relevant = result.envs.filter(row => (Array.isArray(row.target) ? row.target : [row.target]).includes("preview") &&
+      (row.gitBranch === S.branch || (!row.gitBranch && KEYS.includes(row.key))))
+    if (relevant.length) fail("recovery_not_absent")
+    checks.push({ at: new Date(time).toISOString(), relevantRows: 0 })
+  }
+  return prepareGuideConfiguration({ ...io,
+    checkBranch: () => { const current = io.checkBranch?.(); if (current !== branchSha) fail("branch_drift"); return current },
+    begin: log => {
+      if (Object.keys(log.prior).length) fail("recovery_not_absent")
+      log.recovery = { kind: "explicit-first-inactive-write-only", originalJournalSha256: hash, originalIntentAt: old.entries[0].intentAt, branchSha, absenceChecks: checks }
+      io.begin(log)
+    },
+  }, true)
 }
 
 function privateJson(path) {
@@ -142,10 +201,17 @@ function privateJson(path) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   let journalFd
   try {
-    if (process.argv.length !== 3 || !["plan", "prepare"].includes(process.argv[2])) fail("arguments")
+    if (process.argv.length !== 3 || !["plan", "prepare", "prepare-reconciled-first-write"].includes(process.argv[2])) fail("arguments")
+    const recovering = process.argv[2] === "prepare-reconciled-first-write"
     const git = args => execFileSync("git", ["-C", ROOT, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000 }).trim()
     if (fileURLToPath(new URL("../..", import.meta.url)) !== ROOT + "/" || git(["branch", "--show-current"]) !== "integration/main-journey-20260929" ||
-      (process.argv[2] === "prepare" && git(["status", "--porcelain"]))) fail("worktree")
+      (process.argv[2] !== "plan" && git(["status", "--porcelain"]))) fail("worktree")
+    const checkBranch = () => {
+      const matches = git(["ls-remote", "origin", `refs/heads/${S.branch}`]).split(/\s+/)
+      if (matches.length !== 2 || matches[1] !== `refs/heads/${S.branch}` || !/^[a-f0-9]{40}$/.test(matches[0])) fail("branch_not_pushed")
+      return matches[0]
+    }
+    if (process.argv[2] !== "plan") checkBranch()
     const token = privateJson(AUTH).token
     if (typeof token !== "string" || !/^[A-Za-z0-9_.-]{16,512}$/.test(token)) fail("auth")
     const api = async (path, method = "GET", body) => {
@@ -154,12 +220,25 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       return readGuidePreparationResponse(r, method)
     }
     const save = value => { if (journalFd === undefined) fail("journal"); writeFileSync(journalFd, JSON.stringify(value) + "\n"); fsyncSync(journalFd) }
-    const result = await prepareGuideConfiguration({ api, begin: value => {
+    const io = { api, checkBranch, sleep: ms => new Promise(resolve => setTimeout(resolve, ms)), begin: value => {
       mkdirSync(RUN, { recursive: true, mode: 0o700 })
       const s = lstatSync(RUN); if (!s.isDirectory() || s.isSymbolicLink() || realpathSync(RUN) !== RUN || s.uid !== process.getuid() || (s.mode & 0o077)) fail("journal")
-      journalFd = openSync(RUN + "/public-inputs.jsonl", "wx", 0o600); save(value)
-    }, save }, process.argv[2] === "prepare")
+      journalFd = openSync(RUN + (recovering ? "/public-inputs.reconciled.jsonl" : "/public-inputs.jsonl"), "wx", 0o600); save(value)
+    }, save }
+    let result
+    if (recovering) {
+      // Original file is read-only and remains untouched. Only complete lines
+      // with identical scope are considered; malformed/truncated logs refuse.
+      const fd = openSync(RUN + "/public-inputs.jsonl", constants.O_RDONLY | constants.O_NOFOLLOW)
+      let raw
+      try { const s = fstatSync(fd); if (!s.isFile() || s.uid !== process.getuid() || (s.mode & 0o077) || s.size > 262144) fail("private_file"); raw = readFileSync(fd, "utf8") }
+      finally { closeSync(fd) }
+      if (!raw.endsWith("\n")) fail("recovery_journal")
+      const lines = raw.trimEnd().split("\n").map(line => JSON.parse(line))
+      if (lines.length < 2 || lines.length > 4 || lines.some(log => log.schema !== "ktour-guide-preparation/v1" || log.project !== S.project || log.team !== S.team || log.branch !== S.branch || log.complete !== false || log.recovery || Object.keys(log.prior ?? {}).length || !Array.isArray(log.entries) || log.entries.length > 1 || log.entries.some(e => e.key !== FLAG || e.after))) fail("recovery_journal")
+      result = await reconcileGuideFirstWrite(io, { log: lines.at(-1), sha256: createHash("sha256").update(raw).digest("hex") })
+    } else result = await prepareGuideConfiguration(io, process.argv[2] === "prepare")
     console.log(JSON.stringify(result))
-  } catch (error) { console.error(JSON.stringify({ ok: false, code: /^guide_preparation_[a-z_]+$/.test(error?.message ?? "") ? error.message : "guide_preparation_failed" })); process.exitCode = 1 }
+  } catch (error) { console.error(JSON.stringify({ ok: false, code: /^guide_preparation_[a-z_]+$/.test(error?.message ?? "") ? error.message : "guide_preparation_failed", ...(error instanceof PreparationHttpError ? { diagnostic: error.diagnostic } : {}) })); process.exitCode = 1 }
   finally { if (journalFd !== undefined) closeSync(journalFd) }
 }
