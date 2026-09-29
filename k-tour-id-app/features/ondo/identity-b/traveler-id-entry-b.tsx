@@ -19,6 +19,7 @@ import type { OndoBLocale } from "../shared/state/ondo-b-preferences"
 import { LocalCheckWalkthroughB, type LocalCheckKind, type LocalCheckOutcome } from "./local-check-walkthrough-b"
 import { IdWalletCommerceB } from "../commerce-b/id-wallet-commerce-b"
 import { SavedExperienceB } from "../experience-b/saved-experience-b"
+import { ServerGuideCollectionB } from "../experience-b/server-guide-collection-b"
 import {
   GLOBAL_AFTER19_SESSION_EVENT,
   GLOBAL_AFTER19_SESSION_KEY,
@@ -452,6 +453,7 @@ export function TravelerIdEntryB() {
               </div>
               <small className={styles.passBoundary} data-testid="travel-pass-local-boundary">{copy.passBoundary}</small>
             </section>
+            <ServerGuideCollectionB locale={locale} />
             <JourneyStampsCardB locale={locale} />
           </div>
         </div>

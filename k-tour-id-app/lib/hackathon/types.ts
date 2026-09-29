@@ -42,7 +42,7 @@ export type CredentialSummary = {
   validFrom: string
   validUntil: string
   statusRef: string
-  status: "active" | "revoked" | "expired" | "unknown"
+  status: "active" | "revoked" | "suspended" | "expired" | "unknown"
   holderAckAt: string | null
 }
 
@@ -62,7 +62,7 @@ export type PresentationSummary = {
 }
 
 export type ProposalOutput = {
-  action: "redeem_demo_entitlement"
+  action: "redeem_demo_entitlement" | "save-neighborhood-guide-to-pass"
   target: { venueId: string; campaignId: string }
   title: string
   summary: string
@@ -134,6 +134,7 @@ export type ChainRecord = {
 }
 
 export type OperationResult = {
+  journey?: import("./guide-contract").GuideJourney
   operationId: string
   kind: "demo_entitlement"
   venueId: string

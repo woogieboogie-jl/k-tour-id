@@ -7,7 +7,8 @@ import { evaluateKPassService } from "../contracts/kpass-capabilities"
 import { capturePlaceServiceMapReturnB } from "../map/place-service-map-return-b"
 import { useOndoB } from "../shared/state/ondo-b-provider"
 import { SheetB } from "../shared/ui/sheet-b"
-import { qaReviewFixtureOptions, useReviewSampleSession } from "../shared/ui/use-qa-controls"
+import { QA_RUNTIME_ENABLED, qaReviewFixtureOptions, useReviewSampleSession } from "../shared/ui/use-qa-controls"
+import { requestHackathonOpenB } from "../hackathon-b/hackathon-campaign"
 import {
   B_ACTION_GATE_CANCEL_EVENT, B_ACTION_GATE_COMPLETE_EVENT, B_ACTION_GATE_READY_EVENT,
   actionReturnFromBEvent, consumePendingBActionAtMutation, createBExperienceActionReturn,
@@ -26,10 +27,9 @@ import styles from "./experience-b.module.css"
 const OPEN_KEY = "ktour.experience-save-open.v2"
 type Scenario = "success" | "executionUnknown" | "executionFailure" | "serviceBlocked" | "auditDelay" | "auditFailure" | "cancelRace"
 
-/** Only the explicitly registered place owns this noncommercial preview. */
+/** Public reading is free; only the explicit save action starts verification. */
 export function ExperienceEntryB({ placeId, locale }: { placeId: string; locale: "en" | "ko" | "ja" }) {
-  const sample = useReviewSampleSession()
-  if (!sample || placeId !== EXPERIENCE_PLACE_ID_B) return null
+  if (placeId !== EXPERIENCE_PLACE_ID_B) return null
   const t = EXPERIENCE_COPY_B[locale]
   return <button type="button" className={styles.entry} data-testid="experience-open" data-place-service="experience" data-place-return-section="experience" data-service-place-id={placeId} onClick={() => {
     capturePlaceServiceMapReturnB(placeId)
@@ -38,7 +38,7 @@ export function ExperienceEntryB({ placeId, locale }: { placeId: string; locale:
 }
 
 export function ExperienceMountB() {
-  return useReviewSampleSession() ? <PublicExperienceB /> : null
+  return <PublicExperienceB />
 }
 
 function GuideContentB({ locale }: { locale: "en" | "ko" | "ja" }) {
@@ -50,6 +50,10 @@ function GuideContentB({ locale }: { locale: "en" | "ko" | "ja" }) {
  * action gate, permit, or execution observer until Add to my pass is chosen. */
 function PublicExperienceB() {
   const { state } = useOndoB()
+  const sample = useReviewSampleSession()
+  // Retain the old simulator only in an explicitly compiled QA build. A public
+  // review preference must never choose mock saving over the server journey.
+  const sampleSave = QA_RUNTIME_ENABLED && sample
   const t = EXPERIENCE_COPY_B[state.locale]
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -65,18 +69,18 @@ function PublicExperienceB() {
     }
     window.addEventListener(EXPERIENCE_OPEN_EVENT_B, requested)
     try {
-      const savedOrigin = sessionStorage.getItem(OPEN_KEY)
+      const savedOrigin = sampleSave ? sessionStorage.getItem(OPEN_KEY) : null
       if (savedOrigin === "place" || savedOrigin === "pass") {
         origin.current = savedOrigin; setResume(true); setOpen(true); setSaving(true)
       }
     } catch { /* Public reading requires no storage. */ }
     return () => window.removeEventListener(EXPERIENCE_OPEN_EVENT_B, requested)
-  }, [])
+  }, [sampleSave])
   function close() {
     setOpen(false); setSaving(false)
     if (origin.current === "place") requestPlaceServiceReturnB(EXPERIENCE_PLACE_ID_B, "experience")
     else window.setTimeout(() => {
-      const row = document.querySelector<HTMLButtonElement>("[data-testid='experience-saved-guide']")
+      const row = document.querySelector<HTMLButtonElement>("[data-testid='server-guide-open'], [data-testid='experience-saved-guide']")
       if (document.activeElement === document.body && row && !row.closest("[inert], [aria-hidden='true']")) row.focus({ preventScroll: true })
     }, 180)
   }
@@ -84,16 +88,20 @@ function PublicExperienceB() {
     try { sessionStorage.removeItem(OPEN_KEY) } catch { /* The public guide remains readable. */ }
     setResume(false); setSaving(false)
   }
+  function saveToPass() {
+    if (sampleSave) { setResume(false); setSaving(true); return }
+    if (requestHackathonOpenB({ venueId: EXPERIENCE_PLACE_ID_B, locale: state.locale, source: "guide", returnTo: origin.current })) setOpen(false)
+  }
   if (!open) return null
   if (saving) return <ExperienceFlowB initialScenario={scenario} resume={resume} origin={origin.current} onClose={close} onRead={readAgain} />
   return <SheetB label={t.publicTitle} locale={state.locale} onClose={close} variant="full-task" size="full" header={<strong>{t.publicTitle}</strong>}
     shouldRestoreFocus={() => origin.current === "pass"} initialFocusSelector="[data-testid='experience-public-heading']"
-    footer={<div className={styles.footer}><small className={styles.footerHint}>{t.readingFree}</small><button type="button" className={styles.primary} data-testid="experience-add-to-pass" onClick={() => { setResume(false); setSaving(true) }}>{origin.current === "pass" ? t.viewSaveStatus : t.addToPass}<ChevronRight size={18} aria-hidden="true" /></button></div>}>
+    footer={<div className={styles.footer}><small className={styles.footerHint}>{t.readingFree}</small><button type="button" className={styles.primary} data-testid="experience-add-to-pass" onClick={saveToPass}>{t.addToPass}<ChevronRight size={18} aria-hidden="true" /></button></div>}>
     <article className={styles.body} data-testid="experience-public-guide">
       <div className={styles.eyebrow}><span><MapPin size={14} aria-hidden="true" />{t.place}</span></div>
       <h1 tabIndex={-1} data-testid="experience-public-heading">{t.publicTitle}</h1><p className={styles.lead}>{t.publicBody}</p>
       <GuideContentB locale={state.locale} />
-      <details className={styles.details} data-testid="experience-public-details"><summary>{t.details}<ChevronRight size={16} aria-hidden="true" /></summary><p>{t.boundary}</p><p>{t.detailsBody}</p><label>{t.scenario}<select data-testid="experience-public-scenario" value={scenario} onChange={event => setScenario(event.target.value as Scenario)}>{(["success", "executionUnknown", "executionFailure", "serviceBlocked", "auditDelay", "auditFailure", "cancelRace"] as const).map(value => <option key={value} value={value}>{t[value]}</option>)}</select></label></details>
+      {sampleSave ? <details className={styles.details} data-testid="experience-public-details"><summary>{t.details}<ChevronRight size={16} aria-hidden="true" /></summary><p>{t.boundary}</p><p>{t.detailsBody}</p><label>{t.scenario}<select data-testid="experience-public-scenario" value={scenario} onChange={event => setScenario(event.target.value as Scenario)}>{(["success", "executionUnknown", "executionFailure", "serviceBlocked", "auditDelay", "auditFailure", "cancelRace"] as const).map(value => <option key={value} value={value}>{t[value]}</option>)}</select></label></details> : null}
     </article>
   </SheetB>
 }

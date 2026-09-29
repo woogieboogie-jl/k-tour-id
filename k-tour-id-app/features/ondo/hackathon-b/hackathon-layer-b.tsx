@@ -7,6 +7,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Ticket, X } from "lucide-react"
 import type { OperationResult } from "@/lib/hackathon/types"
+import { GUIDE_SAVE_V2, isGuideJourney } from "@/lib/hackathon/guide-contract"
+import { GuideReadinessBoundaryB } from "../experience-b/guide-readiness-b"
+import { createGuideOperationB, GUIDE_COLLECTION_CHANGED_B, readGuideCollectionB } from "../experience-b/guide-client-b"
+import { requestExperienceB } from "../experience-b/experience-model-b"
+import { GUIDE_JOURNEY_COPY } from "./guide-journey-copy"
+import { GuideProviderStepB } from "./guide-provider-step-b"
 import { requestPlaceServiceReturnB } from "../commerce-b/place-service-registry-b"
 import { B_DISCOVERY_TRAVERSAL_EVENT } from "../map/b-discovery-history"
 import { useOndoB } from "../shared/state/ondo-b-provider"
@@ -62,10 +68,10 @@ const T = {
 const copyFor = (l: Locale) => T[l]
 
 export function HackathonEntitlementLayerB() {
+  const { actions } = useOndoB()
   const [open, setOpen] = useState<HackathonOpenDetail | null>(null)
   const openerRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
-    if (!HACKATHON_ENABLED) return
     const onOpen = (e: Event) => {
       const d = manualHackathonDetail((e as CustomEvent<unknown>).detail)
       if (d) { openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setOpen(d) }
@@ -83,15 +89,19 @@ export function HackathonEntitlementLayerB() {
     if (hk) { url.searchParams.delete("hk"); window.history.replaceState(window.history.state, "", url.toString()) }
     return () => window.removeEventListener(HACKATHON_OPEN_EVENT_B, onOpen)
   }, [])
-  if (!HACKATHON_ENABLED) return null
   if (!open) return null
-  const JourneyView = process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1" ? HostedSuiJourney : process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1" ? IntegrationJourney
+  const JourneyView = open.source === "guide" ? GuideJourney : process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1" ? HostedSuiJourney : process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1" ? IntegrationJourney
     : isCxPreview() ? HackathonCxPreviewB : isReadinessPreview() ? HackathonReadinessB : Journey
-  return <JourneyView key={open.resumeOperationId ?? open.venueId} detail={open} onClose={() => {
+  return <JourneyView key={`${open.source ?? "legacy"}:${open.resumeOperationId ?? open.venueId}`} detail={open} onClose={(restore = true) => {
     setOpen(null)
-    window.setTimeout(() => {
+    if (open.source === "guide" && restore) {
+      if (open.returnTo === "pass") actions.setTab("id")
+      else requestPlaceServiceReturnB(open.venueId, "experience")
+      window.dispatchEvent(new Event(GUIDE_COLLECTION_CHANGED_B))
+    }
+    if (restore) window.setTimeout(() => {
       const opener = openerRef.current
-      const target = opener?.isConnected && !opener.closest("[inert]") ? opener : document.querySelector<HTMLElement>("[data-testid='hackathon-entitlement-open']")
+      const target = opener?.isConnected && !opener.closest("[inert]") ? opener : document.querySelector<HTMLElement>(open.source === "guide" ? open.returnTo === "pass" ? "[data-testid='server-guide-open']" : "[data-testid='experience-open']" : "[data-testid='hackathon-entitlement-open']")
       target?.focus({ preventScroll: true })
     }, 100)
   }} />
@@ -99,6 +109,10 @@ export function HackathonEntitlementLayerB() {
 
 function IntegrationJourney(props: { detail: HackathonOpenDetail; onClose: () => void }) {
   return <HackathonIntegrationPreviewGate {...props}><Journey {...props} /></HackathonIntegrationPreviewGate>
+}
+
+function GuideJourney(props: { detail: HackathonOpenDetail; onClose: (restore?: boolean) => void }) {
+  return <GuideReadinessBoundaryB {...props}><Journey {...props} /></GuideReadinessBoundaryB>
 }
 
 function HostedSuiJourney(props: { detail: HackathonOpenDetail; onClose: () => void }) {
@@ -117,13 +131,19 @@ export function HackathonDemoEntryB() {
   )
 }
 
-function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: () => void }) {
+function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: (restore?: boolean) => void }) {
   const locale: Locale = detail.locale
-  const c = copyFor(locale)
+  const guide = detail.source === "guide"
+  const c = useMemo(() => ({ ...copyFor(locale), ...(guide ? GUIDE_JOURNEY_COPY[locale] : {}) }), [locale, guide])
   const tr = (ko: string, en: string, ja: string) => locale === "ko" ? ko : locale === "ja" ? ja : en
   const [info, setInfo] = useState<EntitlementInfo | null>(null)
   const [config, setConfig] = useState<PublicConfig | null>(null)
-  const [op, setOp] = useState<OperationResult | null>(null)
+  const [op, setOperation] = useState<OperationResult | null>(null)
+  const setOp = useCallback((next: OperationResult | null) => {
+    if (guide && next && (!isGuideJourney(next) || next.execution !== "provider" || next.identity?.mode === "mock" || next.identity?.handoff?.kind === "mock" || next.credential?.mode === "mock")) throw new Error("guide_operation_mismatch")
+    setOperation(next)
+    if (guide && next?.fulfillment?.status === "redeemed") window.dispatchEvent(new Event(GUIDE_COLLECTION_CHANGED_B))
+  }, [guide])
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [consent, setConsent] = useState(false)
@@ -169,28 +189,33 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
     let alive = true
     ;(async () => {
       await api.session() // one cookie first; never proceed after a failed session bootstrap
-      const [cfg, ent] = await Promise.all([api.config(), api.entitlements(detail.venueId)])
+      const cfg = await api.config()
+      if (guide && (cfg.isolatedMock !== false || cfg.modes.cx !== "cx" || cfg.modes.opendid !== "opendid" || cfg.modes.sui !== "testnet" || cfg.modes.zklogin !== "google" || cfg.modes.omnione !== "stage" || cfg.modes.ai !== "gemini")) throw new Error("guide_connection_unavailable")
+      const collection = guide ? await readGuideCollectionB() : null
+      const ent: EntitlementInfo = guide ? { supported: true, campaign: { ...cfg.campaign, venueId: GUIDE_SAVE_V2.venueId, campaignId: GUIDE_SAVE_V2.campaignId, title: { ko: GUIDE_JOURNEY_COPY.ko.title, en: GUIDE_JOURNEY_COPY.en.title, ja: GUIDE_JOURNEY_COPY.ja.title } }, consentVersion: GUIDE_SAVE_V2.consentVersion,
+        modes: cfg.modes, operation: collection?.pendingOperation ?? null, redeemed: null } : await api.entitlements(detail.venueId)
       if (!alive) return
       setConfig(cfg); setInfo(ent)
       const resumeId = detail.resumeOperationId ?? ent.operation?.operationId
       if (resumeId) {
-        let current = await api.get(resumeId).catch(() => null)
+        const current = guide ? await api.get(resumeId) : await api.get(resumeId).catch(() => null)
+        if (guide && !current) throw new Error("guide_operation_unavailable")
         if (current && current.status !== "pending") writePendingHackathon(null)
-        if (current && alive) { setOp(current); setSigner(readSigner(current.operationId)); try { vcRef.current = JSON.parse(sessionStorage.getItem(`ondo-b.hackathon.vc:${current.operationId}`) ?? "null") } catch { vcRef.current = null } }
+        if (current && alive) { setOp(current); const restored = readSigner(current.operationId); setSigner(guide && restored?.kind !== "zklogin" ? null : restored); if (!guide) { try { vcRef.current = JSON.parse(sessionStorage.getItem(`ondo-b.hackathon.vc:${current.operationId}`) ?? "null") } catch { vcRef.current = null } } }
         // OAuth return restores the view only; finishing sign-in requires a fresh tap.
       }
-    })().catch((e) => setError(e instanceof Error ? e.message : "load failed"))
+    })().catch((e) => { if (alive) { if (guide) setInfo(null); setError(e instanceof Error ? e.message : "load failed") } })
     return () => { alive = false }
-  }, [detail.venueId, detail.resumeOperationId, run])
+  }, [detail.venueId, detail.resumeOperationId, run, guide, setOp])
 
   useEffect(() => { if (op && op.status === "pending") writePendingHackathon({ ...detail, resumeOperationId: op.operationId }) }, [op, detail])
 
   const close = useCallback((returnToPlace: boolean) => {
     closedRef.current = true
-    if (op && (op.status !== "pending" || (process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1" && op.phase === "fulfillment" && op.agent?.status === "executed"))) { writePendingHackathon(null); clearJourneySecrets(op.operationId); try { sessionStorage.removeItem(`ondo-b.hackathon.vc:${op.operationId}`) } catch { /* ignore */ } }
-    onClose()
-    if (returnToPlace) window.setTimeout(() => requestPlaceServiceReturnB(detail.venueId, "offer"), 30)
-  }, [onClose, op, detail.venueId])
+    if (op && (op.status !== "pending" || (!guide && process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1" && op.phase === "fulfillment" && op.agent?.status === "executed"))) { writePendingHackathon(null); clearJourneySecrets(op.operationId); try { sessionStorage.removeItem(`ondo-b.hackathon.vc:${op.operationId}`) } catch { /* ignore */ } }
+    onClose(returnToPlace)
+    if (returnToPlace && !guide) window.setTimeout(() => requestPlaceServiceReturnB(detail.venueId, "offer"), 30)
+  }, [onClose, op, detail.venueId, guide])
 
   useEffect(() => {
     // Native discovery Back/Forward already chooses its destination. Leave the
@@ -206,11 +231,11 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   }, [close])
 
   // ── step actions ──────────────────────────────────────────────────
-  const start = () => run("start", async () => { if (consent && info?.supported) setOp(await api.create(detail.venueId, info?.consentVersion ?? config?.consentVersion ?? "", locale)) })
+  const start = () => run("start", async () => { if (consent && info?.supported) setOp(guide ? await createGuideOperationB(locale) : await api.create(detail.venueId, info?.consentVersion ?? config?.consentVersion ?? "", locale)) })
   const identityStart = () => run("identity", async () => { if (op) setOp(await api.identityStart(op.operationId, isMobile)) })
   const identityComplete = (sample?: { outcome: string; subjectSeed: string }) => run("identity", async () => { if (op) setOp(await api.identityComplete(op.operationId, sample)) })
   const issueAndAck = useCallback(() => run("issue", async () => {
-    if (!op) return
+    if (!op || guide) return
     const holder = await ensureHolderKey(op.operationId)
     const issued = await api.issue(op.operationId, holder.publicKeyPem, holder.alg)
     // Never acknowledge holder storage if the browser rejected it. Retrying uses
@@ -220,10 +245,10 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
     const cred = issued.result.credential!
     const ackPayload = canonicalJson({ typ: "ondo-kpass-holder-ack/v1", credentialRef: cred.credentialRef, vcId: cred.vcId, holderBinding: cred.holderBinding })
     setOp(await api.holderAck(op.operationId, await holderSign(holder, ackPayload)))
-  }), [op, run])
+  }), [op, run, guide])
 
   const present = () => run("present", async () => {
-    if (!op) return
+    if (!op || guide) return
     if (!vcRef.current) throw new Error(tr("보관된 패스를 찾지 못했어요. 중지 후 다시 시작해 주세요.", "The saved pass is unavailable. Stop this journey and start again.", "保存したパスが見つかりません。中止してからやり直してください。"))
     const holder = await ensureHolderKey(op.operationId)
     const req = await api.presentationRequest(op.operationId)
@@ -239,6 +264,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   const propose = () => run("propose", async () => { if (op) setOp(await api.proposal(op.operationId, locale)) })
   const chooseSigner = (kind: "zklogin" | "demo") => run("signer", async () => {
     if (!op) return
+    if (guide && kind !== "zklogin") throw new Error("guide_signer_required")
     if (kind === "demo") { setSigner(createDemoSigner(op.operationId)); return }
     if (config?.isolatedMock !== false) throw new Error(tr("이 체험에서는 Google 연결을 사용하지 않아요.", "Google sign-in is disabled for this isolated experience.", "この体験ではGoogle連携を使用しません。"))
     const jwt = sessionStorage.getItem(`ondo-b.hackathon.jwt:${op.operationId}`)
@@ -262,6 +288,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
   })
   const delegate = () => run("delegate", async () => {
     if (!approve || !op || !signer || !op.proposal || !op.presentation?.decisionRef) return
+    if (guide && signer.kind !== "zklogin") throw new Error("guide_signer_required")
     // Every retry, including a rejected signature, requires a fresh approval.
     setApprove(false)
     const message = `ondo-hk-wallet-proof:${op.operationId}:${op.presentation.decisionRef}`
@@ -303,8 +330,8 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
     requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(`[data-testid='${step === null ? "hackathon-step-back" : "hackathon-step-live"}']`)?.focus({ preventScroll: true }))
   }
   const modes = info?.modes ?? config?.modes ?? {}
-  const isolated = config?.isolatedMock !== false
-  const hostedSui = process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1"
+  const isolated = !guide && config?.isolatedMock !== false
+  const hostedSui = !guide && process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1"
   const sampleIdentity = isolated || modes.cx === "mock"
   const steps: readonly string[] = hostedSui ? [...c.steps.slice(0, 7), tr("실행 완료", "Execution complete", "実行完了")] : c.steps
   const stateOf = (i: number) => (op?.status === "cancelled" || op?.status === "failed" || op?.status === "expired" ? (i < stepIndex ? "done" : i === stepIndex ? "blocked" : "todo") : i < stepIndex ? "done" : i === stepIndex ? "current" : "todo")
@@ -322,7 +349,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             <div className={styles.progressLabel}><span><b>{steps[stepIndex]}</b></span><span>{stepIndex + 1} / {steps.length}</span></div>
             <div className={styles.segments} aria-hidden="true">{steps.map((s, i) => <span key={s} className={styles.segment} data-state={stateOf(i)} />)}</div>
           </div>
-          <span className={styles.badge} data-tone="sample">{tr("체험용 · 실제 혜택 아님", "Preview · not a real perk", "体験用・実際の特典ではありません")}</span>
+          {!guide ? <span className={styles.badge} data-tone="sample">{tr("체험용 · 실제 혜택 아님", "Preview · not a real perk", "体験用・実際の特典ではありません")}</span> : null}
         </header>
         {op && stepIndex > 0 ? <nav className={styles.stepNav} aria-label={tr("진행 단계 돌아보기", "Review journey steps", "進んだステップを確認")}>
           <button type="button" className={styles.ghost} disabled={shownStep <= 0 || !!busy} onClick={() => reviewStep(Math.max(0, shownStep - 1))} data-testid="hackathon-step-back">{tr("이전 단계 보기", "Review previous", "前のステップを見る")}</button>
@@ -385,14 +412,15 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             </section>
           ) : null}
 
-          {activePhase === "issuance" && op ? <section className={styles.card}>
+          {guide && op && (activePhase === "issuance" || activePhase === "presentation") ? <GuideProviderStepB key={`${op.operationId}:${activePhase}`} operation={op} locale={locale} onOperation={setOp} /> : null}
+          {activePhase === "issuance" && op && !guide ? <section className={styles.card}>
             <h3>{c.steps[2]}</h3>
             {hostedSui ? <p>{tr("앱 내 체험 패스입니다. OpenDID 신분증은 발급하지 않습니다.", "An in-app sample pass, not an OpenDID identity credential.", "アプリ内の体験パスです。OpenDIDの身分証は発行しません。")}</p> : null}
             <p>{busy === "issue" ? c.issuing : tr("이 체험에서 사용할 패스를 받아 보관합니다.", "Receive and keep a pass for this experience.", "この体験で使うパスを受け取り、保存します。")}</p>
             <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={issueAndAck} data-testid="hackathon-issue">{busy === "issue" ? <span className={styles.spinner} /> : null}{tr("패스 받기", "Get pass", "パスを受け取る")}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
           </section> : null}
 
-          {activePhase === "presentation" && op ? (
+          {activePhase === "presentation" && op && !guide ? (
             <section className={styles.card}>
               <h3>{c.steps[3]}</h3>
               <p>{c.presentBody}</p>
@@ -402,7 +430,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             </section>
           ) : null}
 
-          {activePhase === "proposal" && op ? <section className={styles.card}><h3>{c.steps[4]}</h3><p>{tr("이 장소에서 체험할 수 있는 혜택 하나를 확인합니다. 내용을 보고 진행 여부를 직접 선택해 주세요.", "Review the one available experience perk, then choose whether to continue.", "この場所で体験できる特典を1つ確認し、進めるかどうか選んでください。")}</p><div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={propose} data-testid="hackathon-propose">{busy === "propose" ? <span className={styles.spinner} /> : null}{c.propose}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div></section> : null}
+          {activePhase === "proposal" && op ? <section className={styles.card}><h3>{c.steps[4]}</h3><p>{guide ? tr("패스에 담을 가이드와 한 번의 저장 범위를 확인해 주세요. 읽기에는 승인이 필요하지 않아요.", "Review the guide and the scope of one saving action. Reading does not require approval.", "保存するガイドと1回の保存範囲を確認してください。読むだけなら承認は不要です。") : tr("이 장소에서 체험할 수 있는 혜택 하나를 확인합니다. 내용을 보고 진행 여부를 직접 선택해 주세요.", "Review the one available experience perk, then choose whether to continue.", "この場所で体験できる特典を1つ確認し、進めるかどうか選んでください。")}</p><div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={propose} data-testid="hackathon-propose">{busy === "propose" ? <span className={styles.spinner} /> : null}{c.propose}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div></section> : null}
 
           {activePhase === "delegation" && op && op.proposal ? (
             <section className={styles.card}>
@@ -410,9 +438,9 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
               <p><b>{op.proposal.output.summary}</b></p>
               <p>{op.proposal.output.rationale}</p>
               <h3>{c.approveTitle}</h3>
-              <p>{c.approveBody}</p>
+              <p>{guide ? tr("저장할 가이드·횟수·기한을 확인해 주세요. 이 가이드를 패스에 한 번 저장하는 범위만 승인해요.", "Review the guide, use limit and expiry. You are approving only one save of this guide to your pass.", "保存するガイド・回数・期限を確認してください。このガイドをパスに1回保存する範囲だけを承認します。") : c.approveBody}</p>
               <dl className={styles.kv}>
-                <dt>{tr("대상", "Perk", "対象")}</dt><dd>{title}</dd>
+                <dt>{guide ? tr("가이드", "Guide", "ガイド") : tr("대상", "Perk", "対象")}</dt><dd>{title}</dd>
                 <dt>{tr("횟수", "Uses", "回数")}</dt><dd>1</dd>
                 <dt>{tr("기한", "Expires", "期限")}</dt><dd>{op.delegation ? new Date(op.delegation.expiresAtMs).toLocaleTimeString(locale) : tr("승인 후 최대 10분", "Up to 10 minutes after approval", "承認から最大10分")}</dd>
                 <dt>{tr("수령 계정", "Recipient", "受取アカウント")}</dt><dd>{signer?.address ? signer.address.slice(0, 12) + "…" : "—"}</dd>
@@ -422,7 +450,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
                 <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button>{delegationMayStop ? <button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button> : null}</div>
               </> : !signer || (signer.kind === "zklogin" && signer.jwtPending) ? <div className={styles.actions}>
                 {!isolated && modes.zklogin === "google" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={() => chooseSigner("zklogin")} data-testid="hackathon-signer-google">{c.signerZk}</button> : null}
-                {isolated || modes.zklogin !== "google" ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => chooseSigner("demo")} data-testid="hackathon-signer-demo">{c.signerDemo}</button> : null}
+                {!guide && (isolated || modes.zklogin !== "google") ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => chooseSigner("demo")} data-testid="hackathon-signer-demo">{c.signerDemo}</button> : null}
               </div> : <>
                 <div className={styles.notice}>{signer.kind === "zklogin" ? tr("Google 계정 연결됨", "Google account connected", "Googleアカウント接続済み") : tr("샘플 계정이 준비됐어요", "Sample account ready", "サンプルアカウントの準備ができました")}</div>
                 <label className={styles.check}><input type="checkbox" id="hk-approve" checked={approve} onChange={(e) => setApprove(e.target.checked)} /> <span>{c.approveCheck}</span></label>
@@ -447,7 +475,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
             {op.agent?.txDigest ? <a className={styles.link} href={`https://suiscan.xyz/testnet/tx/${op.agent.txDigest}`} target="_blank" rel="noreferrer">{tr("실행 기록 보기", "View execution receipt", "実行記録を見る")}</a> : null}
             <div className={styles.actions}><button type="button" className={styles.primary} onClick={() => close(true)} data-testid="hackathon-return">{c.back}</button></div>
           </section> : null}
-          {activePhase === "fulfillment" && op && !hostedSui ? <section className={styles.card}><h3>{c.steps[7]}</h3>{op.fulfillment?.status === "blocked" ? <div className={styles.notice} data-tone="error">{c.blocked}</div> : <p>{tr("진행 결과와 이용 조건을 다시 확인한 뒤 1회 사용을 확정합니다.", "Re-check the result and eligibility before confirming a single use.", "結果と利用条件を再確認し、1回の利用を確定します。")}</p>}<div className={styles.actions}>{op.fulfillment?.status !== "blocked" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={redeem} data-testid="hackathon-redeem">{busy === "redeem" ? <span className={styles.spinner} /> : null}{c.redeem}</button> : null}<button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div></section> : null}
+          {activePhase === "fulfillment" && op && !hostedSui ? <section className={styles.card}><h3>{c.steps[7]}</h3>{op.fulfillment?.status === "blocked" ? <div className={styles.notice} data-tone="error">{c.blocked}</div> : <p>{guide ? tr("승인한 실행 결과를 확인한 뒤, 같은 가이드를 패스 보관함에 저장해요. 기록 확인이 늦어져도 저장을 반복하지 않아요.", "Confirm the approved execution, then add this guide to your pass collection. A delayed record never repeats the save.", "承認した実行結果を確認し、同じガイドをパスに保存します。記録の確認が遅れても保存は繰り返しません。") : tr("진행 결과와 이용 조건을 다시 확인한 뒤 1회 사용을 확정합니다.", "Re-check the result and eligibility before confirming a single use.", "結果と利用条件を再確認し、1回の利用を確定します。")}</p>}<div className={styles.actions}>{op.fulfillment?.status !== "blocked" && (!guide || op.allowedActions.includes("redeem")) ? <button type="button" className={styles.primary} disabled={!!busy} onClick={redeem} data-testid="hackathon-redeem">{busy === "redeem" ? <span className={styles.spinner} /> : null}{c.redeem}</button> : null}<button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div></section> : null}
 
           {op && (op.phase === "done" || op.status !== "pending") ? (
             <section className={styles.card}>
@@ -456,6 +484,7 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
               {op.chain ? <div className={styles.notice} data-tone={op.chain.status === "confirmed" ? "ok" : op.chain.status === "failed" ? "error" : undefined}>{isolated ? tr("샘플 기록입니다. 실제 외부 기록은 생성하지 않았습니다.", "This is a sample record. No real external record was created.", "サンプル記録です。実際の外部記録は作成していません。") : op.chain.status === "confirmed" ? c.chainConfirmed : op.chain.status === "failed" ? c.chainFailed : c.chainPending}</div> : null}
               <div className={styles.actions}>
                 {op.chain && op.chain.status !== "confirmed" ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button> : null}
+                {guide && op.fulfillment?.status === "redeemed" ? <button type="button" className={styles.secondary} data-testid="guide-read-saved" onClick={() => { close(true); window.setTimeout(() => requestExperienceB(detail.venueId, detail.returnTo === "pass" ? "pass" : "place"), 180) }}>{tr("저장한 가이드 읽기", "Read saved guide", "保存したガイドを読む")}</button> : null}
                 <button type="button" className={styles.primary} onClick={() => close(true)} data-testid="hackathon-return">{c.back}</button>
               </div>
             </section>
@@ -465,9 +494,10 @@ function Journey({ detail, onClose }: { detail: HackathonOpenDetail; onClose: ()
           {op ? <details className={styles.card} data-testid="hackathon-technical-details">
             <summary>{tr("기술 정보", "Technical details", "技術情報")}</summary>
             <pre className={styles.evidence}>{JSON.stringify({ modes, isolatedMock: isolated, credential: op.credential, presentation: op.presentation, proposalDigest: op.proposal?.proposalDigest, grant: op.delegation?.grant, chain: op.chain }, null, 2)}</pre>
+            {guide ? <><button type="button" className={styles.secondary} disabled={!!busy} onClick={loadEvidence} data-testid="hackathon-evidence">{c.evidence}</button>{evidence ? <pre className={styles.evidence}>{JSON.stringify(evidence, null, 2)}</pre> : null}</> : null}
           </details> : null}
-          {op ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={loadEvidence} data-testid="hackathon-evidence">{c.evidence}</button> : null}
-          {evidence ? <section className={styles.card}><h3>{c.evidence}</h3><pre className={styles.evidence}>{JSON.stringify(evidence, null, 2)}</pre>{!isolated && config?.sui.explorer && op?.agent?.txDigest ? <a className={styles.link} href={`${config.sui.explorer}/tx/${op.agent.txDigest}`} target="_blank" rel="noreferrer">Sui explorer · agent tx</a> : null}</section> : null}
+          {op && !guide ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={loadEvidence} data-testid="hackathon-evidence">{c.evidence}</button> : null}
+          {evidence && !guide ? <section className={styles.card}><h3>{c.evidence}</h3><pre className={styles.evidence}>{JSON.stringify(evidence, null, 2)}</pre>{!isolated && config?.sui.explorer && op?.agent?.txDigest ? <a className={styles.link} href={`${config.sui.explorer}/tx/${op.agent.txDigest}`} target="_blank" rel="noreferrer">Sui explorer · agent tx</a> : null}</section> : null}
         </div>
       </div>
     </div>

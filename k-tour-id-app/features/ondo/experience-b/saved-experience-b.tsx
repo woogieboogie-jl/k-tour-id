@@ -2,7 +2,7 @@
 
 import { BookOpen, ChevronRight } from "lucide-react"
 import { useEffect, useState } from "react"
-import { useReviewSampleSession } from "../shared/ui/use-qa-controls"
+import { QA_RUNTIME_ENABLED, useReviewSampleSession } from "../shared/ui/use-qa-controls"
 import { EXPERIENCE_COPY_B } from "./experience-copy-b"
 import { EXPERIENCE_CHANGED_EVENT_B, EXPERIENCE_PLACE_ID_B, requestExperienceB } from "./experience-model-b"
 import { readExperienceB } from "./experience-store-b"
@@ -11,7 +11,7 @@ import styles from "./experience-b.module.css"
 /** A local collection entry, never an identity claim or permission to act. */
 export function SavedExperienceB({ locale }: { locale: "en" | "ko" | "ja" }) {
   const sample = useReviewSampleSession()
-  return sample ? <SavedGuideB locale={locale} /> : null
+  return QA_RUNTIME_ENABLED && sample ? <SavedGuideB locale={locale} /> : null
 }
 
 function SavedGuideB({ locale }: { locale: "en" | "ko" | "ja" }) {

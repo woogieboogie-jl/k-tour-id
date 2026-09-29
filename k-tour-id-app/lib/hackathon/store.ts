@@ -18,11 +18,16 @@ import { HkError } from "./util"
 import { parseStoredJourney } from "./store-integrity"
 import { previewRedisConfig, storeRedisCommand, type StoreCanaryOwnership } from "./redis-config"
 import { hostedIntegrationRedisConfig, requiresHostedIntegrationRedis } from "./hosted-store-config"
-import { assertIntegrationSuiBudget, assertIntegrationSuiBudgetMonotonic, type IntegrationSuiBudget } from "./integration-sui-limits"
+import { assertIntegrationSuiBudget, assertIntegrationSuiBudgetMonotonic, requiresIntegrationSuiLimits, type IntegrationSuiBudget } from "./integration-sui-limits"
+import { assertGuideCollectionMonotonic, type GuideCollectionRecord } from "./guide-collection"
+import type { OpenDidProviderState } from "./opendid-provider-lifecycle"
+import { CUTOVER_SCOPE, assertCommittedCutover, assertCutoverSourceUnchanged, assertIntegrationCutoverMonotonic, nextCutoverControl, parseIntegrationCutoverControl,
+  type IntegrationCutoverMarker, type IntegrationCutoverControl } from "./integration-cutover"
 
 export type OperationRecord = OperationResult & {
   sessionId: string
   secrets: {
+    openDidProvider?: OpenDidProviderState // Server-only; never expose KYC/owner binding or offers.
     vcDocument?: unknown            // mock/opendid issued VC (issuer-signed); never returned to evidence
     holderPublicKeyPem?: string     // holder binding (mock holder)
     holderKeyAlg?: "Ed25519" | "ECDSA-P256"
@@ -60,6 +65,8 @@ export type Db = {
   idempotency: Record<string, IdempotencyRecord>
   nonces: Record<string, { operationId: string; consumedAt: string | null; createdAt: string }>
   integrationSuiBudget?: IntegrationSuiBudget // Retained across operation pruning; never initialized by runtime.
+  integrationCutover?: IntegrationCutoverMarker // Operator-only provisioned marker; never initialized by a request.
+  guideCollection?: Record<string, GuideCollectionRecord> // Authoritative, retained beyond the operation TTL.
 }
 
 const EMPTY: Db = { version: 1, sessions: {}, operations: {}, redemptions: {}, outbox: {}, idempotency: {}, nonces: {} }
@@ -115,7 +122,9 @@ function fileLoad(path: string): Db {
   if (fileCache) return fileCache
   if (!existsSync(path)) { fileCache = structuredClone(EMPTY); return fileCache }
   // An unreadable ledger must never silently become a fresh, redeemable account.
-  fileCache = parseStoredJourney(readFileSync(path, "utf8"))
+  const loaded = parseStoredJourney(readFileSync(path, "utf8"))
+  if (loaded.integrationCutover) throw new HkError("store_configuration", "Cutover requires the approved durable store.", 503)
+  fileCache = loaded
   return fileCache
 }
 function filePersist(path: string, db: Db) {
@@ -132,11 +141,47 @@ async function redisLoad(b: RedisBackend): Promise<Db> {
   if (b.canary) {
     const raw = await redisCmd<string | null>(b, ["EVAL", "-- ktour-canary-load\nif redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('GET', KEYS[2]) end return false", 2, b.canary.ownerKey, b.key, b.canary.ownerToken])
     if (raw === null) throw new HkError("store_canary_ownership", "Canary ownership is unavailable.", 503)
-    return parseStoredJourney(raw)
+    const db = parseStoredJourney(raw)
+    if (db.integrationCutover) throw new HkError("store_configuration", "Cutover cannot use temporary canary storage.", 503)
+    return db
   }
   const raw = await redisCmd<string | null>(b, ["GET", b.key])
   if (raw === null) return structuredClone(EMPTY)
-  return parseStoredJourney(raw)
+  const db = parseStoredJourney(raw)
+  // A removed runtime flag or copied marker must not downgrade dual-key CAS.
+  if (db.integrationCutover) throw new HkError("store_configuration", "Cutover requires atomic control verification.", 503)
+  return db
+}
+
+type CutoverRead = { db: Db; control: IntegrationCutoverControl; raw: string; controlRaw: string; sourceRaw: string }
+function cutoverStoreRequired() { return requiresIntegrationSuiLimits() }
+function assertCutoverBackend(b: Backend): asserts b is RedisBackend {
+  if (b.kind !== "redis" || b.canary || b.key !== CUTOVER_SCOPE.targetKey || process.env.HK_INTEGRATION_SUI_TARGET !== "selfhosted-testnet") {
+    throw new HkError("store_configuration", "The approved integration cutover store is unavailable.", 503)
+  }
+}
+async function redisCutoverLoad(b: RedisBackend): Promise<CutoverRead> {
+  assertCutoverBackend(b)
+  // MGET is one atomic snapshot. Independent GETs could combine two revisions.
+  const pair = await redisCmd<unknown>(b, ["MGET", b.key, CUTOVER_SCOPE.controlKey, CUTOVER_SCOPE.sourceKey])
+  if (!Array.isArray(pair) || pair.length !== 3 || typeof pair[0] !== "string" || typeof pair[1] !== "string") {
+    throw new HkError("integration_sui_migration_required", "The shared execution budget migration is not prepared.", 503)
+  }
+  let control: IntegrationCutoverControl
+  try { control = parseIntegrationCutoverControl(JSON.parse(pair[1])) } catch { throw new HkError("store_corrupt", "Cutover control is unavailable.", 503) }
+  const db = parseStoredJourney(pair[0])
+  assertCommittedCutover(db, control)
+  assertCutoverSourceUnchanged(pair[2], control.marker)
+  return { db, control, raw: pair[0], controlRaw: pair[1], sourceRaw: pair[2] as string }
+}
+const CUTOVER_PERSIST_LUA = `-- ktour-cutover-runtime-commit-v1
+if redis.call('GET',KEYS[1])~=ARGV[1] or redis.call('GET',KEYS[2])~=ARGV[2] or redis.call('GET',KEYS[3])~=ARGV[3] or redis.call('GET',KEYS[4])~=ARGV[6] then return 0 end
+redis.call('SET',KEYS[2],ARGV[4]); redis.call('SET',KEYS[3],ARGV[5]); return 1`
+async function redisCutoverPersist(b: RedisBackend, previous: CutoverRead, db: Db, token: string) {
+  const control = nextCutoverControl(previous.db, previous.control, db)
+  const committed = await redisCmd<number>(b, ["EVAL", CUTOVER_PERSIST_LUA, 4, `${b.key}:lock`, b.key, CUTOVER_SCOPE.controlKey, CUTOVER_SCOPE.sourceKey,
+    token, previous.raw, previous.controlRaw, JSON.stringify(db), JSON.stringify(control), previous.sourceRaw])
+  if (committed !== 1) throw new HkError("store_lease_lost", "Journey changed while saving. Check the current result before retrying.", 503)
 }
 async function redisPersist(b: RedisBackend, db: Db, token: string) {
   // Atomic compare-and-write: an expired lease cannot overwrite a newer owner.
@@ -198,13 +243,18 @@ let queue: Promise<unknown> = Promise.resolve()
 export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
   const run = async () => {
     const b = backend()
+    if (cutoverStoreRequired()) assertCutoverBackend(b)
     if (b.kind === "file") {
       // Failed mutations must not leak through the in-memory cache or a later write.
       const db = structuredClone(fileLoad(b.path))
       const budget = db.integrationSuiBudget ? structuredClone(assertIntegrationSuiBudget(db)) : undefined
+      const marker = db.integrationCutover ? structuredClone(db.integrationCutover) : undefined
+      const collection = db.guideCollection ? structuredClone(db.guideCollection) : undefined
       const result = await fn(db)
       if (budget) assertIntegrationSuiBudgetMonotonic(budget, db)
       else if (db.integrationSuiBudget !== undefined) assertIntegrationSuiBudget(db)
+      assertIntegrationCutoverMonotonic(marker, db)
+      assertGuideCollectionMonotonic(collection, db)
       prune(db)
       filePersist(b.path, db)
       fileCache = db
@@ -212,13 +262,19 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
     }
     const token = await redisLock(b)
     try {
-      const db = await redisLoad(b)
+      const cutover = cutoverStoreRequired() ? await redisCutoverLoad(b) : undefined
+      const db = cutover ? structuredClone(cutover.db) : await redisLoad(b)
       const budget = db.integrationSuiBudget ? structuredClone(assertIntegrationSuiBudget(db)) : undefined
+      const marker = db.integrationCutover ? structuredClone(db.integrationCutover) : undefined
+      const collection = db.guideCollection ? structuredClone(db.guideCollection) : undefined
       const result = await fn(db)
       if (budget) assertIntegrationSuiBudgetMonotonic(budget, db)
       else if (db.integrationSuiBudget !== undefined) assertIntegrationSuiBudget(db)
+      assertIntegrationCutoverMonotonic(marker, db)
+      assertGuideCollectionMonotonic(collection, db)
       prune(db)
-      await redisPersist(b, db, token)
+      if (cutover) await redisCutoverPersist(b, cutover, db, token)
+      else await redisPersist(b, db, token)
       return structuredClone(result)
     } finally {
       await redisUnlock(b, token)
@@ -232,8 +288,18 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
 /** Read-only view (fresh from the backend; never mutate the result). */
 export async function readStore<T>(fn: (db: Db) => T): Promise<T> {
   const b = backend()
+  if (cutoverStoreRequired()) { assertCutoverBackend(b); return fn((await redisCutoverLoad(b)).db) }
   if (b.kind === "file") return fn(structuredClone(fileLoad(b.path)))
   return fn(await redisLoad(b))
+}
+
+/** Fresh verified activation evidence, not a cache or user-controlled switch.
+ * This alone does not grant provider/signing authorization or create a budget. */
+export async function readIntegrationSuiActivation() {
+  if (!cutoverStoreRequired()) throw new HkError("integration_sui_scope", "The integration profile is unavailable.", 503)
+  const b = backend(); assertCutoverBackend(b)
+  const { db, control } = await redisCutoverLoad(b)
+  return { db, control }
 }
 
 export function redemptionKey(subjectRef: string, campaignId: string) { return `${subjectRef}::${campaignId}` }

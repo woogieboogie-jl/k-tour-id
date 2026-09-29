@@ -132,12 +132,12 @@ test("tampered claims and wrong holder signatures never allow a presentation", a
   assert.equal(signatureResult.presentation?.denyReason, "holder_signature")
 })
 
-test("client verifier confirmation cannot bypass the incomplete OpenDID provider lifecycle", async () => {
+test("client verifier confirmation cannot cross from a sample route into the native provider lane", async () => {
   const flow = await presentationReady()
   await withStore((db) => { db.operations[flow.operationId].credential!.mode = "opendid" })
-  const result = await flow.submit({ __verifierConfirmed: true })
-  assert.equal(result.presentation?.decision, "deny")
-  assert.equal(result.presentation?.denyReason, "opendid_provider_unimplemented")
+  await assert.rejects(flow.submit({ __verifierConfirmed: true }), errorCode("opendid_provider_required"))
+  const result = await service.loadOperation(flow.sessionId, flow.operationId)
+  assert.equal(result.presentation?.decision, null)
   assert.equal(result.presentation?.verifiedAt, null)
   assert.equal(result.phase, "presentation")
   assert.equal(result.proposal, null)
@@ -264,7 +264,8 @@ test("final eligibility rechecks signed credential, VP binding, session and dupl
   assert.equal(redemptionEligibility(op, db, executedAtMs, now), null)
   const change = (edit: (o: typeof op) => void) => { const copy = structuredClone(op); edit(copy); return copy }
   assert.equal(credentialEligibility(change((o) => { o.credential!.status = "revoked" }), now), "credential_revoked")
-  assert.equal(credentialEligibility(change((o) => { o.credential!.mode = "opendid" }), now), "opendid_provider_unimplemented")
+  // Changing a mock summary's mode cannot create real CX/native evidence.
+  assert.equal(credentialEligibility(change((o) => { o.credential!.mode = "opendid" }), now), "opendid_identity_required")
   assert.equal(credentialEligibility(change((o) => { o.identity!.subjectRef = "another-person" }), now), "credential_binding")
   assert.equal(credentialEligibility(change((o) => { o.credential!.holderBinding = "forged" }), now), "credential_binding")
   assert.equal(credentialEligibility(change((o) => { (o.secrets.vcDocument as KPassVc).credentialSubject.personVerified = false as never }), now), "credential_signature")

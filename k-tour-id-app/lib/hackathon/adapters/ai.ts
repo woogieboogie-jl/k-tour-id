@@ -17,7 +17,7 @@ function ruleProposal(input: ProposalInput): ProposalOutput {
   const t = input.language
   const name = input.venueName
   return {
-    action: "redeem_demo_entitlement",
+    action: input.action ?? "redeem_demo_entitlement",
     target: { venueId: input.venueId, campaignId: input.campaignId },
     title: t === "ko" ? `${name} 체험 혜택` : t === "ja" ? `${name} 体験特典` : `${name} experience perk`,
     summary: t === "ko" ? "확인된 K-Tour 패스로 이 장소의 해커톤 체험 혜택을 1회 사용할 수 있어요." : t === "ja" ? "確認済みのK-Tourパスで、この場所のハッカソン体験特典を1回使えます。" : "Your verified K-Tour pass unlocks this place's one-time hackathon experience perk.",
@@ -26,14 +26,14 @@ function ruleProposal(input: ProposalInput): ProposalOutput {
   }
 }
 
-export type ProposalInput = { venueId: string; campaignId: string; venueName: string; category: string; district: string; language: "ko" | "en" | "ja"; timeOfDay: string; policyVersion: number }
+export type ProposalInput = { venueId: string; campaignId: string; venueName: string; category: string; district: string; language: "ko" | "en" | "ja"; timeOfDay: string; policyVersion: number; action?: ProposalOutput["action"] }
 
 const INJECTION = /(ignore (all|previous|prior)|system prompt|developer mode|transfer|send (sui|coin|token)|private key|seed phrase|amount|₩|\$\d|discount|refund|reservation)/i
 
 function validate(raw: unknown, input: ProposalInput): { ok: true; output: ProposalOutput } | { ok: false; reason: string } {
   if (!raw || typeof raw !== "object") return { ok: false, reason: "not_object" }
   const o = raw as Record<string, unknown>
-  if (o.action !== "redeem_demo_entitlement") return { ok: false, reason: "action_not_allowed" }
+  if (o.action !== (input.action ?? "redeem_demo_entitlement")) return { ok: false, reason: "action_not_allowed" }
   const target = o.target as Record<string, unknown> | undefined
   if (!target || target.venueId !== input.venueId || target.campaignId !== input.campaignId) return { ok: false, reason: "target_mismatch" }
   const str = (k: string, max: number) => typeof o[k] === "string" && (o[k] as string).trim().length > 0 && (o[k] as string).length <= max ? (o[k] as string).trim() : null
@@ -41,7 +41,7 @@ function validate(raw: unknown, input: ProposalInput): { ok: true; output: Propo
   if (!title || !summary || !rationale) return { ok: false, reason: "text_invalid" }
   if (INJECTION.test(`${title} ${summary} ${rationale}`)) return { ok: false, reason: "guard_tripped" }
   const language = o.language === "en" || o.language === "ja" ? o.language : "ko"
-  return { ok: true, output: { action: "redeem_demo_entitlement", target: { venueId: input.venueId, campaignId: input.campaignId }, title, summary, rationale, language } }
+  return { ok: true, output: { action: input.action ?? "redeem_demo_entitlement", target: { venueId: input.venueId, campaignId: input.campaignId }, title, summary, rationale, language } }
 }
 
 export async function proposePerk(input: ProposalInput): Promise<ProposalSummary> {
@@ -52,8 +52,10 @@ export async function proposePerk(input: ProposalInput): Promise<ProposalSummary
   let model = c.mode === "gemini" ? c.model : "rule-v1"
   let injectionSuspected = false, schemaValid = true
   if (c.mode === "gemini" && process.env.GEMINI_API_KEY) {
-    const message = JSON.stringify({ venue: { id: input.venueId, name: input.venueName, category: input.category, district: input.district }, campaign: { id: input.campaignId, kind: "non_financial_experience_perk", usesLeft: 1 }, context: { timeOfDay: input.timeOfDay, language: input.language } })
-    const res = await geminiGenerate({ key: process.env.GEMINI_API_KEY, model: c.model, system: SYSTEM, message, maxOutputTokens: 400, temperature: 0.3 })
+    const guide = input.action === "save-neighborhood-guide-to-pass"
+    const message = JSON.stringify({ venue: { id: input.venueId, name: input.venueName, category: input.category, district: input.district }, campaign: { id: input.campaignId, kind: guide ? "save_free_public_guide_to_travel_pass" : "non_financial_experience_perk", usesLeft: 1 }, context: { timeOfDay: input.timeOfDay, language: input.language } })
+    const system = guide ? SYSTEM.replaceAll("redeem_demo_entitlement", input.action!) + " This only saves an already freely readable neighborhood guide to the travel pass. Do not promise admission, payment, age permission, reservations, or a financial benefit." : SYSTEM
+    const res = await geminiGenerate({ key: process.env.GEMINI_API_KEY, model: c.model, system, message, maxOutputTokens: 400, temperature: 0.3 })
     let parsed: unknown = null
     if (res.reply) { try { parsed = JSON.parse(res.reply.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim()) } catch { parsed = null } }
     const v = validate(parsed, input)

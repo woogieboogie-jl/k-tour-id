@@ -140,6 +140,7 @@ export function hostedSuiRouteAllowed(method: string, path: RoutePath): boolean 
   const p = parts(path)
   if (!p) return false
   if (method === "GET") return (p.length === 1 && ["config", "me"].includes(p[0])) ||
+    (p.length === 2 && p[0] === "guide" && p[1] === "collection") ||
     (p.length === 3 && p[0] === "places" && p[2] === "demo-entitlements") ||
     ((p.length === 2 || (p.length === 3 && p[2] === "evidence")) && p[0] === "operations" && operationId.test(p[1]))
   if (method !== "POST") return false

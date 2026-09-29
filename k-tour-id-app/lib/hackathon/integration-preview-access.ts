@@ -91,6 +91,7 @@ export function assertIntegrationPreviewOrigin(request: Request, env: Env = proc
 
 const operationId = /^op_[A-Za-z0-9_-]{8,64}$/
 const actions: Record<string, readonly string[]> = {
+  "provider/issuance/start": [], "provider/issuance/refresh": [], "provider/presentation/start": [], "provider/presentation/refresh": [], "provider/cancel": [],
   "identity/start": ["mobile"], "identity/complete": [],
   "credential/issue": ["publicKeyPem", "alg"], "credential/holder-ack": ["signatureB64"],
   "presentation/request": [], "presentation/submit": ["presentationId", "disclosed", "signatureB64"], "presentation/deny": [],
@@ -101,18 +102,21 @@ const actions: Record<string, readonly string[]> = {
 /** Exact path lengths and verbs; HEAD and all unknown/query routes stay shut. */
 export function integrationPreviewRouteAllowed(method: string, path: string[]) {
   if (method === "GET") return (path.length === 1 && ["config", "me"].includes(path[0])) ||
+    (path.length === 2 && path[0] === "guide" && path[1] === "collection") ||
     (path.length === 3 && path[0] === "places" && /^[A-Za-z0-9_-]{1,120}$/.test(path[1]) && path[2] === "demo-entitlements") ||
     ((path.length === 2 || (path.length === 3 && path[2] === "evidence")) && path[0] === "operations" && operationId.test(path[1])) ||
     (path.length === 2 && path[0] === "zklogin" && path[1] === "params")
   if (method !== "POST") return false
   return (path.length === 1 && ["sessions", "operations"].includes(path[0])) ||
+    (path.length === 2 && path[0] === "guide" && path[1] === "operations") ||
     (path.length === 2 && ((path[0] === "integration" && path[1] === "access") || (path[0] === "zklogin" && path[1] === "prove"))) ||
-    ((path.length === 3 || path.length === 4) && path[0] === "operations" && operationId.test(path[1]) && Object.hasOwn(actions, path.slice(2).join("/")))
+    ((path.length >= 3 && path.length <= 5) && path[0] === "operations" && operationId.test(path[1]) && Object.hasOwn(actions, path.slice(2).join("/")))
 }
 
 export function assertIntegrationPreviewBody(path: string[], body: Record<string, unknown>) {
   const fields = path.length === 1 ? (path[0] === "operations" ? ["venueId", "consentVersion", "locale"] : [])
-    : path[0] === "integration" ? ["accessCode"]
+    : path[0] === "guide" && path[1] === "operations" ? ["venueId", "consentVersion", "locale"]
+      : path[0] === "integration" ? ["accessCode"]
       : path[0] === "zklogin" ? ["jwt", "extendedEphemeralPublicKey", "maxEpoch", "jwtRandomness"]
         : actions[path.slice(2).join("/")] ?? []
   if (Object.keys(body).some(key => !fields.includes(key))) throw badBody()

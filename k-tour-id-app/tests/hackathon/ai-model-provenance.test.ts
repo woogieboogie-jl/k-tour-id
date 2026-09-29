@@ -24,6 +24,28 @@ function safe(value: unknown) {
   assert.equal(encoded.includes(LEAK), false)
 }
 
+test("guide proposal only accepts its exact v2 action, and binds it in provenance", async () => {
+  const restore = setup()
+  try {
+    const guideInput: ProposalInput = { ...input, action: "save-neighborhood-guide-to-pass" }
+    const guideOutput = { ...output, action: guideInput.action, title: "Save this neighborhood guide", summary: "Keep this freely readable guide in your travel pass." }
+    globalThis.fetch = async (_url, init) => {
+      const request = JSON.parse(String(init?.body))
+      assert.ok(JSON.stringify(request).includes("save-neighborhood-guide-to-pass"))
+      return successful(JSON.stringify(guideOutput))
+    }
+    const proposal = await proposePerk(guideInput)
+    assert.equal(proposal.mode, "gemini")
+    assert.equal(proposal.output.action, guideInput.action)
+    assert.equal(proposal.outputDigest, digestOf(guideOutput))
+    globalThis.fetch = async () => successful() // legacy action is not allowed in v2
+    const rejected = await proposePerk(guideInput)
+    assert.equal(rejected.mode, "rule")
+    assert.equal(rejected.guard.schemaValid, false)
+    assert.equal(rejected.output.action, guideInput.action)
+  } finally { restore() }
+})
+
 test("explicit configured model wins over helper defaults and reports the successful request target", async () => {
   const restore = setup({ GEMINI_MODEL: "fixture-environment-model" })
   const calls: string[] = []

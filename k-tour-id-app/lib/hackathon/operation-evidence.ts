@@ -4,6 +4,8 @@ import { redemptionKey, type Db, type OperationRecord } from "./store"
 import type { GrantExpectation, ExecutionExpectation } from "./sui-evidence"
 import { verifyIssuerSignature, sampleSubjectCommitment, type KPassVc } from "./adapters/opendid"
 import { identityPolicyChanged } from "./identity-policy"
+import { operationAction, operationCampaign } from "./guide-policy"
+import { providerCredentialReason, providerPresentationReason } from "./provider-operation"
 
 const time = (v: string | null | undefined) => v ? Date.parse(v) : NaN
 const fresh = (v: string | null | undefined, now: number) => Number.isFinite(time(v)) && time(v) > now
@@ -14,7 +16,7 @@ export function credentialEligibility(op: OperationRecord, now = Date.now()): st
   if (i?.personVerified !== true || !i.subjectRef || !fresh(i.expiresAt, now)) return "identity_invalid"
   if (identityPolicyChanged(i)) return "identity_policy_changed"
   if (!c) return "credential_missing"
-  if (c.mode !== "mock") return "opendid_provider_unimplemented"
+  if (c.mode === "opendid") return providerCredentialReason(op, now)
   if (c.status !== "active") return `credential_${c.status}`
   if (!fresh(c.validUntil, now) || !Number.isFinite(time(c.validFrom)) || time(c.validFrom) > now) return "credential_expired"
   if (!vc || !verifyIssuerSignature(vc)) return "credential_signature"
@@ -30,6 +32,7 @@ export function credentialEligibility(op: OperationRecord, now = Date.now()): st
 }
 
 export function presentationEligibility(op: OperationRecord): string | null {
+  if (op.credential?.mode === "opendid") return providerPresentationReason(op, Date.now())
   const p = op.presentation, b = op.secrets.presentationBinding
   if (!p || p.decision !== "allow" || !p.decisionRef || !Number.isFinite(time(p.verifiedAt))) return "presentation_missing"
   if (p.decisionConsumedAt) return "decision_consumed"
@@ -40,7 +43,7 @@ export function presentationEligibility(op: OperationRecord): string | null {
 }
 
 export function fulfillmentEligibility(op: OperationRecord, executedAtMs: number, now = Date.now()): string | null {
-  const c = hkConfig().campaign
+  const c = operationCampaign(op)
   if (op.campaignId !== c.campaignId || op.venueId !== c.venueId || op.policyVersion !== c.policyVersion || !fresh(c.endsAt, now)) return "campaign_closed"
   const eligibility = credentialEligibility(op, now) ?? presentationEligibility(op)
   if (eligibility) return eligibility
@@ -63,7 +66,7 @@ type BindingConfig = Pick<GrantExpectation, "campaignId" | "grantType" | "events
 export function delegationExpectation(op: OperationRecord, config: BindingConfig, agent: string): GrantExpectation {
   const d = op.delegation, p = op.proposal
   assert(d && p && op.consent && op.presentation?.decisionRef, "operation_proof", "operation approval proof missing", 409)
-  assert(p.output.action === HK_SERVICE_ACCESS && p.output.target.venueId === op.venueId && p.output.target.campaignId === op.campaignId && p.policyVersion === op.policyVersion, "operation_proof", "proposal target changed", 409)
+  assert(p.output.action === operationAction(op) && p.output.target.venueId === op.venueId && p.output.target.campaignId === op.campaignId && p.policyVersion === op.policyVersion, "operation_proof", "proposal target changed", 409)
   assert(p.outputDigest === digestOf(p.output) && p.proposalDigest === digestOf({ proposalId: p.proposalId, inputDigest: p.inputDigest, outputDigest: p.outputDigest, promptVersion: p.promptVersion, policyVersion: p.policyVersion, model: p.model }), "operation_proof", "proposal digest changed", 409)
   assert(d.actionCommitment === digestOf({ action: p.output.action, target: p.output.target, proposalDigest: p.proposalDigest, decisionRef: op.presentation.decisionRef, policyVersion: op.policyVersion }), "operation_proof", "approved action changed", 409)
   assert(d.consentCommitment === digestOf({ consentDigest: op.consent.digest, proposalDigest: p.proposalDigest, userAddress: d.userAddress, recipient: d.recipient, expiresAtMs: d.expiresAtMs, maxUses: 1 }), "operation_proof", "approved consent scope changed", 409)
@@ -76,7 +79,7 @@ export function executionManifest(op: OperationRecord, agent: string, decidedAt:
     schema: "ondo-agent-manifest/v1", operationRef: sha256Hex(op.operationId), campaignId: op.campaignId, venueId: op.venueId, policyVersion: op.policyVersion,
     proposal: { proposalId: p.proposalId, model: p.model, promptVersion: p.promptVersion, inputDigest: p.inputDigest, outputDigest: p.outputDigest, proposalDigest: p.proposalDigest },
     consentCommitment: d.consentCommitment, actionCommitment: d.actionCommitment, intentRef: d.intentRef,
-    grant: d.grant!.objectId, agent, tool: HK_SERVICE_ACCESS, decidedAt,
+    grant: d.grant!.objectId, agent, tool: operationAction(op), decidedAt,
   }
 }
 

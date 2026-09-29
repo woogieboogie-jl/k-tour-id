@@ -17,13 +17,13 @@ const COPY = {
 
 /** The unchanged Journey is not mounted until the server accepts its own
  * separate HttpOnly access cookie. No access code enters browser storage. */
-export function HackathonIntegrationPreviewGate({ detail, onClose, children, hostedSui = false }: { detail: HackathonOpenDetail; onClose: () => void; children: ReactNode; hostedSui?: boolean }) {
+export function HackathonIntegrationPreviewGate({ detail, onClose, children, hostedSui = false }: { detail: HackathonOpenDetail; onClose: (restore?: boolean) => void; children: ReactNode; hostedSui?: boolean }) {
   const [authorized, setAuthorized] = useState(false)
   const grant = useCallback(() => setAuthorized(true), [])
   return authorized ? children : <IntegrationAccessForm detail={detail} onClose={onClose} onGranted={grant} hostedSui={hostedSui} />
 }
 
-function IntegrationAccessForm({ detail, onClose, onGranted, hostedSui }: { detail: HackathonOpenDetail; onClose: () => void; onGranted: () => void; hostedSui: boolean }) {
+function IntegrationAccessForm({ detail, onClose, onGranted, hostedSui }: { detail: HackathonOpenDetail; onClose: (restore?: boolean) => void; onGranted: () => void; hostedSui: boolean }) {
   const c = COPY[detail.locale]
   const [status, setStatus] = useState<"checking" | "access" | "unavailable">("checking")
   const [code, setCode] = useState("")
@@ -64,7 +64,7 @@ function IntegrationAccessForm({ detail, onClose, onGranted, hostedSui }: { deta
   }, [retry])
   useEffect(() => { if (status === "access") inputRef.current?.focus() }, [status])
   useEffect(() => {
-    const traversal = () => onClose()
+    const traversal = () => onClose(false)
     window.addEventListener(B_DISCOVERY_TRAVERSAL_EVENT, traversal)
     return () => window.removeEventListener(B_DISCOVERY_TRAVERSAL_EVENT, traversal)
   }, [onClose])
@@ -96,7 +96,7 @@ function IntegrationAccessForm({ detail, onClose, onGranted, hostedSui }: { deta
     data-testid="integration-preview-access" data-modal-layer-priority={ONDO_MODAL_PRIORITY.critical}
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); onClose() } }}>
     <div className={styles.sheet}>
-      <header className={styles.head}><div className={styles.headRow}><h2 id="integration-preview-access-title">{c.title}</h2><button type="button" className={styles.close} aria-label={c.close} onClick={onClose}><X size={18} aria-hidden="true" /></button></div></header>
+      <header className={styles.head}><div className={styles.headRow}><h2 id="integration-preview-access-title">{c.title}</h2><button type="button" className={styles.close} aria-label={c.close} onClick={() => onClose()}><X size={18} aria-hidden="true" /></button></div></header>
       <div className={styles.body}><section className={styles.card}>
         {status === "checking" ? <p role="status">{c.checking}</p> : status === "unavailable" ? <><p role="status">{c.unavailable}</p><button type="button" className={styles.primary} onClick={() => void retry()}>{c.retry}</button></> : <>
           <p>{c.body}</p><form onSubmit={submit}>

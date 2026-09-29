@@ -1,6 +1,10 @@
 import type { Db } from "./store"
 import { HkError } from "./util"
 import { assertIntegrationSuiBudget } from "./integration-sui-limits"
+import { assertGuideCollectionStore } from "./guide-collection"
+import { isGuideJourney } from "./guide-contract"
+import type { OperationRecord } from "./store"
+import { parseIntegrationCutoverMarker, assertIntegrationCutoverMonotonic } from "./integration-cutover"
 
 /** Reject corrupt/incompatible storage instead of clearing redemption history. */
 export function parseStoredJourney(raw: unknown): Db {
@@ -18,6 +22,16 @@ export function parseStoredJourney(raw: unknown): Db {
   }
   if (db.integrationSuiBudget !== undefined) {
     try { assertIntegrationSuiBudget(parsed as Db) } catch { throw invalid() }
+  }
+  if (db.integrationCutover !== undefined) {
+    try { const marker = parseIntegrationCutoverMarker(db.integrationCutover); assertIntegrationCutoverMonotonic(marker, parsed as Db) }
+    catch { throw invalid() }
+  }
+  if (db.guideCollection !== undefined) {
+    try { assertGuideCollectionStore(db.guideCollection) } catch { throw invalid() }
+  }
+  for (const op of Object.values(db.operations as Record<string, OperationRecord>)) {
+    if (op.journey !== undefined && !isGuideJourney(op)) throw invalid()
   }
   return parsed as Db
 }

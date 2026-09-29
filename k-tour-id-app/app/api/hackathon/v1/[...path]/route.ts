@@ -3,7 +3,9 @@
 import { NextResponse } from "next/server"
 import { hkPublicConfig, HK_CONSENT_VERSION } from "@/lib/hackathon/config"
 import { assertSameOrigin, ensureSession, requireSession } from "@/lib/hackathon/session"
-import { digestOf } from "@/lib/hackathon/util"
+import { digestOf, HkError } from "@/lib/hackathon/util"
+import { guideReadiness } from "@/lib/hackathon/guide-policy"
+import { providerOperationAction } from "@/lib/hackathon/provider-operation"
 import { safeHkError } from "@/lib/hackathon/public-error"
 import { readStore } from "@/lib/hackathon/store"
 import * as svc from "@/lib/hackathon/service"
@@ -54,6 +56,13 @@ function venueCtx(venueId: string, loc: "ko" | "en" | "ja") {
 }
 
 export async function GET(req: Request, ctx: Ctx) {
+  const requestedPath = (await ctx.params).path
+  // Public fixed configuration summary only. No session, provider request,
+  // credential, endpoint, or key is read or returned by this route.
+  if (req.method === "GET" && requestedPath.length === 2 && requestedPath[0] === "guide" && requestedPath[1] === "readiness" &&
+    !new URL(req.url).search && !new URL(req.url).hash && process.env.HK_API_ENABLED === "1" && process.env.NEXT_PUBLIC_HK_ENABLED === "1") {
+    return json(guideReadiness())
+  }
   if (isHostedSuiProfile()) {
     try {
       assertHostedSuiTarget(req)
@@ -94,6 +103,10 @@ export async function GET(req: Request, ctx: Ctx) {
   if (process.env.HK_API_ENABLED !== "1" || process.env.NEXT_PUBLIC_HK_ENABLED !== "1") return json({ error: { code: "not_found" } }, 404)
   const { path } = await ctx.params
   try {
+    if (path.length === 2 && path[0] === "guide" && path[1] === "collection") {
+      const s = await requireSession()
+      return json(await svc.guideCollection(s.sessionId))
+    }
     if (path[0] === "config") return json(hkPublicConfig())
     if (path[0] === "me") { const s = await ensureSession(); return json({ sessionId: s.sessionId.slice(0, 8) + "…", hasSubject: Boolean(s.subjectRef) }) }
     if (path[0] === "places" && path[2] === "demo-entitlements") {
@@ -189,6 +202,12 @@ export async function POST(req: Request, ctx: Ctx) {
       return json({ address: out.address, inputs: out.inputs, maxEpoch: Number(b.maxEpoch) })
     }
     const s = await ensureSession()
+    if (path.length === 2 && path[0] === "guide" && path[1] === "operations") {
+      const b = checkedBody ?? await integrationPreviewBody(req)
+      if (Object.keys(b).some(key => !["venueId", "consentVersion", "locale"].includes(key))) throw new HkError("bad_request", "Invalid guide request", 400)
+      const venueId = str(b.venueId, 120), vc = venueCtx(venueId, locale(b.locale))
+      return json(await svc.createOperation({ sessionId: s.sessionId, venueId, consentVersion: str(b.consentVersion, 64), locale: vc.locale, venueName: vc.venueName }, true))
+    }
     if (path[0] === "operations" && !path[1]) {
       const b = checkedBody ?? await body(req)
       const venueId = str(b.venueId, 120)
@@ -196,8 +215,15 @@ export async function POST(req: Request, ctx: Ctx) {
       return json(await svc.createOperation({ sessionId: s.sessionId, venueId, consentVersion: str(b.consentVersion, 64), locale: vc.locale, venueName: vc.venueName }))
     }
     if (path[0] === "operations" && path[1]) {
-      const id = path[1]; const action = path.slice(2).join("/"); const b = checkedBody ?? await body(req)
+      const id = path[1]; const action = path.slice(2).join("/")
+      const b = checkedBody ?? await (path[2] === "provider" ? integrationPreviewBody(req) : body(req))
       switch (action) {
+        case "provider/issuance/start": case "provider/issuance/refresh":
+        case "provider/presentation/start": case "provider/presentation/refresh": case "provider/cancel": {
+          if (Object.keys(b).length) throw new HkError("bad_request", "Provider actions do not accept client claims", 400)
+          const result = await providerOperationAction(s.sessionId, id, action.slice("provider/".length) as "issuance/start" | "issuance/refresh" | "presentation/start" | "presentation/refresh" | "cancel")
+          return json({ operation: svc.toResult(result.record), provider: result.provider })
+        }
         case "identity/start": return json(await svc.identityStart(s.sessionId, id, Boolean(b.mobile)))
         case "identity/complete": {
           const sample = b.sample && typeof b.sample === "object" ? { outcome: (["verified", "cancelled", "failed", "expired"].includes(String((b.sample as { outcome?: string }).outcome)) ? String((b.sample as { outcome?: string }).outcome) : "verified") as "verified" | "cancelled" | "failed" | "expired", subjectSeed: str((b.sample as { subjectSeed?: string }).subjectSeed, 64) || "sample-person-1" } : undefined

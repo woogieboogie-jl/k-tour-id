@@ -158,7 +158,7 @@ test("bounded build plan uses exact Node/Next executable, webpack, fixed cwd and
   assert.equal(plan.args.some(arg => /deploy|npx|vercel/.test(arg)), false)
 })
 
-test("selected integration candidate exactly matches the locked Seoul Preview profile; CX script is preserved", () => {
+test("integration profile remains locked while the main journey retains the hosted production profile", () => {
   const read = (file: string) => JSON.parse(readFileSync(resolve(subject.APP_ROOT, file), "utf8"))
   const profile = read("vercel.integration.json"), current = read("vercel.json"), pkg = read("package.json")
   assert.equal(profile.buildCommand, "node scripts/hackathon-integration-build.mjs")
@@ -169,7 +169,8 @@ test("selected integration candidate exactly matches the locked Seoul Preview pr
   assert.deepEqual(profile.regions, ["icn1"])
   assert.equal(profile.env, undefined)
   assert.equal(profile.build?.env, undefined)
-  assert.deepEqual(current, profile)
+  assert.deepEqual(current, read("vercel.hosted-sui.json"))
+  assert.notEqual(current.buildCommand, profile.buildCommand)
   assert.equal(current.git.deploymentEnabled, false)
   assert.equal(pkg.scripts["build:vercel:integration"], profile.buildCommand)
   assert.equal(pkg.scripts["build:vercel:cx-preview"], "node scripts/hackathon-preview-build.mjs --cx-only")

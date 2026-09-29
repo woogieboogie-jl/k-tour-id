@@ -2,6 +2,7 @@
 // integration lane. No I/O, signing, target inference or budget initialization.
 import { INTEGRATION_SUI_TARGETS, integrationSuiRolesMatch } from "./integration-sui-targets"
 import { HkError } from "./util"
+import { assertCommittedCutover, type CutoverDb } from "./integration-cutover"
 
 type Env = Record<string, string | undefined>
 export const INTEGRATION_SUI_LIMITS = Object.freeze({
@@ -58,13 +59,13 @@ export function assertIntegrationSuiRoles(roles: { issuer: string; agent: string
   if (!integrationSuiRolesMatch(target, roles)) throw unavailable()
 }
 
-/** NO environment switch can assert that another deployment has stopped
- * writing. Until a reviewed one-way hosted-ledger migration/fence exists, this
- * lane must not claim fresh operation/gas allowance or perform Sui side effects.
- * Identity, provider preparation and read-only journey access remain separate.
- * PREPARATION ONLY: reviewed migration implementation must replace this fence. */
-export function assertIntegrationSuiActivation(): never {
-  throw new HkError("integration_sui_migration_required", "The shared execution budget migration is not prepared.", 503)
+/** No env switch or client JSON is an activation capability. Runtime callers
+ * must supply a fresh atomically-read ledger AND its separate durable control.
+ * Existing no-argument gates remain closed until the real operator cutover and
+ * authenticated storage integration exist; local/offline plans cannot open it. */
+export function assertIntegrationSuiActivation(db?: CutoverDb, control?: unknown, now = Date.now()): void {
+  if (!db || control === undefined) throw new HkError("integration_sui_migration_required", "The shared execution budget migration is not prepared.", 503)
+  assertCommittedCutover(db, control, now)
 }
 
 export type IntegrationSuiMigration = {

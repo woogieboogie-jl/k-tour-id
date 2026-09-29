@@ -14,18 +14,18 @@ export const HACKATHON_DEMO_ENTRY = HACKATHON_ENABLED && process.env.NEXT_PUBLIC
 export const HACKATHON_OPEN_EVENT_B = "ondo:b:hackathon-open"
 export const HACKATHON_PENDING_KEY = "ondo-b.hackathon.pending.v1"
 
-export type HackathonOpenDetail = { venueId: string; locale: "en" | "ko" | "ja"; resumeOperationId?: string; returnContext?: BDiscoveryHistoryEntry }
+export type HackathonOpenDetail = { venueId: string; locale: "en" | "ko" | "ja"; source?: "guide"; returnTo?: "place" | "pass"; resumeOperationId?: string; returnContext?: BDiscoveryHistoryEntry }
 
 /** URL, events and saved state may select a view, but never grant authority. */
 export function manualHackathonDetail(value: unknown): HackathonOpenDetail | null {
   if (!value || typeof value !== "object") return null
   const d = value as Record<string, unknown>
-  if (!isHackathonVenue(d.venueId)) return null
+  if (d.source === "guide" ? d.venueId !== "mois-0021cd596bc5b2a922ad" : !isHackathonVenue(d.venueId)) return null
   // Reuse the discovery parser: only its bounded, non-authoritative UI fields
   // survive a document return. Approval, signer and provider data cannot enter it.
   const context = readBDiscoveryHistory({ __ondoBDiscovery: d.returnContext })
   const returnContext = context && context.venueId === d.venueId && (context.level === "peek" || context.level === "detail") ? context : undefined
-  return { venueId: d.venueId as string, locale: d.locale === "en" || d.locale === "ja" ? d.locale : "ko", ...(typeof d.resumeOperationId === "string" && d.resumeOperationId ? { resumeOperationId: d.resumeOperationId } : {}), ...(returnContext ? { returnContext } : {}) }
+  return { venueId: d.venueId as string, locale: d.locale === "en" || d.locale === "ja" ? d.locale : "ko", ...(d.source === "guide" ? { source: "guide" as const, returnTo: d.returnTo === "pass" ? "pass" as const : "place" as const } : {}), ...(typeof d.resumeOperationId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(d.resumeOperationId) ? { resumeOperationId: d.resumeOperationId } : {}), ...(returnContext ? { returnContext } : {}) }
 }
 
 export function isHackathonVenue(venueId: unknown) {

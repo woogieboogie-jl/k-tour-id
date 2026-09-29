@@ -21,6 +21,10 @@ import { prepareDelegationOnce } from "./delegation-preparation"
 import { safeHkError } from "./public-error"
 import { isHostedSuiProfile, PIN as HOSTED_SUI_PIN } from "./hosted-sui-profile"
 import { assertCurrentIdentityPolicy, identityPolicyChanged } from "./identity-policy"
+import { GUIDE_SAVE_V2, guideJourney, isGuideJourney, type GuideCollection } from "./guide-contract"
+import { assertGuideReady, operationAction, operationCampaign } from "./guide-policy"
+import { commitGuideCollection, guideCollectionForSession, mirrorGuideCollection, guideSaveConflict } from "./guide-collection"
+import { refreshProviderPermission, assertProviderPermissionForOperation } from "./provider-operation"
 import { requiresIntegrationSuiLimits, assertIntegrationSuiActivation, assertIntegrationSuiLimits, assertIntegrationSuiOperation, claimIntegrationSuiOperation, INTEGRATION_SUI_LIMITS } from "./integration-sui-limits"
 
 /** SDK/provider errors may contain authenticated URLs or signed bytes. */
@@ -46,6 +50,20 @@ function assertSnapshot(current: OperationRecord, snapshot: OperationRecord) {
   assert(current.revision === snapshot.revision, "operation_changed", "operation changed while verification was in flight; reload first", 409)
 }
 
+function assertProviderPermission(op: OperationRecord) {
+  if (isGuideJourney(op)) assert(op.credential?.mode === "opendid", "opendid_permission_required", "Provider credential required", 409)
+  if (op.credential?.mode === "opendid") assertProviderPermissionForOperation(op)
+}
+async function loadWithFreshProviderPermission(sessionId: string, operationId: string) {
+  let op = await loadOperation(sessionId, operationId)
+  if (op.credential?.mode === "opendid") {
+    const permission = await refreshProviderPermission(sessionId, operationId)
+    op = await loadOperation(sessionId, operationId)
+    assertProviderPermissionForOperation(op, permission.revision)
+  }
+  return op
+}
+
 /** Sui GraphQL endpoint for the configured network (used only as a zkLogin verification cross-check). */
 function zkLoginGraphqlUrl(): string | null {
   const explicit = process.env.HK_SUI_GRAPHQL_URL
@@ -61,6 +79,7 @@ export function toResult(op: OperationRecord): OperationResult {
   // Older ledgers can contain SDK error strings saved before redaction. Project
   // fixed public copy without modifying history or transaction recovery state.
   return { ...rest, allowedActions, safeNextAction,
+    identity: isGuideJourney(op) && op.identity ? { ...op.identity, subjectRef: "", providerTransactionRef: "" } : op.identity,
     error: op.error ? safeHkError(new HkError(op.error.code, "", op.error.retryable ? 503 : 409, op.error.retryable)).error : null,
     delegation: op.delegation ? { ...op.delegation, error: op.delegation.error === null ? null : safeHkError(new HkError("sui_delegate", "", 502, true)).error.message } : null,
     agent: op.agent ? { ...op.agent, error: op.agent.error === null ? null : safeHkError(new HkError("sui_consume", "", 502, true)).error.message } : null,
@@ -159,22 +178,28 @@ function assertIdentityPending(op: OperationRecord) {
 }
 
 // ── create ────────────────────────────────────────────────────────────
-export async function createOperation(input: { sessionId: string; venueId: string; consentVersion: string; locale: "ko" | "en" | "ja"; venueName: string }) {
+export async function createOperation(input: { sessionId: string; venueId: string; consentVersion: string; locale: "ko" | "en" | "ja"; venueName: string }, guide = false) {
+  if (guide) assertGuideReady()
   if (requiresIntegrationSuiLimits() && process.env.HK_INTEGRATION_SUI_TARGET === INTEGRATION_SUI_LIMITS.targetId) { assertIntegrationSuiActivation(); assertIntegrationSuiLimits() }
-  const c = hkConfig().campaign
+  const c = guide ? { ...GUIDE_SAVE_V2, purpose: GUIDE_SAVE_V2.action } : hkConfig().campaign
   assert(input.venueId === c.venueId, "venue_unsupported", "this place has no demo entitlement", 404)
-  assert(input.consentVersion === HK_CONSENT_VERSION, "consent_version", "consent version mismatch")
+  assert(input.consentVersion === (guide ? GUIDE_SAVE_V2.consentVersion : HK_CONSENT_VERSION), "consent_version", "consent version mismatch")
   assert(!isPast(c.endsAt), "campaign_closed", "campaign ended", 409)
   return withStore((db) => {
     // one live operation per session+campaign; reuse instead of duplicating
     const live = Object.values(db.operations).find((o) => o.sessionId === input.sessionId && o.campaignId === c.campaignId && o.status === "pending")
     if (live) { expireIfNeeded(live); if (live.status === "pending") return toResult(live) }
+    if (guide) {
+      const conflict = guideSaveConflict(db, db.sessions[input.sessionId]?.subjectRef)
+      if (conflict) throw new HkError(conflict, "Open the saved guide or check the existing save instead.", 409)
+    }
     // Lifetime budget, inside the same durable Redis mutation as creation.
     // Cancelled/failed operations still consume a slot; no reset on retry.
     if (isHostedSuiProfile()) assert(Object.keys(db.operations).length < HOSTED_SUI_PIN.maxOperations, "hosted_sui_limit", "This journey has reached its execution limit.", 429)
     const now = nowIso()
     const consentDigest = digestOf({ version: input.consentVersion, campaignId: c.campaignId, venueId: input.venueId, purpose: c.purpose, policyVersion: c.policyVersion })
     const op: OperationRecord = {
+      ...(guide ? { journey: guideJourney() } : {}),
       operationId: randomId("op"), kind: "demo_entitlement", venueId: input.venueId, campaignId: c.campaignId, policyVersion: c.policyVersion,
       status: "pending", phase: "identity", revision: 1, createdAt: now, updatedAt: now, expiresAt: plusMs(HK_TTL.operationMs),
       execution: hkConfig().cx.mode === "cx" && hkConfig().opendid.mode === "opendid" ? "provider" : "sample",
@@ -186,6 +211,15 @@ export async function createOperation(input: { sessionId: string; venueId: strin
     if (requiresIntegrationSuiLimits() && process.env.HK_INTEGRATION_SUI_TARGET === INTEGRATION_SUI_LIMITS.targetId) claimIntegrationSuiOperation(db, op.operationId)
     db.operations[op.operationId] = op
     return toResult(op)
+  })
+}
+
+export async function guideCollection(sessionId: string): Promise<GuideCollection> {
+  return readStore(db => {
+    const items = guideCollectionForSession(db, sessionId)
+    const pending = Object.values(db.operations).filter(op => op.sessionId === sessionId && isGuideJourney(op) &&
+      op.status === "pending" && !isPast(op.expiresAt)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+    return { items, pendingOperation: pending ? toResult(pending) : null }
   })
 }
 
@@ -272,6 +306,14 @@ export async function identityComplete(sessionId: string, operationId: string, s
     clearCxHandoff(o)
     o.identity = { ...result.evidence, handoff: null }
     db.sessions[sessionId].subjectRef = result.evidence.subjectRef
+    if (isGuideJourney(o)) {
+      const conflict = guideSaveConflict(db, result.evidence.subjectRef, o.operationId)
+      if (conflict) {
+        o.fulfillment = { status: "blocked", reason: conflict, redemptionRef: null, redeemedAt: null, recheck: null }
+        fail(o, conflict, "Open the saved guide or check the existing save instead.")
+        return toResult(o)
+      }
+    }
     if (already) {
       o.fulfillment = { status: "blocked", reason: "already_redeemed", redemptionRef: already.redemptionRef, redeemedAt: already.redeemedAt, recheck: null }
       o.phase = "fulfillment"; o.status = "succeeded"
@@ -285,8 +327,13 @@ export async function identityComplete(sessionId: string, operationId: string, s
 }
 
 // ── issuance (OpenDID) ────────────────────────────────────────────────
+function assertMockCredentialPath(op: OperationRecord) {
+  assert(!isGuideJourney(op) && !op.secrets.openDidProvider && op.credential?.mode !== "opendid" && hkConfig().opendid.mode === "mock",
+    "opendid_provider_required", "Use the connected pass app", 409)
+}
 export async function credentialIssue(sessionId: string, operationId: string, holder: { publicKeyPem: string; alg: "Ed25519" | "ECDSA-P256" }) {
   const op = await loadOperation(sessionId, operationId)
+  assertMockCredentialPath(op)
   assertCurrentIdentityPolicy(op.identity)
   assert(op.status === "pending" && op.phase === "issuance" && op.identity?.personVerified, "phase", "identity required", 409)
   assert(!isPast(op.identity.expiresAt), "evidence_expired", "identity evidence expired", 409)
@@ -311,6 +358,7 @@ export async function credentialIssue(sessionId: string, operationId: string, ho
 
 export async function credentialHolderAck(sessionId: string, operationId: string, ack: { signatureB64: string }) {
   const op = await loadOperation(sessionId, operationId)
+  assertMockCredentialPath(op)
   const assertAcknowledgable = (o: OperationRecord) => {
     assertCurrentIdentityPolicy(o.identity)
     assert(o.status === "pending" && o.phase === "issuance" && o.credential && o.secrets.holderPublicKeyPem && o.secrets.holderKeyAlg, "phase", "credential not issued", 409)
@@ -335,6 +383,7 @@ export async function credentialHolderAck(sessionId: string, operationId: string
 // ── presentation (VP) ─────────────────────────────────────────────────
 export async function presentationRequest(sessionId: string, operationId: string) {
   return mutate(sessionId, operationId, (o, db) => {
+    assertMockCredentialPath(o)
     assertCurrentIdentityPolicy(o.identity)
     assert(o.status === "pending" && o.phase === "presentation" && o.credential?.holderAckAt, "phase", "holder ack required", 409)
     if (o.presentation && !o.presentation.submittedAt && !isPast(o.presentation.expiresAt)) return { result: toResult(o), challenge: o.secrets.presentationChallenge }
@@ -352,6 +401,7 @@ export async function presentationRequest(sessionId: string, operationId: string
 
 export async function presentationSubmit(sessionId: string, operationId: string, submission: { presentationId: string; disclosed: Record<string, unknown>; signatureB64: string }) {
   return mutate(sessionId, operationId, (o, db) => {
+    assertMockCredentialPath(o)
     assertCurrentIdentityPolicy(o.identity)
     assert(o.status === "pending" && o.phase === "presentation" && o.presentation && o.credential, "phase", "presentation not requested", 409)
     const p = o.presentation
@@ -393,6 +443,7 @@ export async function presentationSubmit(sessionId: string, operationId: string,
 
 export async function presentationDeny(sessionId: string, operationId: string) {
   return mutate(sessionId, operationId, (o, db) => {
+    assertMockCredentialPath(o)
     if (o.status === "cancelled" && o.phase === "cancelled") return toResult(o)
     assert(o.status === "pending" && o.phase === "presentation", "phase", "presentation is not pending", 409)
     const p = o.presentation
@@ -410,7 +461,7 @@ export async function presentationDeny(sessionId: string, operationId: string) {
 
 // ── proposal (AI) ─────────────────────────────────────────────────────
 export async function proposalCreate(sessionId: string, operationId: string, ctx: { locale: "ko" | "en" | "ja"; venueName: string; category: string; district: string }) {
-  const op = await loadOperation(sessionId, operationId)
+  const op = await loadWithFreshProviderPermission(sessionId, operationId)
   assertCurrentIdentityPolicy(op.identity)
   assert(op.status === "pending" && op.phase === "proposal" && op.presentation?.decision === "allow", "phase", "allow decision required", 409)
   assert(!isPast(op.presentation.decisionExpiresAt), "decision_expired", "decision expired; present again", 409)
@@ -418,7 +469,8 @@ export async function proposalCreate(sessionId: string, operationId: string, ctx
   if (op.proposal) return toResult(op)
   const hour = new Date().getUTCHours() + 9
   const timeOfDay = hour % 24 < 11 ? "morning" : hour % 24 < 17 ? "afternoon" : "evening"
-  const proposal = await proposePerk({ venueId: op.venueId, campaignId: op.campaignId, venueName: ctx.venueName, category: ctx.category, district: ctx.district, language: ctx.locale, timeOfDay, policyVersion: op.policyVersion })
+  const proposal = await proposePerk({ venueId: op.venueId, campaignId: op.campaignId, venueName: ctx.venueName, category: ctx.category, district: ctx.district, language: ctx.locale, timeOfDay, policyVersion: op.policyVersion, ...(isGuideJourney(op) ? { action: GUIDE_SAVE_V2.action } : {}) })
+  if (isGuideJourney(op)) assert(proposal.mode === "gemini", "guide_ai_unavailable", "The guide assistant is unavailable. No execution was approved.", 503)
   return mutate(sessionId, operationId, (o) => {
     assertSnapshot(o, op)
     assert(o.status === "pending" && o.phase === "proposal" && o.presentation?.decision === "allow", "phase", "allow decision required", 409)
@@ -434,7 +486,8 @@ export async function proposalCreate(sessionId: string, operationId: string, ctx
 // ── delegation (Sui, user PTB) ────────────────────────────────────────
 export async function delegationPrepare(sessionId: string, operationId: string, input: { userAddress: string; signer: "zklogin" | "demo"; walletProof: { message: string; signature: string }; approvedProposalDigest: string }) {
   assertExternalServicesEnabled("Sui delegation")
-  const op = await loadOperation(sessionId, operationId)
+  const op = await loadWithFreshProviderPermission(sessionId, operationId)
+  if (isGuideJourney(op)) assert(input.signer === "zklogin", "zklogin_required", "Sign in to approve this guide save", 409)
   assertCurrentIdentityPolicy(op.identity)
   if (requiresIntegrationSuiLimits()) await readStore(db => assertIntegrationSuiOperation(db, operationId))
   assert(op.status === "pending" && op.phase === "delegation" && op.proposal && op.presentation?.decision === "allow", "phase", "proposal approval required", 409)
@@ -489,13 +542,13 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
   const consentCommitment = digestOf({ consentDigest: op.consent!.digest, proposalDigest: op.proposal.proposalDigest, userAddress: input.userAddress, recipient: input.userAddress, expiresAtMs, maxUses: 1 })
   const prepared = await prepareDelegationOnce({ sessionId, operationId, expectedRevision: op.revision,
     scope: { intentRef, actionCommitment, consentCommitment, userAddress: input.userAddress, signer: input.signer, recipient: input.userAddress, expiresAtMs },
-  }, { issue: issueEntitlement, build: buildDelegationPtb })
+  }, { issue: issueEntitlement, build: buildDelegationPtb, authorize: assertProviderPermission })
   return { result: toResult(prepared), txBytesB64: prepared.secrets.lastTxBytesB64! }
 }
 
 export async function delegationSubmit(sessionId: string, operationId: string, input: { txBytesDigest: string; userSignature: string }) {
   assertExternalServicesEnabled("Sui delegation")
-  const op = await loadOperation(sessionId, operationId)
+  const op = await loadWithFreshProviderPermission(sessionId, operationId)
   assertCurrentIdentityPolicy(op.identity)
   if (requiresIntegrationSuiLimits()) await readStore(db => assertIntegrationSuiOperation(db, operationId))
   assert(op.status === "pending" && op.phase === "delegation" && op.delegation?.status === "awaiting_signature" && op.secrets.lastTxBytesB64, "phase", "no delegation awaiting signature", 409)
@@ -523,6 +576,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
       await mutate(sessionId, operationId, (o) => {
         assertSnapshot(o, dispatch)
         assertCurrentIdentityPolicy(o.identity)
+        assertProviderPermission(o)
         assert(digest === expectedTxDigest && o.delegation?.userTxDigest === digest, "tx_mismatch", "transaction bytes changed", 409)
         assert(o.status === "pending" && o.phase === "delegation" && o.delegation.status === "prepared", "phase", "delegation dispatch was stopped", 409)
         assert(!isPast(o.expiresAt) && o.delegation.expiresAtMs > Date.now(), "grant_window_expired", "approved delegation window expired before broadcast", 409)
@@ -549,7 +603,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
 // ── agent (Sui, consume PTB) ──────────────────────────────────────────
 export async function agentRun(sessionId: string, operationId: string) {
   assertExternalServicesEnabled("Sui agent execution")
-  const op = await loadOperation(sessionId, operationId)
+  const op = await loadWithFreshProviderPermission(sessionId, operationId)
   assertCurrentIdentityPolicy(op.identity)
   if (requiresIntegrationSuiLimits()) await readStore(db => assertIntegrationSuiOperation(db, operationId))
   assert(op.status === "pending" && op.phase === "agent" && op.delegation?.grant && op.proposal, "phase", "delegation required", 409)
@@ -594,6 +648,7 @@ export async function agentRun(sessionId: string, operationId: string) {
         assertSnapshot(o, dispatch)
         assertCurrentIdentityPolicy(o.identity)
         assert(o.status === "pending" && o.phase === "agent" && o.agent?.status === "queued" && !o.agent.txDigest, "phase", "agent dispatch was stopped or already broadcast", 409)
+        assertProviderPermission(o)
         assert(o.delegation && o.delegation.expiresAtMs > Date.now(), "grant_expired", "approved execution window expired before broadcast", 409)
         o.agent.txDigest = digest
         touch(o, "agent.dispatching")
@@ -622,13 +677,14 @@ export async function agentRun(sessionId: string, operationId: string) {
 // ── fulfillment (server redeem) + OmniOne outbox ──────────────────────
 export async function redeem(sessionId: string, operationId: string, input: { idempotencyKey: string; bodyDigest: string }) {
   if (isHostedSuiProfile()) throw new HkError("hosted_sui_scope", "Benefit use is not enabled in this journey.", 403)
-  const op = await loadOperation(sessionId, operationId)
+  let op = await loadOperation(sessionId, operationId)
   // A committed retry is valid after phase=done and must not re-query/re-write a chain.
   const prior = await readStore((db) => db.idempotency[`${operationId}:redeem:${input.idempotencyKey}`])
   if (prior) {
     assert(prior.bodyDigest === input.bodyDigest, "idempotency_conflict", "same key, different body", 409)
     return toResult(await loadOperation(sessionId, operationId))
   }
+  op = await loadWithFreshProviderPermission(sessionId, operationId)
   assert(op.status === "pending" && op.phase === "fulfillment" && op.agent?.status === "executed" && op.agent.txDigest, "phase", "verified Sui execution required", 409)
   // independent re-verification of the Sui execution before committing service state
   const expected = executionExpectation(op, chainBindingConfig(), suiKeys().agentAddress)
@@ -638,12 +694,13 @@ export async function redeem(sessionId: string, operationId: string, input: { id
     if (idem) { assert(idem.bodyDigest === input.bodyDigest, "idempotency_conflict", "same key, different body", 409); return null }
     assertSnapshot(o, op)
     assert(o.status === "pending" && o.phase === "fulfillment" && o.agent?.status === "executed", "phase", "fulfillment is no longer pending", 409)
+    assertProviderPermission(o)
     const f = o.fulfillment!
     const recheck = {
       credential: credentialEligibility(o) ?? "active",
       presentation: presentationEligibility(o) ?? "allow",
       sui: "verified",
-      campaign: isPast(hkConfig().campaign.endsAt) ? "closed" : "open",
+      campaign: isPast(operationCampaign(o).endsAt) ? "closed" : "open",
     }
     f.recheck = recheck
     const subject = o.identity?.subjectRef ?? ""
@@ -660,6 +717,7 @@ export async function redeem(sessionId: string, operationId: string, input: { id
     const payload = { kind: "DemoEntitlementRedeemed", schemaVersion: HK_SCHEMA_VERSION, campaignRef: o.campaignId, policyVersion: o.policyVersion, salt: randomHex32(), suiDigestCommitment: sha256Hex(o.agent!.txDigest!), manifestCommitment: o.agent!.manifestCommitment }
     const outbox: OutboxRecord = { outboxId: randomId("obx"), operationId, eventKey, payloadCommitment: digestOf(payload), payload, status: "pending", txHash: null, blockNumber: null, attempts: 0, lastError: null, createdAt: nowIso(), updatedAt: nowIso(), confirmedAt: null }
     db.outbox[outbox.outboxId] = outbox
+    if (isGuideJourney(o)) commitGuideCollection(db, o, outbox)
     o.chain = { outboxId: outbox.outboxId, eventKey, payloadCommitment: outbox.payloadCommitment, status: "pending", txHash: null, blockNumber: null, attempts: 0, lastError: null, confirmedAt: null }
     o.status = "succeeded"; o.phase = "done"
     db.idempotency[`${operationId}:redeem:${input.idempotencyKey}`] = { key: input.idempotencyKey, bodyDigest: input.bodyDigest, responseDigest: digestOf({ redemptionRef }), createdAt: nowIso() }
@@ -799,6 +857,7 @@ export async function processOutbox(outboxId: string) {
   return await readStore((db) => db.outbox[outboxId])
 }
 function mirror(db: Parameters<Parameters<typeof withStore>[0]>[0], r: OutboxRecord) {
+  mirrorGuideCollection(db, r)
   const o = db.operations[r.operationId]
   if (!o?.chain || o.chain.outboxId !== r.outboxId || o.chain.eventKey !== r.eventKey || o.chain.payloadCommitment !== r.payloadCommitment) return
   o.chain = { outboxId: r.outboxId, eventKey: r.eventKey, payloadCommitment: r.payloadCommitment, status: r.status, txHash: r.txHash, blockNumber: r.blockNumber, attempts: r.attempts, lastError: r.lastError, confirmedAt: r.confirmedAt }

@@ -5,6 +5,14 @@ import { HkError } from "./util"
 // Only app-owned codes, HTTP statuses, and fixed copy cross this boundary.
 const CODES = new Set(`
 address bad_request campaign_closed cannot_cancel consent_version csrf
+guide_setup_required guide_ai_unavailable guide_collection_invalid guide_already_saved guide_save_in_progress zklogin_required
+opendid_provider_required opendid_permission_required opendid_permission_expired opendid_status_required
+opendid_cx_mapping_unavailable opendid_configuration opendid_busy opendid_phase opendid_expired opendid_request_required
+opendid_provider_binding opendid_credential_expired opendid_policy_unsupported
+opendid_provider_configuration opendid_provider_response opendid_provider_timeout opendid_provider_unavailable opendid_provider_rejected
+opendid_binding opendid_identity_required opendid_operation_binding opendid_operation_inactive
+opendid_mode_changed opendid_mode_required opendid_cancel_after_execution opendid_credential_required opendid_credential_inactive
+opendid_credential_binding opendid_presentation_binding opendid_action opendid_subject_mismatch decision_consumed
 cx_error cx_handoff cx_http cx_mode_changed cx_preview_access_denied cx_preview_body
 cx_preview_scope cx_preview_unavailable cx_request cx_response cx_sample_not_allowed
 cx_state cx_subject_unavailable cx_transaction_mismatch cx_transaction_missing
@@ -28,6 +36,14 @@ const STATUSES = new Set([400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500,
 type PublicFailure = { status: number; error: { code: string; message: string; retryable: boolean } }
 
 const FIXED: Record<string, string> = {
+  guide_setup_required: "Guide saving is not connected yet. You can keep reading this guide.",
+  guide_already_saved: "This guide is already in your pass. Open it from your collection.",
+  guide_save_in_progress: "A save is already in progress. Check its status instead of starting again.",
+  guide_ai_unavailable: "The guide assistant is unavailable. No execution was approved.",
+  opendid_provider_required: "Continue this step in the connected pass app.",
+  opendid_cx_mapping_unavailable: "The identity-to-pass connection is not available yet.",
+  opendid_policy_unsupported: "The pass connection does not support this action yet.",
+  zklogin_required: "Sign in to approve this guide save.",
   hosted_sui_unavailable: "This journey is temporarily unavailable.",
   hosted_sui_access_denied: "Enter the journey access code to continue.",
   hosted_sui_scope: "This action is not enabled in this journey.",
