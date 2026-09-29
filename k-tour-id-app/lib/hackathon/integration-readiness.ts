@@ -2,6 +2,7 @@
 // does not import providers, construct signers, call fetch, or inspect the
 // ambient process environment. Callers must pass an explicit environment map.
 import { assessZkLoginReadiness, ZKLOGIN_READINESS_NAMES } from "./zklogin-readiness"
+import { integrationSuiRolesMatch, resolveIntegrationSuiTarget } from "./integration-sui-targets"
 
 export type ExplicitEnv = Record<string, string | undefined>
 
@@ -9,7 +10,7 @@ export const READINESS_ENV_NAMES = [
   "HK_API_ENABLED", "NEXT_PUBLIC_HK_ENABLED", "HK_CX_API_KEY", "HK_CX_BASE_URL", "HK_CX_PROVIDER", "HK_CX_ZKP_TYPE", "HK_MODE_CX", "HK_MODE_OPENDID", "HK_ISOLATED_MOCK", "NEXT_PUBLIC_HK_CX_PREVIEW", "NEXT_PUBLIC_HK_PREVIEW_READ_ONLY", "VERCEL_ENV",
   "HK_ISSUER_SIGNING_SEED", "HK_STORE_KEY", "KV_REST_API_URL", "KV_REST_API_TOKEN",
   "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN",
-  "HK_SUI_NETWORK", "HK_SUI_GRPC_URL", "HK_SUI_PACKAGE_ID", "HK_SUI_CAMPAIGN_ID", "HK_SUI_CAMPAIGN_INITIAL_VERSION",
+  "HK_INTEGRATION_SUI_TARGET", "HK_SUI_NETWORK", "HK_SUI_CHAIN_IDENTIFIER", "HK_SUI_GRPC_URL", "HK_SUI_PACKAGE_ID", "HK_SUI_CAMPAIGN_ID", "HK_SUI_CAMPAIGN_INITIAL_VERSION",
   "HK_SUI_ISSUER_SECRET_KEY", "HK_SUI_AGENT_SECRET_KEY", "HK_SUI_SPONSOR_SECRET_KEY",
   "NEXT_PUBLIC_GOOGLE_CLIENT_ID", "HK_ZKLOGIN_SALT_SEED", "ENOKI_API_KEY", "ENOKI_API_URL", "HK_ZKLOGIN_PROVER_URL",
   "NEXT_PUBLIC_HK_HOSTED_SUI", "HK_HOSTED_SUI_ENABLED", "VERCEL_GIT_COMMIT_REF",
@@ -24,6 +25,9 @@ export type IntegrationReadinessOptions = {
   aiRequested?: boolean
   zkLoginRequested?: boolean
   availableInputs?: Partial<Record<Name, boolean>>
+  // Operator-observed public addresses only. They are compared with fixed pins,
+  // not accepted as proof of key possession or permission to execute.
+  suiRoles?: { issuer: string; agent: string; sponsor: string }
 }
 
 const value = (env: ExplicitEnv, name: Name) => env[name] ?? ""
@@ -64,7 +68,7 @@ export function runIntegrationReadiness(options: IntegrationReadinessOptions = {
     if (!options || typeof options !== "object" || Array.isArray(options) || ![Object.prototype, null].includes(Object.getPrototypeOf(options))) throw new Error()
     const copied: IntegrationReadinessOptions = {}
     for (const name of Object.keys(options)) {
-      if (!["env", "aiRequested", "zkLoginRequested", "availableInputs"].includes(name)) throw new Error()
+      if (!["env", "aiRequested", "zkLoginRequested", "availableInputs", "suiRoles"].includes(name)) throw new Error()
       const d = Object.getOwnPropertyDescriptor(options, name)!
       if (!("value" in d)) throw new Error()
       if ((name === "aiRequested" || name === "zkLoginRequested") && d.value !== undefined && typeof d.value !== "boolean") throw new Error()
@@ -78,7 +82,19 @@ export function runIntegrationReadiness(options: IntegrationReadinessOptions = {
         if (!READINESS_ENV_NAMES.includes(key as Name) || !("value" in d) || typeof d.value !== "boolean") throw new Error()
       }
     }
-    options = copied
+    let safeRoles: IntegrationReadinessOptions["suiRoles"]
+    if (copied.suiRoles !== undefined) {
+      const roles = copied.suiRoles
+      if (!roles || typeof roles !== "object" || Array.isArray(roles) || ![Object.prototype, null].includes(Object.getPrototypeOf(roles)) ||
+        Reflect.ownKeys(roles).length !== 3) throw new Error()
+      safeRoles = { issuer: "", agent: "", sponsor: "" }
+      for (const name of ["issuer", "agent", "sponsor"] as const) {
+        const d = Object.getOwnPropertyDescriptor(roles, name)
+        if (!d || !("value" in d) || typeof d.value !== "string" || d.value.length > 128 || /[\x00-\x1f\x7f]/.test(d.value)) throw new Error()
+        safeRoles[name] = d.value
+      }
+    }
+    options = { ...copied, ...(safeRoles ? { suiRoles: safeRoles } : {}) }
   } catch { throw new Error("readiness_input_invalid") }
   const env = allowlistedEnv(options.env ?? {})
   const available = options.availableInputs ?? {}
@@ -117,18 +133,36 @@ export function runIntegrationReadiness(options: IntegrationReadinessOptions = {
   }
   if (!/^ktour:integration-preview:[A-Za-z0-9:_-]{1,120}$/.test(value(env, "HK_STORE_KEY"))) internalConfigWork.push(issue("branch_store_key_missing", "HK_STORE_KEY"))
 
+  // No package guessing or implicit fall-through to another owner's deployment.
+  // The selected target does not assert that its signing keys are available.
+  let suiTarget: ReturnType<typeof resolveIntegrationSuiTarget> | null = null
+  if (!present(env, "HK_INTEGRATION_SUI_TARGET")) internalConfigWork.push(issue("sui_target_selection_required", "HK_INTEGRATION_SUI_TARGET"))
+  else {
+    try { suiTarget = resolveIntegrationSuiTarget(value(env, "HK_INTEGRATION_SUI_TARGET")) }
+    catch { internalConfigWork.push(issue("sui_target_selection_invalid", "HK_INTEGRATION_SUI_TARGET")) }
+  }
   const deployed: Partial<Record<Name, string>> = {
-    HK_SUI_PACKAGE_ID: "0xc5d26326ffd5267bb5b54625c1e2b9c03f7cca4753232d0b042c62ee74fd975d",
-    HK_SUI_CAMPAIGN_ID: "0xe3fce96c9c9e1086ff20dd7453e16ff2c52d3d3324e6e4e34446c7d0dc2ecf16",
-    HK_SUI_CAMPAIGN_INITIAL_VERSION: "349181955",
+    ...(suiTarget ? {
+      HK_SUI_PACKAGE_ID: suiTarget.packageId, HK_SUI_CAMPAIGN_ID: suiTarget.campaignId,
+      HK_SUI_CAMPAIGN_INITIAL_VERSION: suiTarget.campaignInitialVersion,
+    } : {}),
     HK_OMNIONE_REGISTRY_ADDRESS: "0x696bc4e29c8f8079b6d3cd49d310a09577550e4c",
   }
   for (const [name, expected] of Object.entries(deployed)) {
     if (!present(env, name as Name)) internalConfigWork.push(issue("known_public_value_not_configured", name))
     else if (value(env, name as Name).toLowerCase() !== expected) internalConfigWork.push(issue("deployed_target_mismatch", name))
   }
-  if (present(env, "HK_SUI_NETWORK") && value(env, "HK_SUI_NETWORK") !== "testnet") internalConfigWork.push(issue("sui_target_requires_review", "HK_SUI_NETWORK"))
-  if (present(env, "HK_SUI_GRPC_URL") && !["https://fullnode.testnet.sui.io", "https://fullnode.testnet.sui.io:443"].includes(value(env, "HK_SUI_GRPC_URL"))) internalConfigWork.push(issue("sui_target_requires_review", "HK_SUI_GRPC_URL"))
+  if (suiTarget) {
+    for (const [name, expected] of [["HK_SUI_NETWORK", suiTarget.network], ["HK_SUI_CHAIN_IDENTIFIER", suiTarget.chainIdentifier]] as const) {
+      if (!present(env, name)) internalConfigWork.push(issue("known_public_value_not_configured", name))
+      else if (value(env, name) !== expected) internalConfigWork.push(issue("sui_target_requires_review", name))
+    }
+    if (!present(env, "HK_SUI_GRPC_URL")) internalConfigWork.push(issue("known_public_value_not_configured", "HK_SUI_GRPC_URL"))
+    else if (!suiTarget.rpcUrls.includes(value(env, "HK_SUI_GRPC_URL"))) internalConfigWork.push(issue("sui_target_requires_review", "HK_SUI_GRPC_URL"))
+  }
+  const suiRolesCompared = !!suiTarget && !!options.suiRoles && integrationSuiRolesMatch(suiTarget, options.suiRoles)
+  if (!options.suiRoles) internalConfigWork.push(issue("sui_public_roles_not_checked"))
+  else if (suiTarget && !suiRolesCompared) internalConfigWork.push(issue("sui_public_roles_mismatch"))
 
   requireInput("HK_SUI_ISSUER_SECRET_KEY")
   requireInput("HK_SUI_AGENT_SECRET_KEY")
@@ -160,6 +194,7 @@ export function runIntegrationReadiness(options: IntegrationReadinessOptions = {
   return {
     ok: ownerInputs.length === 0 && internalConfigWork.length === 0,
     purpose: "prepare_full_provider_integration",
+    suiTarget, suiRolesCompared, suiSignerOwnershipVerified: false,
     requestedCapabilities: { cx: true, sui: true, omnione: true, ai: aiRequested, zkLogin: zkLoginRequested },
     mode: { cx: cxEnabled ? "cx" : "mock", ai: aiMode, opendid: "separate-workflow-pending" },
     providerVerified: false, liveExecutionReady: false, opendidProviderReady: false,

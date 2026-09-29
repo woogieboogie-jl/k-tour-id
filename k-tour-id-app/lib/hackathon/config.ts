@@ -4,6 +4,8 @@
 import { HkError } from "./util"
 import { isCxPreview, isReadinessPreview } from "./preview-readiness"
 import { isHostedSuiProfile, hostedSuiPreflightIssues } from "./hosted-sui-profile"
+import { requiresIntegrationSuiLimits, assertIntegrationSuiActivation, assertIntegrationSuiLimits } from "./integration-sui-limits"
+import { selectZkLoginProvider } from "./zklogin-provider-selection"
 
 export type CxMode = "mock" | "cx"
 export type OpenDidMode = "mock" | "opendid"
@@ -91,7 +93,7 @@ export function hkConfig() {
       agentSecretKey: env("HK_SUI_AGENT_SECRET_KEY"),
       sponsorSecretKey: env("HK_SUI_SPONSOR_SECRET_KEY", env("HK_SUI_ISSUER_SECRET_KEY")),
       zkSaltSeed: env("HK_ZKLOGIN_SALT_SEED"),
-      zkProverUrl: env("HK_ZKLOGIN_PROVER_URL", "https://prover-dev.mystenlabs.com/v1"),
+      zkProverUrl: env("HK_ZKLOGIN_PROVER_URL"),
       googleClientId: isolatedMock || cxPreview ? "" : env("NEXT_PUBLIC_GOOGLE_CLIENT_ID"),
       explorer: env("HK_SUI_EXPLORER", "https://suiscan.xyz/testnet"),
     },
@@ -110,6 +112,7 @@ export type HkConfig = ReturnType<typeof hkConfig>
 
 /** Isolation is an execution boundary, not a simulated chain confirmation. */
 export function assertExternalServicesEnabled(service: string) {
+  if (requiresIntegrationSuiLimits() && ["Sui signing", "Sui delegation", "Sui agent execution"].includes(service)) { assertIntegrationSuiActivation(); assertIntegrationSuiLimits() }
   if (isHostedSuiProfile() && (hostedSuiPreflightIssues().length || !["Sui", "Sui signing", "Sui delegation", "Sui agent execution", "Sui grant lookup"].includes(service))) {
     throw new HkError("hosted_sui_scope", "Only the approved Testnet journey is available.", 503)
   }
@@ -137,9 +140,9 @@ export function hkPublicConfig() {
       ai: c.cxPreview ? "disabled-cx-preview" : c.ai.mode,
       sui: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : c.sui.packageId && c.sui.issuerSecretKey && c.sui.agentSecretKey ? "testnet" : "unconfigured",
       omnione: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : c.omnione.rpcUrl && c.omnione.privateKey && c.omnione.registryAddress ? "stage" : "unconfigured",
-      zklogin: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : c.sui.googleClientId && c.sui.zkSaltSeed ? "google" : "demo-signer",
+      zklogin: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : !isHostedSuiProfile() && c.sui.googleClientId && c.sui.zkSaltSeed && selectZkLoginProvider(process.env) ? "google" : "demo-signer",
     },
-    capabilities: { opendidProviderReady: false, chainExecutionEnabled: !c.isolatedMock && !c.cxPreview, redemptionEnabled: !isHostedSuiProfile() },
+    capabilities: { opendidProviderReady: false, chainExecutionEnabled: !c.isolatedMock && !c.cxPreview && !requiresIntegrationSuiLimits(), redemptionEnabled: !isHostedSuiProfile() && !requiresIntegrationSuiLimits() },
     sui: { network: c.sui.network, packageId: c.isolatedMock || c.cxPreview ? "" : c.sui.packageId, campaignId: c.isolatedMock || c.cxPreview ? "" : c.sui.campaignId, explorer: c.isolatedMock || c.cxPreview ? "" : c.sui.explorer, googleClientId: c.sui.googleClientId },
     omnione: { chainId: c.omnione.chainId, registryAddress: c.isolatedMock || c.cxPreview ? "" : c.omnione.registryAddress },
     ttl: HK_TTL,

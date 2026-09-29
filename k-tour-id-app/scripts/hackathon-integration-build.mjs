@@ -1,5 +1,5 @@
 // Build preparation only: no deployment, provider activation, credential loading,
-// remote account lookup, or changes to the default CX-only deployment profile.
+// remote account lookup, or runtime configuration changes.
 import { spawnSync } from "node:child_process"
 import { lstatSync } from "node:fs"
 import { resolve } from "node:path"

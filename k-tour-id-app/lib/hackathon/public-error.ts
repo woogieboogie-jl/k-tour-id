@@ -13,6 +13,7 @@ evidence_expired grant_expired grant_revoked grant_window_expired holder_ack_inv
 holder_key holder_mismatch idempotency_conflict identity_start_pending identity_start_failed
 identity_cancelled identity_failed identity_expired isolated_mock_external_disabled
 integration_preview_unavailable integration_preview_access_denied integration_preview_scope
+integration_sui_scope integration_sui_budget integration_sui_limit integration_sui_migration_required
 hosted_sui_unavailable hosted_sui_access_denied hosted_sui_scope hosted_sui_limit
 no_session nonce not_found omnione_evidence_unavailable omnione_submission_not_started
 omnione_transaction_mismatch omnione_unconfigured opendid_provider_unimplemented
@@ -38,6 +39,10 @@ const FIXED: Record<string, string> = {
   integration_preview_unavailable: "This integration preview is not available yet.",
   integration_preview_access_denied: "Enter the approved access code to continue.",
   integration_preview_scope: "This action is not available in the integration preview.",
+  integration_sui_scope: "The approved integration Testnet scope is unavailable.",
+  integration_sui_budget: "The retained integration execution budget is unavailable.",
+  integration_sui_limit: "This integration journey has reached its execution limit.",
+  integration_sui_migration_required: "The shared execution budget migration is not prepared.",
   no_session: "Your session is unavailable. Start again to continue.",
   not_found: "The requested item could not be found.",
   operation_changed: "This request changed. Check its current status before continuing.",

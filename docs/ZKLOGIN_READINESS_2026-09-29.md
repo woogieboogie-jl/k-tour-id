@@ -60,7 +60,7 @@ Choose one proving path; two sets of credentials are not required:
   Current Sui documentation says public proving is available for Devnet and
   Testnet without registration; Enoki is **not universally mandatory** for
   Testnet. It separately distinguishes Mainnet/Testnet and Devnet proving keys.
-  The adapter's historical comment/default `prover-dev.mystenlabs.com` therefore
+  The adapter's historical default `prover-dev.mystenlabs.com` therefore
   does not establish current endpoint/key compatibility. We must verify the
   selected endpoint and key for Testnet, not assume readiness from HTTPS or
   silently switch to another prover. [Sui integration guide](https://docs.sui.io/sui-stack/zklogin-integration/integration-guide#option-a-use-the-mysten-labs-proving-service)
@@ -76,9 +76,11 @@ The offline [provider assessment](../k-tour-id-app/lib/hackathon/zklogin-readine
 now feeds [integration preflight](../k-tour-id-app/lib/hackathon/integration-readiness.ts).
 It reports unverified network-key/access/Enoki registration and active
 hosted-profile conflicts using fixed codes; it never calls a provider or marks
-live execution ready. Runtime adapters, config mode selection and the active
-hosted-Sui restrictions are unchanged. Before a separate activation, also align
-their currently weaker client-plus-seed configured gate with verified readiness.
+live execution ready. That readiness-only step did not change runtime adapters.
+The subsequent [explicit prover-selection preparation](./ZKLOGIN_PROVER_SELECTION_2026-09-29.md)
+removes the implicit Devnet endpoint and requires a selected provider before
+advertising configured Google mode or sending a JWT. The active hosted-Sui
+restrictions remain unchanged; selection still does not prove live readiness.
 
 Safe offline checks from `k-tour-id-app`:
 

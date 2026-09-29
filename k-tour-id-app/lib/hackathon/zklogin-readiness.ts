@@ -30,8 +30,10 @@ function validHttps(value: string) {
 }
 
 /** A URL's spelling cannot establish its proving key or OAuth registration.
- * In particular, the current Sui docs support public Testnet proving, but do
- * not justify promoting this adapter's inherited dev-prover default to ready. */
+ * In particular, the current Sui docs support public Testnet proving, but
+ * do not justify treating the historical Devnet endpoint as Testnet-ready.
+ * Runtime selection now rejects an absent endpoint; keep this offline issue
+ * classification for incomplete/historical configuration inventories. */
 export function assessZkLoginReadiness(input: ZkLoginReadinessEnv = {}) {
   const env = checked(input)
   const present = (name: Name) => Boolean(env[name]?.trim())

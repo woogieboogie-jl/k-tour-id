@@ -36,6 +36,9 @@ if (!(args.length === 1 && args[0] === "--offline") && !(args.length === 2 && ar
           if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error()
           for (const [key, v] of Object.entries(value)) if (!READINESS_ENV_NAMES.includes(key as never) || typeof v !== "boolean") throw new Error()
           options.availableInputs = value as IntegrationReadinessOptions["availableInputs"]
+        } else if (name === "suiRoles") {
+          if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error()
+          options.suiRoles = value as IntegrationReadinessOptions["suiRoles"]
         } else if (name === "aiRequested" || name === "zkLoginRequested") {
           if (typeof value !== "boolean") throw new Error()
           options[name] = value

@@ -1,24 +1,26 @@
 // zkLogin server helpers (HK-07). Google OAuth id_token → salt → address → ZK proof.
 // Two proving paths:
-// - Enoki (ENOKI_API_KEY set): Mysten's managed salt + prover. Required on Testnet/Mainnet:
-//   prover-dev.mystenlabs.com proves against the Devnet verifying key (Testnet validators
-//   reject it with "Groth16 proof verify failed") and prover.mystenlabs.com only accepts
-//   allowlisted client IDs. The Google client ID must be registered in the Enoki portal.
-// - Self-managed (fallback, Devnet only): HKDF-style salt from a server master seed over
-//   (iss, aud, sub) and the public dev prover (no registration).
+// - Enoki (ENOKI_API_KEY set): managed salt + prover; configure its app/client/network.
+// - Explicit self-managed HTTPS prover: local salt from a server master seed over
+//   (iss, aud, sub). Current Sui docs allow public Testnet proving; Enoki is optional.
+// No implicit Devnet endpoint or automatic fallback. Endpoint selection does NOT
+// verify the proving key or OAuth audience access; those need separate evidence.
 // The browser keeps the ephemeral private key; the server never sees it. The JWT
 // is used once here and not stored.
-// Note: address derivation differs between the two paths (Enoki salt vs local salt), so
-// switching paths changes users' zkLogin addresses. Fine for the demo perk (no assets).
+// Retain the established provider and salt convention: switching between Enoki
+// and local salts changes users' addresses and requires an intentional migration.
 import { createHmac } from "node:crypto"
 import { decodeJwt, genAddressSeed, jwtToAddress } from "@mysten/sui/zklogin"
 import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { HkError } from "../util"
+import { isHostedSuiProfile } from "../hosted-sui-profile"
+import { selectZkLoginProvider } from "../zklogin-provider-selection"
 
 export function zkLoginConfigured() {
-  if (hkConfig().isolatedMock) return false
-  const c = hkConfig().sui
-  return Boolean(c.googleClientId && c.zkSaltSeed)
+  const config = hkConfig()
+  if (config.isolatedMock || config.cxPreview || isHostedSuiProfile()) return false
+  const c = config.sui
+  return Boolean(c.googleClientId && c.zkSaltSeed && selectZkLoginProvider(process.env))
 }
 
 export function deriveSalt(jwt: string): bigint {
@@ -37,9 +39,8 @@ export type ZkProofInputs = {
   addressSeed: string
 }
 
-const ENOKI_API = process.env.ENOKI_API_URL || "https://api.enoki.mystenlabs.com/v1"
-export function enokiConfigured() { return !hkConfig().isolatedMock && Boolean(process.env.ENOKI_API_KEY) }
-export function zkLoginProverLabel() { return enokiConfigured() ? "enoki" : "dev-prover" }
+export function enokiConfigured() { return !hkConfig().isolatedMock && !hkConfig().cxPreview && !isHostedSuiProfile() && selectZkLoginProvider(process.env)?.kind === "enoki" }
+export function zkLoginProverLabel() { return zkLoginConfigured() ? selectZkLoginProvider(process.env)!.kind : "unconfigured" }
 
 function decodeClaims(jwt: string) {
   try { return decodeJwt(jwt) }
@@ -93,10 +94,10 @@ async function providerJson(url: string, init: RequestInit, code: ProviderCode):
   }
 }
 
-async function enoki<T>(path: string, init: { method?: string; jwt: string; body?: unknown }): Promise<T> {
-  const json = await providerJson(`${ENOKI_API}${path}`, {
+async function enoki<T>(baseUrl: string, apiKey: string, path: string, init: { method?: string; jwt: string; body?: unknown }): Promise<T> {
+  const json = await providerJson(`${baseUrl}${path}`, {
     method: init.method ?? "GET",
-    headers: { authorization: `Bearer ${process.env.ENOKI_API_KEY}`, "zklogin-jwt": init.jwt, ...(init.body ? { "content-type": "application/json" } : {}) },
+    headers: { authorization: `Bearer ${apiKey}`, "zklogin-jwt": init.jwt, ...(init.body ? { "content-type": "application/json" } : {}) },
     body: init.body ? JSON.stringify(init.body) : undefined,
   }, "zklogin_enoki")
   if (!json.data || typeof json.data !== "object" || Array.isArray(json.data)) throw providerFailure("zklogin_enoki")
@@ -106,23 +107,26 @@ async function enoki<T>(path: string, init: { method?: string; jwt: string; body
 export async function proveZkLogin(opts: { jwt: string; extendedEphemeralPublicKey: string; maxEpoch: number; jwtRandomness: string }): Promise<{ address: string; salt: string; inputs: ZkProofInputs; sub: string; aud: string }> {
   assertExternalServicesEnabled("zkLogin provider authentication")
   const c = hkConfig().sui
+  const provider = selectZkLoginProvider(process.env)
+  if (!c.googleClientId || !c.zkSaltSeed || !provider) throw new HkError("zklogin_unconfigured", "zkLogin provider configuration is unavailable", 503)
   const decoded = decodeClaims(opts.jwt)
   if (!decoded.sub || !decoded.aud || !decoded.iss) throw new HkError("zklogin_jwt", "jwt missing claims", 400)
   const aud = Array.isArray(decoded.aud) ? decoded.aud[0] : decoded.aud
   if (c.googleClientId && aud !== c.googleClientId) throw new HkError("zklogin_aud", "jwt audience mismatch", 400)
   if (decoded.iss !== "https://accounts.google.com" && decoded.iss !== "accounts.google.com") throw new HkError("zklogin_iss", "unsupported issuer", 400)
   if (typeof decoded.exp === "number" && decoded.exp * 1000 < Date.now()) throw new HkError("zklogin_exp", "jwt expired", 400)
-  if (enokiConfigured()) {
+  if (provider.kind === "enoki") {
+    const apiKey = process.env.ENOKI_API_KEY!
     const network = (c.network === "mainnet" || c.network === "devnet" ? c.network : "testnet") as "testnet" | "devnet" | "mainnet"
-    const who = await enoki<{ salt: string; address: string; publicKey: string }>("/zklogin", { jwt: opts.jwt })
-    const proof = await enoki<ZkProofInputs>("/zklogin/zkp", { method: "POST", jwt: opts.jwt, body: { network, ephemeralPublicKey: opts.extendedEphemeralPublicKey, maxEpoch: opts.maxEpoch, randomness: opts.jwtRandomness } })
+    const who = await enoki<{ salt: string; address: string; publicKey: string }>(provider.url, apiKey, "/zklogin", { jwt: opts.jwt })
+    const proof = await enoki<ZkProofInputs>(provider.url, apiKey, "/zklogin/zkp", { method: "POST", jwt: opts.jwt, body: { network, ephemeralPublicKey: opts.extendedEphemeralPublicKey, maxEpoch: opts.maxEpoch, randomness: opts.jwtRandomness } })
     return { address: who.address, salt: who.salt, inputs: proof, sub: decoded.sub, aud }
   }
   const salt = deriveSalt(opts.jwt)
   let address: string
   try { address = jwtToAddress(opts.jwt, salt, false) }
   catch { throw new HkError("zklogin_jwt", "Invalid login token", 400) }
-  const proof = await providerJson(c.zkProverUrl, {
+  const proof = await providerJson(provider.url, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ jwt: opts.jwt, extendedEphemeralPublicKey: opts.extendedEphemeralPublicKey, maxEpoch: opts.maxEpoch, jwtRandomness: opts.jwtRandomness, salt: salt.toString(), keyClaimName: "sub" }),
   }, "zklogin_prover") as Omit<ZkProofInputs, "addressSeed">

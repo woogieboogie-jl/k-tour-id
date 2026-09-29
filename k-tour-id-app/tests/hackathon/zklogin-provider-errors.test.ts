@@ -17,6 +17,7 @@ function setup(enoki = true) {
     HK_ISOLATED_MOCK: "0", NEXT_PUBLIC_HK_PREVIEW_READ_ONLY: "0", NEXT_PUBLIC_HK_CX_PREVIEW: "0",
     HK_ZKLOGIN_SALT_SEED: SECRET, NEXT_PUBLIC_GOOGLE_CLIENT_ID: "fixture-client",
     ENOKI_API_KEY: enoki ? SECRET : undefined, HK_SUI_NETWORK: "testnet",
+    ENOKI_API_URL: undefined, HK_ZKLOGIN_PROVER_URL: "https://fixture-prover.invalid/v1",
   }
   for (const [key, value] of Object.entries(values)) {
     previous.set(key, process.env[key])
