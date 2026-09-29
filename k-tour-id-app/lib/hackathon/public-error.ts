@@ -5,6 +5,7 @@ import { HkError } from "./util"
 // Only app-owned codes, HTTP statuses, and fixed copy cross this boundary.
 const CODES = new Set(`
 address bad_request campaign_closed cannot_cancel consent_version csrf
+jit_identity_unavailable jit_identity_scope jit_identity_inactive jit_identity_expired jit_identity_proof jit_identity_limit jit_identity_start_used jit_identity_poll_limit
 guide_setup_required guide_ai_unavailable guide_collection_invalid guide_already_saved guide_save_in_progress zklogin_required
 guide_production_unavailable guide_access_denied guide_production_scope
 opendid_provider_required opendid_permission_required opendid_permission_expired opendid_status_required
@@ -39,6 +40,14 @@ const STATUSES = new Set([400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500,
 type PublicFailure = { status: number; error: { code: string; message: string; retryable: boolean } }
 
 const FIXED: Record<string, string> = {
+  jit_identity_unavailable: "Identity checking is not available in this session.",
+  jit_identity_scope: "This identity approval belongs to a different action.",
+  jit_identity_inactive: "This identity request is no longer active.",
+  jit_identity_expired: "This action approval has expired. Start the check again.",
+  jit_identity_proof: "Current provider identity evidence is required for this action.",
+  jit_identity_limit: "This session has reached its identity request limit.",
+  jit_identity_start_used: "This identity attempt is already reserved. Check its current status.",
+  jit_identity_poll_limit: "Please wait before checking the identity result again.",
   guide_production_unavailable: "Guide saving is not available yet. You can keep reading.",
   guide_access_denied: "Enter the journey access code to continue.",
   guide_production_scope: "This action is not available in the guide journey.",

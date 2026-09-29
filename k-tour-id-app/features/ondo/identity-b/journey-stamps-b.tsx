@@ -102,7 +102,7 @@ export function JourneyStampsCardB({ locale }: { locale: OndoBLocale }) {
     </div>
     {review && count > 0 ? <StampProgress count={count} locale={locale} /> : null}
     {recentName ? <p className={styles.recent}><MapPin size={14} aria-hidden="true" /><span>{recentName}</span></p> : null}
-    {review ? <p className={styles.review} data-testid="journey-stamps-lifetime">{copy.review}</p> : null}
+    {review && count > 0 ? <p className={styles.review} data-testid="journey-stamps-lifetime">{copy.review}</p> : null}
     <div className={styles.cardActions}>
       <button type="button" data-testid={count ? "journey-stamps-open" : "journey-stamps-explore"} onClick={count ? requestJourneyStampsB : explore}>
         {count ? copy.collection : copy.explore}<ChevronRight size={16} aria-hidden="true" />

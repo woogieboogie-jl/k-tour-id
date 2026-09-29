@@ -8,6 +8,7 @@ import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
 import {
   openMyKoreaSavedBDiscoveryEditorialPlace,
   openMyKoreaSavedBDiscoveryVenue,
+  openMyKoreaSavedBDiscoveryPlace,
 } from "../map/b-discovery-history"
 import { editorialPlaceById, type EditorialPlaceB } from "../pulse-b/japan-first-pulse-model-b"
 import type { OndoBLocale } from "../shared/state/ondo-b-preferences"
@@ -20,6 +21,7 @@ import { useModalIsolation } from "../shared/ui/use-modal-isolation"
 import savedStyles from "./saved-entry-b.module.css"
 import {
   editorialMemoryCardViewModelB,
+  discoveryMemoryCardViewModelB,
   officialMemoryCardViewModelB,
   resolveVisibleMyKoreaMemorySequenceB,
   type MyKoreaMemoryCardViewModelB,
@@ -31,6 +33,8 @@ import { PrivateNote } from "./private-note"
 import { STABLE_B_KRW_PRICE, STABLE_B_OOKRW_PRICE, stableCommerceOrderB } from "../commerce-b/stable-commerce-model-b"
 import { resolveCommercePlaceB, requestPlaceServiceReturnB } from "../commerce-b/place-service-registry-b"
 import { ProfileReputationEntryB } from "../identity-b/profile-reputation-b"
+import { personalPlaceByIdB } from "../place/place-memory-model-b"
+import { usePlaceMemoriesB, writePlaceMemoryB } from "../place/place-memory-b"
 
 const ONDO_OPEN_TABLE_EVENT = "ondo:b:open-table"
 
@@ -187,6 +191,7 @@ const COPY = {
 type RemovalTarget =
   | { kind: "official"; id: string; model: MyKoreaMemoryCardViewModelB }
   | { kind: "editorial"; id: EditorialPlaceB["id"]; model: MyKoreaMemoryCardViewModelB }
+  | { kind: "discovery"; id: string; model: MyKoreaMemoryCardViewModelB }
 
 const SAVED_EMPTY_LABEL: Record<OndoBLocale, string> = {
   en: "No saved places",
@@ -232,6 +237,7 @@ function removalQuestion(locale: OndoBLocale, placeName: string) {
 
 export function SavedEntryB() {
   const { state, actions } = useOndoB()
+  const memories = usePlaceMemoriesB()
   const locale = state.locale
   const copy = COPY[locale]
   const [productTimeline] = useState(() => ondoBProductTimeline())
@@ -260,6 +266,14 @@ export function SavedEntryB() {
     const place = editorialPlaceById(placeId)
     return place ? [place] : []
   })
+  const savedDiscovery = Object.entries(memories).flatMap(([id, memory]) => {
+    const place = memory.saved ? personalPlaceByIdB(id, locale) : null
+    return place?.kind === "discovery" ? [place] : []
+  })
+  const personalVisits = Object.entries(memories).flatMap(([id, memory]) => {
+    const place = memory.visitedAt ? personalPlaceByIdB(id, locale) : null
+    return place ? [{ place, visitedAt: memory.visitedAt! }] : []
+  })
   const recentEditorial = state.recentEditorialPlaceIds.flatMap((placeId) => {
     const place = editorialPlaceById(placeId)
     return place ? [place] : []
@@ -267,6 +281,7 @@ export function SavedEntryB() {
   const unresolvedSavedMemoryModels = [
     ...saved.map((venue) => officialMemoryCardViewModelB(venue, locale)),
     ...savedEditorial.map((place) => editorialMemoryCardViewModelB(place, locale)),
+    ...savedDiscovery.map(place => discoveryMemoryCardViewModelB(place, locale)),
   ]
   const unresolvedRecentMemoryModels = [
     ...recent.map((venue) => officialMemoryCardViewModelB(venue, locale)),
@@ -304,16 +319,20 @@ export function SavedEntryB() {
     ...(receiptVenue && (state.commerceSession.status === "paid" || state.commerceSession.status === "refunded") ? [receiptVenue] : []),
   ]
   const memoryCityCounts = {
-    seoul: new Set(mappedOfficialVenues.filter((venue) => venue.cityId === "seoul").map((venue) => venue.id)).size,
-    busan: new Set(mappedOfficialVenues.filter((venue) => venue.cityId === "busan").map((venue) => venue.id)).size,
+    seoul: new Set([...mappedOfficialVenues.filter((venue) => venue.cityId === "seoul").map((venue) => venue.id), ...savedDiscovery.filter(place => place.city === "seoul").map(place => place.id), ...personalVisits.filter(item => item.place.city === "seoul").map(item => item.place.id)]).size,
+    busan: new Set([...mappedOfficialVenues.filter((venue) => venue.cityId === "busan").map((venue) => venue.id), ...savedDiscovery.filter(place => place.city === "busan").map(place => place.id), ...personalVisits.filter(item => item.place.city === "busan").map(item => item.place.id)]).size,
     jeju: new Set([
       ...savedEditorial,
       ...recentEditorial,
       ...planned.flatMap(({ editorialPlace }) => editorialPlace ? [editorialPlace] : []),
+      ...savedDiscovery.filter(place => place.city === "jeju"),
+      ...personalVisits.filter(item => item.place.city === "jeju").map(item => item.place),
     ].map((place) => place.id)).size,
   } as const
   const isEmptyJourney = saved.length === 0
     && savedEditorial.length === 0
+    && savedDiscovery.length === 0
+    && personalVisits.length === 0
     && recent.length === 0
     && recentEditorial.length === 0
     && planned.length === 0
@@ -330,7 +349,7 @@ export function SavedEntryB() {
     const focusIndex = resolveSavedRemovalFocusIndex(removalFocusIndexRef.current, openers.length)
     const destination = focusIndex === null ? savedHeadingRef.current : openers[focusIndex]
     destination?.focus({ preventScroll: true })
-  }, [removalTarget, state.savedEditorialPlaceIds, state.savedVenueIds])
+  }, [removalTarget, state.savedEditorialPlaceIds, state.savedVenueIds, memories])
 
   useEffect(() => {
     removalStateRef.current = removalState
@@ -361,6 +380,10 @@ export function SavedEntryB() {
 
   useEffect(() => {
     if (!removalTarget || removalState !== "removing") return
+    if (removalTarget.kind === "discovery") {
+      if (!memories[removalTarget.id]?.saved) finishRemoval()
+      return
+    }
     if (removalTarget.kind === "official") {
       if (!state.savedVenueIds.includes(removalTarget.id)) {
         finishRemoval()
@@ -372,7 +395,7 @@ export function SavedEntryB() {
       return
     }
     if (!state.savedEditorialPlaceIds.includes(removalTarget.id)) finishRemoval()
-  }, [removalState, removalTarget, state.saveStatusByVenue, state.savedEditorialPlaceIds, state.savedVenueIds])
+  }, [removalState, removalTarget, state.saveStatusByVenue, state.savedEditorialPlaceIds, state.savedVenueIds, memories])
 
   function openRemovalDialog(target: RemovalTarget, trigger: HTMLButtonElement) {
     const openers = Array.from(savedSectionRef.current?.querySelectorAll<HTMLButtonElement>("[data-saved-place-opener]") ?? [])
@@ -403,7 +426,7 @@ export function SavedEntryB() {
       actions.toggleSavedVenue(removalTarget.id)
       return
     }
-    if (!actions.toggleSavedEditorialPlace(removalTarget.id)) {
+    if (!(removalTarget.kind === "discovery" ? writePlaceMemoryB(removalTarget.id, { saved: false }) : actions.toggleSavedEditorialPlace(removalTarget.id))) {
       setRemovalState("failed")
     }
   }
@@ -441,6 +464,13 @@ export function SavedEntryB() {
   }
 
   function openMemoryPlace(model: MyKoreaMemoryCardViewModelB) {
+    if (model.objectNamespace === "discovery-place") {
+      const scrollOwner = document.querySelector<HTMLElement>("[data-testid='ondo-scroll-region']")
+      if (!openMyKoreaSavedBDiscoveryPlace(model.objectId, scrollOwner?.scrollTop ?? 0)) return
+      actions.setSurface({ kind: "map" })
+      actions.setTab("ondo")
+      return
+    }
     if (model.objectNamespace === "canonical-venue") {
       const venue = canonicalMapVenueById(model.objectId)
       if (venue) openVenue(venue.id, venue.cityId)
@@ -487,35 +517,37 @@ export function SavedEntryB() {
   const savedSection = (
     <section ref={savedSectionRef} key="saved" className={styles.activitySection} data-testid="ondo-b-saved-entry" aria-labelledby="my-korea-saved-heading">
       <div className={styles.activityHeading}><Bookmark size={19} aria-hidden="true" /><span><h2 ref={savedHeadingRef} tabIndex={-1} id="my-korea-saved-heading">{copy.savedTitle}</h2><p>{copy.savedBody}</p></span></div>
-      {saved.length === 0 && savedEditorial.length === 0 ? (
+      {saved.length === 0 && savedEditorial.length === 0 && savedDiscovery.length === 0 ? (
         <div className={styles.compactEmpty} aria-label={SAVED_EMPTY_LABEL[locale]}>
           <h3>{copy.savedEmpty}</h3>
           <p>{copy.savedEmptyBody}</p>
           <button type="button" onClick={openExplore}>{copy.explore}</button>
         </div>
       ) : (
-        <div className={styles.savedList} aria-label={savedListLabel(locale, saved.length + savedEditorial.length)}>
+        <div className={styles.savedList} aria-label={savedListLabel(locale, saved.length + savedEditorial.length + savedDiscovery.length)}>
           {savedMemoryModels.map((model, index) => {
             const venue = model.objectNamespace === "canonical-venue" ? canonicalMapVenueById(model.objectId) : undefined
             const place = model.objectNamespace === "jeju-editorial-place" ? editorialPlaceById(model.objectId) : undefined
-            if (!venue && !place) return null
+            const discovery = model.objectNamespace === "discovery-place" ? personalPlaceByIdB(model.objectId, locale) : undefined
+            if (!venue && !place && !discovery) return null
             return (
               <MyKoreaMemoryVenueCardB
                 key={`${model.objectNamespace}:${model.objectId}`}
                 model={model}
                 fit="adaptive"
                 priority={index === 0}
-                cardTestId={venue ? `saved-card-${venue.id}` : `saved-editorial-card-${place!.id}`}
+                cardTestId={venue ? `saved-card-${venue.id}` : discovery ? `saved-discovery-card-${discovery.id}` : `saved-editorial-card-${place!.id}`}
                 action={{
                   label: model.accessibleLabel,
                   onActivate: () => openMemoryPlace(model),
-                  testId: venue ? `saved-venue-${venue.id}` : `saved-editorial-${place!.id}`,
+                  testId: venue ? `saved-venue-${venue.id}` : discovery ? `saved-discovery-${discovery.id}` : `saved-editorial-${place!.id}`,
                   savedOpener: true,
                 }}
                 utilities={<div className={savedStyles.savedUtilities} data-has-note={venue ? "true" : "false"}>
-                  {venue ? <PrivateNote venueId={venue.id} venueName={model.title} /> : null}
+                  <PrivateNote venueId={model.objectId} venueName={model.title} />
                   <button className={`${styles.remove} ${savedStyles.removeAction}`} type="button" aria-label={`${venue ? copy.remove : copy.removeEditorial}: ${model.title}`} title={`${venue ? copy.remove : copy.removeEditorial}: ${model.title}`} onClick={(event) => openRemovalDialog(venue
                     ? { kind: "official", id: venue.id, model }
+                    : discovery ? { kind: "discovery", id: discovery.id, model }
                     : { kind: "editorial", id: place!.id, model }, event.currentTarget)}>
                     <Trash2 size={16} aria-hidden="true" />
                     <span className={styles.srOnly}>{venue ? copy.remove : copy.removeEditorial}</span>
@@ -547,7 +579,17 @@ export function SavedEntryB() {
       ) : null}
 
       {!isEmptyJourney ? <div className={styles.activitySections}>
-        {saved.length > 0 || savedEditorial.length > 0 || pendingRemovalFocusRef.current ? savedSection : null}
+        {saved.length > 0 || savedEditorial.length > 0 || savedDiscovery.length > 0 || pendingRemovalFocusRef.current ? savedSection : null}
+        {personalVisits.length ? <section className={styles.activitySection} data-testid="my-korea-personal-visits">
+          <div className={styles.activityHeading}><History size={19} aria-hidden="true" /><span><h2 id={!saved.length && !savedEditorial.length && !savedDiscovery.length && !pendingRemovalFocusRef.current ? "my-korea-saved-heading" : undefined} tabIndex={-1}>{locale === "ko" ? "내 방문 기록" : locale === "ja" ? "自分の訪問メモ" : "Personal visits"}</h2><p>{locale === "ko" ? "직접 남긴 개인 기록이에요. 방문 인증·혜택 영수증과는 달라요." : locale === "ja" ? "自分で残した個人メモです。訪問認証や特典利用の明細ではありません。" : "Your own notes, not verified visits or perk receipts."}</p></span></div>
+          <div className={styles.savedList}>{personalVisits.map(({ place, visitedAt }) => <button className={savedStyles.personalVisit} type="button" key={place.id} data-personal-visit-place={place.id}
+            {...{ [`data-my-korea-saved-${place.kind === "canonical" ? "official" : place.kind}`]: place.id }}
+            onClick={() => {
+            if (place.kind === "canonical") openVenue(place.id, place.city as "seoul" | "busan")
+            else if (place.kind === "editorial") openEditorialPlace(place.id as EditorialPlaceB["id"])
+            else openMemoryPlace(discoveryMemoryCardViewModelB(place, locale))
+          }}>{place.name} · {visitedAt.slice(0, 10)}<ChevronRight size={16} aria-hidden="true" /></button>)}</div>
+        </section> : null}
         {planned.length > 0 ? plannedSection : null}
 
         {recent.length > 0 || recentEditorial.length > 0 ? <section className={styles.activitySection} data-testid="my-korea-recent" aria-labelledby="my-korea-recent-heading">

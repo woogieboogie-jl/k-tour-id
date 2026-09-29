@@ -39,12 +39,15 @@ import { requestPlaceServiceReturnB, resolveCommercePlaceB } from "../commerce-b
 import { ondoBProductTimeline, type OndoBProductTimelineOverride } from "../shared/time/product-timeline-b"
 import { ONDO_B_TABLE, ONDO_B_TABLES, initialTableRuntime, ondoBTableById, ondoBTableTimeline, reduceTableRuntime, type OndoBTable, type TableAvailabilityState, type TableRuntime } from "./table-model"
 import styles from "./pulse-table-b.module.css"
+import { identityReviewOptionsB } from "../identity-b/identity-review-mode-b"
+import { consumeJitAuthorization } from "../identity-b/jit-identity-authority-b"
+import { hashBActionReturnTo } from "../identity-b/action-gate-contract-b"
 
 export { ACTIVE_TABLE_ID, TABLE_VENUE_ID } from "./table-policy-b"
 export const ONDO_OPEN_TABLE_EVENT = "ondo:b:open-table"
 export const MAX_TABLE_CHAT_IMAGE_BYTES = 10 * 1024 * 1024
 const TABLE_CHAT_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"])
-const actionGateSessionOptions = qaReviewFixtureOptions
+const actionGateSessionOptions = identityReviewOptionsB
 
 type TableView = "detail" | "confirm" | "chat"
 type MessageState = "sending" | "sent" | "failed"
@@ -1044,7 +1047,7 @@ export function PulseTablesEntryB() {
     setRuntime(requested)
     setJoinRequestPending(true)
     const operationEpoch = tableInteractionEpochRef.current
-    const joinTimer = window.setTimeout(() => {
+    const joinTimer = window.setTimeout(async () => {
       if (joinTimerRef.current !== joinTimer) return
       joinTimerRef.current = null
       if (operationEpoch !== tableInteractionEpochRef.current
@@ -1085,14 +1088,21 @@ export function PulseTablesEntryB() {
       const actionSession = restoreBActionGateSession(window.sessionStorage, new Date(), actionGateSessionOptions())
       const satisfied = new Set<"account" | "person" | "age">()
       if (state.account === "ACC-ACTIVE") satisfied.add("account")
-      if (actionSession.person.status === "eligible" && actionSession.person.expiresAt && Date.parse(actionSession.person.expiresAt) > Date.now()) satisfied.add("person")
+      if (actionGateSessionOptions().allowReviewFixture) {
+        if (actionSession.person.status === "eligible" && actionSession.person.expiresAt && Date.parse(actionSession.person.expiresAt) > Date.now()) satisfied.add("person")
+      } else if (pending.gatePlan.includes("person") || pending.gatePlan.includes("age")) {
+        const isCurrent = () => operationEpoch === tableInteractionEpochRef.current && selectedRef.current && activeTableRef.current.id === pending.tableId && returnToRef.current?.tokenId === pending.tokenId
+        const allowed = await consumeJitAuthorization(pending.tokenId, hashBActionReturnTo(pending), isCurrent)
+        if (!allowed || !isCurrent()) { transitionRuntime({ type: "JOIN_FAILED", reason: "policy" }); setJoinPersistError(true); return }
+        satisfied.add("person")
+      }
       const age = restoreGlobalAfter19B(
         window.localStorage,
         window.sessionStorage,
         new Date(),
         qaReviewFixtureOptions(),
       ).session
-      if (isGlobalAfter19AgeCurrent(age)) satisfied.add("age")
+      if (actionGateSessionOptions().allowReviewFixture && isGlobalAfter19AgeCurrent(age)) satisfied.add("age")
       const consumed = consumePendingBActionAtMutation(window.sessionStorage, pending, satisfied, new Date(), { ...actionGateSessionOptions(), credential: credentialRef.current })
       if (!consumed) {
         transitionRuntime({ type: "JOIN_FAILED", reason: "network" })

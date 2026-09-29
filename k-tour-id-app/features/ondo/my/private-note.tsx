@@ -12,6 +12,8 @@ import {
 } from "../shared/state/private-note-draft-memory"
 import styles from "../shared/ui/production-local.module.css"
 import savedStyles from "./saved-entry-b.module.css"
+import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
+import { usePlaceMemoriesB, writePlaceMemoryB } from "../place/place-memory-b"
 
 const COPY = {
   en: {
@@ -57,7 +59,9 @@ const COPY = {
 
 export function PrivateNote({ venueId, venueName }: { venueId: string; venueName: string }) {
   const { state, actions } = useOndoB()
-  const stored = state.privateNotesByVenue[venueId] ?? ""
+  const memories = usePlaceMemoriesB()
+  const canonical = Boolean(canonicalMapVenueById(venueId))
+  const stored = canonical ? state.privateNotesByVenue[venueId] ?? "" : memories[venueId]?.note ?? ""
   const restoredDraft = readPrivateNoteDraftMemory(venueId)
   const [draft, setDraft] = useState(() => restoredDraft?.value ?? stored)
   const [receipt, setReceipt] = useState<"idle" | "saved" | "failed">("idle")
@@ -83,7 +87,7 @@ export function PrivateNote({ venueId, venueName }: { venueId: string; venueName
   }
 
   function save() {
-    if (!actions.setPrivateNote(venueId, draft)) {
+    if (!(canonical ? actions.setPrivateNote(venueId, draft) : writePlaceMemoryB(venueId, { note: draft }))) {
       setReceipt("failed")
       writePrivateNoteDraftMemory(venueId, { value: draft, editing: true })
       return

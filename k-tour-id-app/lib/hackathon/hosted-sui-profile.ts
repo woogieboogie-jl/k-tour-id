@@ -1,6 +1,7 @@
 // Pure policy for the short-lived hosted Testnet journey. No config/store,
 // provider, network, key parsing, signature creation or deployment dependencies.
 import { HkError } from "./util"
+import { jitIdentityRouteAllowed, assertJitIdentityBody } from "./jit-identity-routes"
 
 export type HostedSuiEnv = Record<string, string | undefined>
 export const PIN = Object.freeze({
@@ -139,6 +140,7 @@ function parts(path: RoutePath): readonly string[] | null {
 export function hostedSuiRouteAllowed(method: string, path: RoutePath): boolean {
   const p = parts(path)
   if (!p) return false
+  if (jitIdentityRouteAllowed(method, p)) return true
   if (method === "GET") return (p.length === 1 && ["config", "me"].includes(p[0])) ||
     (p.length === 2 && p[0] === "guide" && p[1] === "collection") ||
     (p.length === 3 && p[0] === "places" && p[2] === "demo-entitlements") ||
@@ -177,12 +179,16 @@ function holderSignature(v: unknown): boolean {
 export function assertHostedSuiBody(path: RoutePath, body: unknown, env: HostedSuiEnv = process.env): void {
   const p = parts(path)
   if (!p || !hostedSuiRouteAllowed("POST", p)) scope()
+  if (p[0] === "identity") { assertJitIdentityBody(p, body); return }
   const action = p.slice(2).join("/")
-  const allowed = p.length === 1 ? (p[0] === "operations" ? ["venueId", "consentVersion", "locale"] : [])
+  const allowed = p.length === 1 ? (p[0] === "operations" ? ["venueId", "consentVersion", "locale", "identityAuthorizationRef", "identityContextDigest"] : [])
     : p[0] === "hosted" ? ["accessCode"] : actionFields[action]
   fields(body, allowed)
   if (p[0] === "hosted") { if (typeof body.accessCode !== "string" || !/^[A-Za-z0-9_-]{32,128}$/.test(body.accessCode)) scope(); return }
   if (p.length === 1 && p[0] === "operations" && (body.venueId !== PIN.venueId || body.consentVersion !== PIN.consentVersion)) scope()
+  if (p.length === 1 && p[0] === "operations" && (Object.hasOwn(body, "identityAuthorizationRef") || Object.hasOwn(body, "identityContextDigest")) &&
+    (typeof body.identityAuthorizationRef !== "string" || !/^ida_[A-Za-z0-9_-]{16,32}$/.test(body.identityAuthorizationRef) ||
+      typeof body.identityContextDigest !== "string" || !/^0x[0-9a-f]{64}$/.test(body.identityContextDigest))) scope()
   if (Object.hasOwn(body, "locale") && (typeof body.locale !== "string" || !["ko", "en", "ja"].includes(body.locale))) scope()
   if (action === "identity/start" && typeof body.mobile !== "boolean") scope()
   if (action === "identity/complete") {

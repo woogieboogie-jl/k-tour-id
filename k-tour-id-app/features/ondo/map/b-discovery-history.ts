@@ -4,6 +4,7 @@ import { isEditorialPlaceId, type EditorialPlaceB } from "../pulse-b/japan-first
 import { isCanonicalVenueId, type CanonicalVenueId } from "@/lib/ondo/venues/canonical-allowlist"
 import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
 import { discoveryCollectionCityB, discoveryMoodFromQueryB, discoveryPlaceByIdB, isDiscoveryCollectionIdB, isDiscoveryMoodB, type DiscoveryCollectionIdB } from "./discovery-collection-model-b"
+import { personalPlaceByIdB } from "../place/place-memory-model-b"
 import {
   MY_KOREA_PLACE_RETURN_HISTORY_KEY,
   createMyKoreaPlaceReturnJourneyId,
@@ -161,10 +162,10 @@ function collectionSelectionValue(value: unknown, city: BDiscoveryCity | undefin
 }
 
 function discoveryPlaceValue(value: unknown, city: BDiscoveryCity | undefined): string | undefined {
-  const id = collectionSelectionValue(value, city)
+  const place = typeof value === "string" ? personalPlaceByIdB(value) : null
   // Every editorial place (including Jeju food stops) keeps the editorial
   // route. It must never fall through to the market/research detail alias.
-  return id && !isEditorialPlaceId(id) && discoveryPlaceByIdB(id)?.kind !== "sight" ? id : undefined
+  return place?.kind === "discovery" && place.city === city ? place.id : undefined
 }
 
 function withoutCollection(entry: BDiscoveryHistoryEntry): BDiscoveryHistoryEntry {
@@ -191,8 +192,8 @@ function focusValue(value: unknown): BDiscoveryFocus | undefined {
     return editorialPlaceId ? { kind: "editorial-place", editorialPlaceId } : undefined
   }
   if (value.kind === "discovery-place" && typeof value.discoveryPlaceId === "string") {
-    const place = discoveryPlaceByIdB(value.discoveryPlaceId)
-    return place && !isEditorialPlaceId(place.id) && place.kind !== "sight" ? { kind: "discovery-place", discoveryPlaceId: place.id } : undefined
+    const place = personalPlaceByIdB(value.discoveryPlaceId)
+    return place?.kind === "discovery" ? { kind: "discovery-place", discoveryPlaceId: place.id } : undefined
   }
   if (value.kind === "search" || value.kind === "editorial" || value.kind === "view-toggle") return { kind: value.kind }
   return undefined
@@ -206,14 +207,14 @@ function sanitizeEntry(value: unknown): BDiscoveryHistoryEntry | null {
   const venueId = venueValue(value.venueId)
   const editorialPlaceId = editorialPlaceValue(value.editorialPlaceId)
   const collection = level === "nation" ? undefined : collectionValue(value.collection, city)
-  const discoveryPlaceId = collection ? discoveryPlaceValue(value.discoveryPlaceId, city) : undefined
+  const discoveryPlaceId = discoveryPlaceValue(value.discoveryPlaceId, city)
   const collectionSelection = collection ? collectionSelectionValue(value.collectionSelection, city) : undefined
   if (level !== "nation" && !city) return null
   if ((level === "peek" || level === "detail") && [venueId, editorialPlaceId, discoveryPlaceId].filter(Boolean).length !== 1) return null
   if (discoveryPlaceId && level === "detail") return null
   if (editorialPlaceId && city !== "jeju") return null
   const rawFocus = focusValue(value.focus)
-  const focus = rawFocus?.kind === "discovery-place" && (!collection || !discoveryPlaceValue(rawFocus.discoveryPlaceId, city)) ? undefined : rawFocus
+  const focus = rawFocus?.kind === "discovery-place" && !discoveryPlaceValue(rawFocus.discoveryPlaceId, city) ? undefined : rawFocus
   const sheetSnap = sheetSnapForLevel(level)
   const camera = level === "nation" ? cameraValue(value.camera) : cameraValue(value.camera)
   return {
@@ -329,7 +330,8 @@ function myKoreaPlaceReceiptMatchesDiscoveryEntry(
   if (receipt.phase !== "place" || (entry.level !== "peek" && entry.level !== "detail")) return false
   return receipt.sourceKind === "official"
     ? entry.venueId === receipt.venueId && entry.editorialPlaceId === undefined
-    : entry.editorialPlaceId === receipt.editorialPlaceId && entry.venueId === undefined
+    : receipt.sourceKind === "editorial" ? entry.editorialPlaceId === receipt.editorialPlaceId && entry.venueId === undefined
+    : entry.discoveryPlaceId === receipt.discoveryPlaceId && entry.venueId === undefined && entry.editorialPlaceId === undefined
 }
 
 export function readMyKoreaPlaceReturnNavigation(state?: unknown) {
@@ -473,7 +475,7 @@ function entryUrl(entry: BDiscoveryHistoryEntry) {
     url.searchParams.set("editorialPlaceId", entry.editorialPlaceId)
     if (entry.level === "detail") url.searchParams.set("detail", "1")
   }
-  if (entry.level === "peek" && entry.collection && entry.discoveryPlaceId) url.searchParams.set("discoveryPlaceId", entry.discoveryPlaceId)
+  if (entry.level === "peek" && entry.discoveryPlaceId) url.searchParams.set("discoveryPlaceId", entry.discoveryPlaceId)
   return `${url.pathname}${url.search}`
 }
 
@@ -649,15 +651,15 @@ export function initializeBDiscoveryHistory(venueCity: (venueId: string) => BDis
   const url = new URL(window.location.href)
   const rawVenueId = venueValue(url.searchParams.get("venueId"))
   const rawEditorialPlaceId = editorialPlaceValue(url.searchParams.get("editorialPlaceId"))
-  const rawDiscoveryPlace = discoveryPlaceByIdB(url.searchParams.get("discoveryPlaceId") ?? "")
-  const rawDiscoveryPlaceId = rawDiscoveryPlace && rawDiscoveryPlace.kind !== "sight" ? rawDiscoveryPlace.id : undefined
+  const rawDiscoveryPlace = personalPlaceByIdB(url.searchParams.get("discoveryPlaceId") ?? "")
+  const rawDiscoveryPlaceId = rawDiscoveryPlace?.kind === "discovery" ? rawDiscoveryPlace.id : undefined
   const ambiguousTarget = [rawVenueId, rawEditorialPlaceId, rawDiscoveryPlaceId].filter(Boolean).length > 1
   const requestedVenueId = ambiguousTarget ? undefined : rawVenueId
   const requestedEditorialPlaceId = ambiguousTarget ? undefined : rawEditorialPlaceId
   const resolvedVenueCity = requestedVenueId ? venueCity(requestedVenueId) : undefined
   const requestedCity = resolvedVenueCity ?? (requestedEditorialPlaceId ? "jeju" : cityValue(url.searchParams.get("city")))
   const requestedCollection = requestedVenueId ? undefined : collectionValue(url.searchParams.get("collection"), requestedCity)
-  const requestedDiscoveryPlaceId = !ambiguousTarget && requestedCollection ? discoveryPlaceValue(rawDiscoveryPlaceId, requestedCity) : undefined
+  const requestedDiscoveryPlaceId = !ambiguousTarget ? discoveryPlaceValue(rawDiscoveryPlaceId, requestedCity) : undefined
   const requestedCollectionSelection = requestedCollection ? collectionSelectionValue(url.searchParams.get("collectionSelection"), requestedCity) : undefined
   const requestedView = viewValue(url.searchParams.get("view"))
   const requestedCategory = categoryValue(url.searchParams.get("category"))
@@ -779,8 +781,8 @@ export function openBDiscoveryCollection(id: DiscoveryCollectionIdB, options: { 
 export function openBDiscoveryCollectionPlace(id: string) {
   const current = readBDiscoveryHistory()
   const discoveryPlaceId = discoveryPlaceValue(id, current?.city)
-  if (current?.level !== "city" || !current.collection || !discoveryPlaceId) return false
-  const selected: BDiscoveryHistoryEntry = { ...current, collectionSelection: discoveryPlaceId }
+  if (current?.level !== "city" || !discoveryPlaceId) return false
+  const selected: BDiscoveryHistoryEntry = { ...current, ...(current.collection ? { collectionSelection: discoveryPlaceId } : {}) }
   replaceEntry({ ...selected, focus: { kind: "discovery-place", discoveryPlaceId } })
   pushEntry({ ...selected, level: "peek", discoveryPlaceId, focus: undefined })
   return true
@@ -826,7 +828,8 @@ export function openBDiscoveryEditorialPlace(editorialPlaceId: EditorialPlaceB["
 function myKoreaSavedPlacePeek(
   current: BDiscoveryHistoryEntry,
   target: { sourceKind: "official"; venueId: CanonicalVenueId; city: BDiscoveryCity }
-    | { sourceKind: "editorial"; editorialPlaceId: EditorialPlaceB["id"]; city: "jeju" },
+    | { sourceKind: "editorial"; editorialPlaceId: EditorialPlaceB["id"]; city: "jeju" }
+    | { sourceKind: "discovery"; discoveryPlaceId: string; city: BDiscoveryCity },
 ): BDiscoveryHistoryEntry {
   const preserveCityContext = current.city === target.city
   const base: BDiscoveryHistoryEntry = {
@@ -845,7 +848,8 @@ function myKoreaSavedPlacePeek(
   }
   return target.sourceKind === "official"
     ? { ...base, venueId: target.venueId }
-    : { ...base, editorialPlaceId: target.editorialPlaceId }
+    : target.sourceKind === "editorial" ? { ...base, editorialPlaceId: target.editorialPlaceId }
+    : { ...base, discoveryPlaceId: target.discoveryPlaceId }
 }
 
 function discoveryEntryFromCurrentUrl(): BDiscoveryHistoryEntry | null {
@@ -853,13 +857,13 @@ function discoveryEntryFromCurrentUrl(): BDiscoveryHistoryEntry | null {
   const url = new URL(window.location.href)
   const requestedVenueId = venueValue(url.searchParams.get("venueId"))
   const requestedEditorialPlaceId = editorialPlaceValue(url.searchParams.get("editorialPlaceId"))
-  const rawDiscoveryPlace = discoveryPlaceByIdB(url.searchParams.get("discoveryPlaceId") ?? "")
-  const rawDiscoveryPlaceId = rawDiscoveryPlace && rawDiscoveryPlace.kind !== "sight" ? rawDiscoveryPlace.id : undefined
+  const rawDiscoveryPlace = personalPlaceByIdB(url.searchParams.get("discoveryPlaceId") ?? "")
+  const rawDiscoveryPlaceId = rawDiscoveryPlace?.kind === "discovery" ? rawDiscoveryPlace.id : undefined
   if ([requestedVenueId, requestedEditorialPlaceId, rawDiscoveryPlaceId].filter(Boolean).length > 1) return null
   const resolvedVenueCity = requestedVenueId ? canonicalMapVenueById(requestedVenueId)?.cityId : undefined
   const requestedCity = resolvedVenueCity ?? (requestedEditorialPlaceId ? "jeju" : cityValue(url.searchParams.get("city")))
   const collection = requestedVenueId ? undefined : collectionValue(url.searchParams.get("collection"), requestedCity)
-  const discoveryPlaceId = collection ? discoveryPlaceValue(rawDiscoveryPlaceId, requestedCity) : undefined
+  const discoveryPlaceId = discoveryPlaceValue(rawDiscoveryPlaceId, requestedCity)
   const collectionSelection = collection ? collectionSelectionValue(url.searchParams.get("collectionSelection"), requestedCity) : undefined
   const nation: BDiscoveryHistoryEntry = {
     v: 4,
@@ -905,7 +909,8 @@ function discoveryEntryFromCurrentUrl(): BDiscoveryHistoryEntry | null {
 function openMyKoreaSavedPlace(
   scrollTop: number,
   target: { sourceKind: "official"; venueId: CanonicalVenueId; city: BDiscoveryCity }
-    | { sourceKind: "editorial"; editorialPlaceId: EditorialPlaceB["id"]; city: "jeju" },
+    | { sourceKind: "editorial"; editorialPlaceId: EditorialPlaceB["id"]; city: "jeju" }
+    | { sourceKind: "discovery"; discoveryPlaceId: string; city: BDiscoveryCity },
 ) {
   if (typeof window === "undefined" || window.location.pathname !== B_DISCOVERY_ROUTE) return false
   // Next may reconcile a same-document URL after a browser Back and briefly
@@ -917,7 +922,8 @@ function openMyKoreaSavedPlace(
   if (!current || !journeyId) return false
   const origin = target.sourceKind === "official"
     ? createMyKoreaPlaceReturnOrigin({ journeyId, scrollTop, sourceKind: "official", venueId: target.venueId })
-    : createMyKoreaPlaceReturnOrigin({ journeyId, scrollTop, sourceKind: "editorial", editorialPlaceId: target.editorialPlaceId })
+    : target.sourceKind === "editorial" ? createMyKoreaPlaceReturnOrigin({ journeyId, scrollTop, sourceKind: "editorial", editorialPlaceId: target.editorialPlaceId })
+    : createMyKoreaPlaceReturnOrigin({ journeyId, scrollTop, sourceKind: "discovery", discoveryPlaceId: target.discoveryPlaceId })
   const place = createMyKoreaPlaceReturnPlace(origin)
   if (!origin || !place) return false
   const peek = myKoreaSavedPlacePeek(current, target)
@@ -973,6 +979,11 @@ export function openMyKoreaSavedBDiscoveryEditorialPlace(
     editorialPlaceId: safeEditorialPlaceId,
     city: "jeju",
   }))
+}
+
+export function openMyKoreaSavedBDiscoveryPlace(id: string, savedScrollTop: number) {
+  const place = personalPlaceByIdB(id)
+  return Boolean(place?.kind === "discovery" && openMyKoreaSavedPlace(savedScrollTop, { sourceKind: "discovery", discoveryPlaceId: place.id, city: place.city }))
 }
 
 /**
@@ -1118,6 +1129,7 @@ export function focusBDiscoveryTarget(entry: BDiscoveryHistoryEntry) {
   }
   if (focus.kind === "discovery-place") {
     return document.querySelector<HTMLElement>(`[data-discovery-place-opener='${CSS.escape(focus.discoveryPlaceId)}']`)
+      ?? document.querySelector<HTMLElement>(`button[data-research-id='${CSS.escape(focus.discoveryPlaceId)}']`)
       ?? document.querySelector<HTMLElement>("[data-testid='ondo-b-search']")
   }
   if (focus.kind === "search") return document.querySelector<HTMLElement>("[data-testid='ondo-b-search']")

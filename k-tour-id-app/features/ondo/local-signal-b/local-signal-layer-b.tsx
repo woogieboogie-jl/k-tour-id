@@ -33,6 +33,7 @@ import {
   consumePendingBActionAtMutation,
   createBLocalSignalActionReturn,
   finalizeConsumedBActionWithMutation,
+  hashBActionReturnTo,
   privateContextForBAction,
   requestBActionGate,
   restoreBActionGateSession,
@@ -55,8 +56,10 @@ import {
   type LocalSignalDraftBindingB,
 } from "./local-signal-model-b"
 import styles from "./local-signal-layer-b.module.css"
+import { identityReviewOptionsB } from "../identity-b/identity-review-mode-b"
+import { consumeJitAuthorization, jitAuthorizationExpiresAt } from "../identity-b/jit-identity-authority-b"
 
-const actionGateSessionOptions = qaReviewFixtureOptions
+const actionGateSessionOptions = identityReviewOptionsB
 export const MAX_LOCAL_SIGNAL_PHOTO_BYTES = 10 * 1024 * 1024
 const LOCAL_SIGNAL_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"])
 type PhotoError = "photoTypeError" | "photoSizeError" | "photoPrepareError"
@@ -164,6 +167,10 @@ export function LocalSignalLayerB() {
   const [photoFailedOnce, setPhotoFailedOnce] = useState(false)
   const [photoPreparing, setPhotoPreparing] = useState(false)
   const revisionSerialRef = useRef(0)
+  const postInFlightRef = useRef(false)
+  const [postPending, setPostPending] = useState(false)
+  const liveDraftRef = useRef({ draft: state.localSignalDraft, revision: draftRevision, account: state.account })
+  liveDraftRef.current = { draft: state.localSignalDraft, revision: draftRevision, account: state.account }
   const checkRef = useRef<HTMLButtonElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const keepEditingRef = useRef<HTMLButtonElement>(null)
@@ -230,7 +237,9 @@ export function LocalSignalLayerB() {
       const context = privateContextForBAction(detail)
       if (!context || context.cta !== "SUBMIT_LOCAL_SIGNAL") return
       const restored = restoreBActionGateSession(window.sessionStorage, new Date(), actionGateSessionOptions())
-      const expiresAt = restored.person.expiresAt ? Date.parse(restored.person.expiresAt) : Date.now()
+      const expiresAt = actionGateSessionOptions().allowReviewFixture
+        ? restored.person.expiresAt ? Date.parse(restored.person.expiresAt) : Date.now()
+        : Math.min(Date.parse(detail.expiresAt), jitAuthorizationExpiresAt(detail.tokenId, hashBActionReturnTo(detail)) ?? Date.now())
       const gateOutcome = payload?.gateOutcome ?? outcome
       const returnedBinding = createLocalSignalDraftBindingB({
         venueId: detail.venueId,
@@ -533,7 +542,8 @@ export function LocalSignalLayerB() {
     }
   }
 
-  function post() {
+  async function post() {
+    if (postInFlightRef.current) return
     if (!currentBinding || !sameLocalSignalDraftBindingB(gateBinding, currentBinding)) {
       sendFlow({ type: "save_failed" })
       return
@@ -565,7 +575,19 @@ export function LocalSignalLayerB() {
     }
     const satisfied = new Set<"account" | "person">()
     if (state.account === "ACC-ACTIVE") satisfied.add("account")
-    if (actionSession.person.status === "eligible" && actionSession.person.expiresAt && Date.parse(actionSession.person.expiresAt) > Date.now()) satisfied.add("person")
+    if (actionGateSessionOptions().allowReviewFixture) {
+      if (actionSession.person.status === "eligible" && actionSession.person.expiresAt && Date.parse(actionSession.person.expiresAt) > Date.now()) satisfied.add("person")
+    } else {
+      postInFlightRef.current = true
+      setPostPending(true)
+      const originalDraft = liveDraftRef.current.draft
+      const isCurrent = () => liveDraftRef.current.draft === originalDraft && liveDraftRef.current.revision === currentBinding.revision && liveDraftRef.current.account === "ACC-ACTIVE"
+      const allowed = await consumeJitAuthorization(pending.tokenId, hashBActionReturnTo(pending), isCurrent)
+      postInFlightRef.current = false
+      setPostPending(false)
+      if (!allowed || !isCurrent()) { sendFlow({ type: "save_failed" }); return }
+      satisfied.add("person")
+    }
     const consumed = consumePendingBActionAtMutation(window.sessionStorage, pending, satisfied, new Date(), { ...actionGateSessionOptions(), credential: state.identityCredential })
     if (!consumed) {
       sendFlow({ type: "save_failed" })
@@ -770,7 +792,7 @@ export function LocalSignalLayerB() {
               {photoUrl ? <img src={photoUrl} alt={copy.photoAlt} data-testid="local-signal-anchor-photo" /> : null}
             </div>
             {personReady ? (
-              <button ref={checkRef} type="button" className={styles.primary} data-testid="local-signal-post" disabled={activeDraft.tags.length === 0 || flow.outcome === "saving" || photoPreparing} onClick={post}><Send size={18} aria-hidden="true" />{copy.confirmAction}</button>
+              <button ref={checkRef} type="button" className={styles.primary} data-testid="local-signal-post" aria-busy={postPending} disabled={activeDraft.tags.length === 0 || flow.outcome === "saving" || photoPreparing || postPending} onClick={post}>{postPending ? <LoaderCircle size={18} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}{copy.confirmAction}</button>
             ) : (
               <button ref={checkRef} type="button" className={styles.primary} data-testid="local-signal-person-check" disabled={activeDraft.tags.length === 0 || gateOpen || photoPreparing} onClick={beginGate}>
                 {gateReturn ? <RotateCcw size={17} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}

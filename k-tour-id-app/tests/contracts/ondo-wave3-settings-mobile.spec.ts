@@ -161,6 +161,15 @@ test("W3-SET-004 storage failure is visible without manufacturing empty or ready
   expect(new Set(Object.values(snapshot.identity))).toEqual(new Set(["unavailable"]))
   expect(snapshot.balance.status).toBe("unavailable")
 })
+test("W3-SET-004A native personal records count in privacy without importing identity authority", () => {
+  const snapshot = readSettingsPrivacySnapshotB({ state: state(), sessionStorage: new MemoryStorage(), deviceStorage: new MemoryStorage({
+    "ondo-b.place-memories.v1": JSON.stringify({ "research-seoul-onion-anguk": { saved: true, note: "coffee", visitedAt: null, verified: true }, unknown: { saved: true, note: "not registered" } }),
+  }) })
+  expect(snapshot.discovery.saved).toBe(2)
+  expect(snapshot.discovery.privateNotes).toBe(2)
+  expect(snapshot.identity.person).toBe("not_set")
+  expect(snapshot.identity.payment).toBe("not_set")
+})
 
 test("W3-SET-005 preferences are draft-and-save and deletion reports rollback truth", () => {
   const component = source("features/ondo/settings/settings-entry-b.tsx")

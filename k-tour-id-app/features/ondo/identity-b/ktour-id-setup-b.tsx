@@ -46,6 +46,8 @@ import { IdentityHandoffStepB } from "./identity-handoff-step-b"
 import { IdentityHolderStepB } from "./identity-holder-step-b"
 import { SumsubPassportStepB, SUMSUB_PASSPORT_DISCLOSURE, SUMSUB_PASSPORT_ENABLED, type SumsubPassportStepHandle } from "./sumsub-passport-step-b"
 import styles from "./ktour-id-setup-b.module.css"
+import { useIdentityReviewModeB } from "./identity-review-mode-b"
+import { JitPassSetupB } from "./jit-pass-setup-b"
 
 type Phase =
   | "method_select" | "consent" | "cx_handoff_preview" | "verified_person_consent"
@@ -284,8 +286,17 @@ function progressStep(phase: Phase) {
 }
 
 export function KTourIdSetupB() {
+  const { state } = useOndoB()
+  const review = useIdentityReviewModeB()
+  const [passport, setPassport] = useState(false)
+  useEffect(() => { if (!state.identitySetupOrigin) setPassport(false) }, [state.identitySetupOrigin])
+  if (!review && !passport) return <JitPassSetupB onPassport={SUMSUB_PASSPORT_ENABLED ? () => setPassport(true) : undefined} />
+  return <ReviewKTourIdSetupB />
+}
+
+function ReviewKTourIdSetupB() {
   const { state, actions } = useOndoB()
-  const reviewMode = useQaControls()
+  const reviewMode = useIdentityReviewModeB()
   const desiredOrigin = state.identitySetupOrigin
   const setupPresence = useSheetPresence(desiredOrigin)
   const origin = setupPresence.value

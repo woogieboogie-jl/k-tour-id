@@ -4,6 +4,7 @@ import { isSimulatedCredentialActiveB, type OndoBSimulatedCredential } from "../
 import type { OndoBPlannedTableRef } from "../my/my-korea-model"
 import type { PulseLocalEvidenceB } from "../pulse-b/pulse-model-b"
 import type { EditorialPlaceB } from "../pulse-b/japan-first-pulse-model-b"
+import { PLACE_MEMORY_KEY_B, personalPlaceByIdB, sanitizePlaceMemoriesB, type PlaceMemoriesB } from "../place/place-memory-model-b"
 import {
   sanitizeOndoBAppearancePreference,
   type OndoBAppearancePreference,
@@ -178,21 +179,24 @@ export function readSettingsPrivacySnapshotB(input: {
   allowReviewFixture?: boolean
 }): SettingsPrivacySnapshotB {
   const now = input.now ?? new Date()
+  let memories: PlaceMemoriesB
   try {
     // Reading both stores is part of the availability claim. A successful read
     // may return null; that is an empty state, not a storage failure.
     input.deviceStorage.getItem(B_DEVICE_KEY)
     input.sessionStorage.getItem("ondo-b.account.v1")
+    const memoryRaw = input.deviceStorage.getItem(PLACE_MEMORY_KEY_B)
+    memories = sanitizePlaceMemoriesB(memoryRaw ? JSON.parse(memoryRaw) : null)
   } catch {
     return unavailableSettingsPrivacySnapshotB(input.state)
   }
 
   const action = restoreBActionGateSession(input.sessionStorage, now, { allowReviewFixture: input.allowReviewFixture })
   const after19 = restoreGlobalAfter19B(input.deviceStorage, input.sessionStorage, now, { allowReviewFixture: input.allowReviewFixture })
-  const saved = input.state.savedVenueIds.length + input.state.savedEditorialPlaceIds.length
+  const saved = input.state.savedVenueIds.length + input.state.savedEditorialPlaceIds.length + Object.values(memories).filter(record => record.saved).length
   const recent = input.state.recentVenueIds.length + input.state.recentEditorialPlaceIds.length
   const preferences = normalizeSettingsPreferencesB(input.state.discoveryPreferences).length
-  const privateNotes = Object.keys(input.state.privateNotesByVenue).length
+  const privateNotes = Object.keys(input.state.privateNotesByVenue).length + Object.entries(memories).filter(([id, record]) => record.note && personalPlaceByIdB(id)?.kind !== "canonical").length
   const tables = input.state.plannedTableRefs.length
   const signals = new Set([
     ...input.state.localSignalPostedVenueIds,
@@ -210,7 +214,7 @@ export function readSettingsPrivacySnapshotB(input: {
     ? "ready"
     : input.state.commerceWalletStatus === "failed" ? "failed" : "not_set"
 
-  const hasDiscovery = input.state.onboarding === "ONB-COMPLETE" || saved + recent + preferences + privateNotes > 0
+  const hasDiscovery = input.state.onboarding === "ONB-COMPLETE" || saved + recent + preferences + privateNotes > 0 || Object.values(memories).some(record => record.visitedAt)
   const hasTogether = tables + signals > 0
   const hasIdentity = account !== "not_set" || action.person.status !== "unverified" || action.payment.status !== "unverified"
     || age !== "not_set" || ktourId !== "not_set"

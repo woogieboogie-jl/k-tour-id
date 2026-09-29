@@ -7,6 +7,7 @@ import type { MyKoreaMemoryCardViewModelB } from "./memory-venue-card-b-model"
 import {
   MY_KOREA_SAVED_EDITORIAL_OPENER_ATTRIBUTE,
   MY_KOREA_SAVED_OFFICIAL_OPENER_ATTRIBUTE,
+  MY_KOREA_SAVED_DISCOVERY_OPENER_ATTRIBUTE,
 } from "./my-korea-place-return-b"
 import styles from "./memory-venue-card-b.module.css"
 
@@ -60,6 +61,9 @@ export function MyKoreaMemoryVenueCardB({ model, action, utilities, cardTestId, 
           : {})}
         {...(action.savedOpener && model.objectNamespace === "jeju-editorial-place"
           ? { [MY_KOREA_SAVED_EDITORIAL_OPENER_ATTRIBUTE]: model.objectId }
+          : {})}
+        {...(action.savedOpener && model.objectNamespace === "discovery-place"
+          ? { [MY_KOREA_SAVED_DISCOVERY_OPENER_ATTRIBUTE]: model.objectId }
           : {})}
         aria-label={action.label || model.accessibleLabel}
       >

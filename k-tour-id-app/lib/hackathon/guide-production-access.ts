@@ -4,6 +4,7 @@ import { hostedIntegrationRedisConfig } from "./hosted-store-config"
 import { assertIntegrationPreviewBody } from "./integration-preview-access"
 import { GUIDE_SAVE_V2 } from "./guide-contract"
 import { HkError } from "./util"
+import { jitIdentityRouteAllowed } from "./jit-identity-routes"
 
 export const GUIDE_PRODUCTION_COOKIE = "__Host-ktour_guide_access"
 const ACCESS_MS = 2 * 60 * 60_000
@@ -59,6 +60,7 @@ const operation = /^op_[A-Za-z0-9_-]{8,64}$/
 const actions = new Set(["identity/start", "identity/complete", "provider/issuance/start", "provider/issuance/refresh", "provider/presentation/start", "provider/presentation/refresh", "provider/cancel", "proposal", "delegation/prepare", "delegation/submit", "agent/run", "redeem", "cancel", "reconcile", "sui/agent-address"])
 export function guideProductionRouteAllowed(method: string, path: string[]): boolean {
   if (!Array.isArray(path) || path.some(p => typeof p !== "string" || !p || p.includes("/"))) return false
+  if (jitIdentityRouteAllowed(method, path)) return true
   if (method === "GET") return (path.length === 1 && ["config", "me"].includes(path[0])) ||
     (path.length === 2 && ((path[0] === "guide" && path[1] === "collection") || (path[0] === "zklogin" && path[1] === "params"))) ||
     (path[0] === "operations" && operation.test(path[1] ?? "") && (path.length === 2 || (path.length === 3 && path[2] === "evidence")))

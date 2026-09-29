@@ -12,6 +12,7 @@ const fresh = (v: string | null | undefined, now: number) => Number.isFinite(tim
 
 /** Provider status is deliberately NOT inferred from a cached summary. */
 export function credentialEligibility(op: OperationRecord, now = Date.now()): string | null {
+  if (op.secrets.identityImportInvalid) return "identity_source_invalid"
   const i = op.identity, c = op.credential, vc = op.secrets.vcDocument as KPassVc | undefined
   if (i?.personVerified !== true || !i.subjectRef || !fresh(i.expiresAt, now)) return "identity_invalid"
   if (identityPolicyChanged(i)) return "identity_policy_changed"

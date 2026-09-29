@@ -5,6 +5,8 @@ import type { Map as MapLibreMap, Marker } from "maplibre-gl"
 import { ArrowUpRight, BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Flame, Info, List, MapPin, Sparkles, Sun, X } from "lucide-react"
 import { CITIES, STORIES, type Story } from "../discovery-preview/fixtures"
 import { SheetB } from "../shared/ui/sheet-b"
+import { CommonPlaceExperienceB } from "../place/common-place-experience-b"
+import { ContentPlaceShellB } from "../place/content-place-shell-b"
 import {
   DISCOVERY_COLLECTION_COPY_B,
   discoveryCollectionSourceB,
@@ -414,7 +416,7 @@ export function DiscoveryCollectionResultsB({ id, locale, places, selected, onOp
   </div> : null
 
   const moodDescription = !story && (id === "hot" || id === "warm" || id === "cool") ? `${title} · ${copy[id]}` : ""
-  return <section ref={panel} className={styles.results} data-testid="map-discovery-results" data-collection={id} data-kind={story ? "story" : "mood"} data-result-count={places.length} data-layout={layout} data-reading={expanded} aria-label={title} onPointerDown={() => cancelReadingRestore.current?.()} onWheel={() => cancelReadingRestore.current?.()} onTouchStart={() => cancelReadingRestore.current?.()} onKeyDown={() => cancelReadingRestore.current?.()} onScroll={() => { if (!suspended && positionReady.current) rememberReading() }}>
+  return <section ref={panel} className={styles.results} data-testid="map-discovery-results" data-collection={id} data-kind={story ? "story" : "mood"} data-result-count={places.length} data-layout={layout} data-reading={expanded} data-suspended={suspended} aria-label={title} onPointerDown={() => cancelReadingRestore.current?.()} onWheel={() => cancelReadingRestore.current?.()} onTouchStart={() => cancelReadingRestore.current?.()} onKeyDown={() => cancelReadingRestore.current?.()} onScroll={() => { if (!suspended && positionReady.current) rememberReading() }}>
     <header className={styles.resultsHeader}>
       <div className={styles.heading}>{story ? null : <span>{readingCopy.picks} · {count}</span>}<h2 aria-label={story ? undefined : moodDescription}>{title}</h2></div>
       {!story ? pager : null}
@@ -528,8 +530,8 @@ function updatePinLabels(pins: DiscoveryPin[], state: { places: DiscoveryPlaceB[
   })
 }
 
-export function DiscoveryMarketDetailB({ place, locale, onClose }: {
-  place: DiscoveryPlaceB; locale: Locale; onClose(): void
+export function DiscoveryMarketDetailB({ place, locale, onClose, onMap }: {
+  place: DiscoveryPlaceB; locale: Locale; onClose(): void; onMap(): void
 }) {
   const copy = DISCOVERY_COLLECTION_COPY_B[locale]
   const story = STORIES.find(candidate => candidate.places.includes(place.id))
@@ -540,13 +542,15 @@ export function DiscoveryMarketDetailB({ place, locale, onClose }: {
     en: "This is a representative pin for the market area, not an individual stall. Check shop locations and opening details before visiting.",
     ja: "市場エリアの代表地点です。個々のお店の位置や営業状況は、訪問前にご確認ください。",
   }[locale] : { ko: "장소와 방문 정보는 원문에서 확인해 주세요.", en: "Check the original source for place and visit details.", ja: "場所や訪問情報は元の案内をご確認ください。" }[locale]
-  return <SheetB locale={locale} label={place.name[locale]} variant="detail" header={<span>{copy.source}</span>} onClose={onClose}
-    footer={<div className={styles.detailFooter}><button type="button" data-testid="map-discovery-market-on-map" onClick={onClose}><MapPin size={19} aria-hidden="true" />{copy.map}</button></div>}>
-    <article className={styles.marketDetail} data-testid="map-discovery-market-detail" data-place-id={place.id}>
+  return <ContentPlaceShellB placeId={place.id} name={place.name[locale]} locale={locale} onClose={onClose} onMap={onMap} mapTestId="map-discovery-market-on-map">
+    <article className={styles.marketDetail} data-testid="map-discovery-market-detail" data-place-id={place.id} data-common-place-root={place.id}>
+      <CommonPlaceExperienceB placeId={place.id} locale={locale} directions={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${place.latitude},${place.longitude}`)}`} identity={<>
       <DiscoveryPictureB key={place.image} src={place.image} alt={place.imageAlt[locale]} illustration={place.illustration} locale={locale} fullLabel />
       <div className={styles.marketCopy}><small>{place.area[locale]}</small><h2>{place.name[locale]}</h2><p>{place.reason[locale]}</p></div>
+      </>} context={
       <section className={styles.marketVisit}><h3>{heading}</h3><p>{story?.stopNotes[place.id]?.[locale] ?? story?.paragraphs[0]?.[locale]}</p><p>{note}</p></section>
+      } />
       <details className={styles.marketSource}><summary>{copy.source}<ChevronRight size={17} aria-hidden="true" /></summary><p>{place.credit}</p><a href={place.source} target="_blank" rel="noopener noreferrer" data-testid="map-discovery-market-source">{copy.source}<ArrowUpRight size={15} aria-hidden="true" /></a>{place.photoSource ? <a href={place.photoSource} target="_blank" rel="noopener noreferrer">{LABELS[locale].photo}<ArrowUpRight size={15} aria-hidden="true" /></a> : null}{place.licenseUrl ? <a href={place.licenseUrl} target="_blank" rel="noopener noreferrer">{LABELS[locale].license}<ArrowUpRight size={15} aria-hidden="true" /></a> : null}</details>
     </article>
-  </SheetB>
+  </ContentPlaceShellB>
 }

@@ -20,6 +20,7 @@ import { isLiveReviewFixtureExecution, type FixtureId, type ReviewFixtureExecuti
 import { evaluateKPassService, isKPassPresentationBinding, sameKPassPresentationBinding, type KPassDemoCredential, type KPassPresentationBinding } from "../contracts/kpass-capabilities"
 import type { OndoBPresentationRequest, OndoBPresentationResolution } from "./ktour-id-setup-model-b"
 import { EXPERIENCE_CAMPAIGN_ID_B, EXPERIENCE_PLACE_ID_B } from "../experience-b/experience-model-b"
+import { clearJitAuthorizations, forgetJitAuthorization, hasJitConsumedReceipt } from "./jit-identity-authority-b"
 
 export const B_ACTION_GATE_TTL_MS = 15 * 60 * 1000
 export const B_ACTION_AXIS_TTL_MS = 60 * 60 * 1000
@@ -907,6 +908,10 @@ export function consumePendingBActionAtMutation(
   const latest = restoreBActionGateSession(storage, now, options)
   if (!latest.pending || latest.pending.tokenId !== expected.tokenId || !sameBActionReturn(latest.pending, expected)) return null
   if (!hasRequiredPrivateContextForBAction(latest.pending)) return null
+  // A client status or persisted fixture can never authorize production identity.
+  // The actual provider's single-use receipt must match this precise pending intent.
+  if (!options.allowReviewFixture && (latest.pending.gatePlan.includes("person") || latest.pending.gatePlan.includes("age"))
+    && !hasJitConsumedReceipt(latest.pending.tokenId, hashBActionReturnTo(latest.pending), now.getTime())) return null
   if (requiresBActionPresentation(latest.pending) && !hasBActionPresentationApproval(latest, latest.pending, options.credential, now.getTime())) return null
   // Old receipts cannot authorize an action with a now-expired/revoked pass or
   // changed predicate. Re-evaluate at the last possible mutation boundary.
@@ -1129,7 +1134,7 @@ export function abandonPendingBAction(
   // mutated same-token snapshot retire the currently durable action.
   if (!latest.pending || latest.pending.tokenId !== expected.tokenId || !sameBActionReturn(latest.pending, expected)) return false
   if (persistBActionGateSession(storage, { ...latest, pending: null, personRoute: null, presentation: null, outcome: null }, now, options)) {
-    try { onDurable?.(latest.pending) } finally { forgetPrivateActionContext(expected.tokenId) }
+    try { onDurable?.(latest.pending) } finally { forgetPrivateActionContext(expected.tokenId); forgetJitAuthorization(expected.tokenId) }
     return true
   }
   // Privacy-first fallback: if a browser refuses the bounded rewrite, remove
@@ -1138,7 +1143,7 @@ export function abandonPendingBAction(
     storage.removeItem(B_ACTION_GATE_SESSION_KEY)
     if (storage.getItem(B_ACTION_GATE_SESSION_KEY) !== null) return false
     if (storage && typeof storage === "object") reviewAxisExpectationsByStorage.delete(storage)
-    try { onDurable?.(latest.pending) } finally { forgetPrivateActionContext(expected.tokenId) }
+    try { onDurable?.(latest.pending) } finally { forgetPrivateActionContext(expected.tokenId); forgetJitAuthorization(expected.tokenId) }
     return true
   } catch {
     return false
@@ -1147,6 +1152,7 @@ export function abandonPendingBAction(
 
 /** Called only after an enclosing reset transaction has itself been verified. */
 export function forgetBActionGateRuntimeAuthorityAfterReset(storage: object) {
+  clearJitAuthorizations()
   privateActionContextByToken.clear()
   presentationRequestByToken.clear()
   presentationApprovalExpectationByToken.clear()

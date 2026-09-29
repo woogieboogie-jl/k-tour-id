@@ -22,6 +22,8 @@ import { hostedIntegrationRedisConfig, requiresHostedIntegrationRedis } from "./
 import { assertIntegrationSuiBudget, assertIntegrationSuiBudgetMonotonic, assertIntegrationSuiOperation, assertIntegrationSuiLimits, integrationSuiAuthorizationScopeDigest, requiresIntegrationSuiLimits, type IntegrationSuiBudget } from "./integration-sui-limits"
 import { assertGuideCollectionMonotonic, type GuideCollectionRecord } from "./guide-collection"
 import type { OpenDidProviderState } from "./opendid-provider-lifecycle"
+import { refreshJitImportedIdentities, assertJitImportedIdentity } from "./jit-identity-import"
+import { assertJitIdentityMonotonic, jitImportBindings, assertJitImportBindings, pruneJitIdentitySecrets } from "./jit-identity-integrity"
 import { CUTOVER_SCOPE, assertCommittedCutover, assertCutoverSourceUnchanged, assertIntegrationCutoverMonotonic, nextCutoverControl, parseIntegrationCutoverControl,
   type IntegrationCutoverMarker, type IntegrationCutoverControl } from "./integration-cutover"
 import { assertSharedBudget, assertSharedBudgetMonotonic, assertSharedBudgetState, parseSharedBudgetControl, initialSharedBudgetState, nextSharedBudgetState,
@@ -30,6 +32,8 @@ import { assertSharedBudget, assertSharedBudgetMonotonic, assertSharedBudgetStat
 export type OperationRecord = OperationResult & {
   sessionId: string
   secrets: {
+    identityImport?: { sourceOperationId: string; evidenceId: string; authorizationRef: string; contextDigest: string; importedAt: string }
+    identityImportInvalid?: boolean // Recomputed from the source row at read/mutation boundaries.
     openDidProvider?: OpenDidProviderState // Server-only; never expose KYC/owner binding or offers.
     vcDocument?: unknown            // mock/opendid issued VC (issuer-signed); never returned to evidence
     holderPublicKeyPem?: string     // holder binding (mock holder)
@@ -71,6 +75,7 @@ export type Db = {
   integrationCutover?: IntegrationCutoverMarker // Operator-only provisioned marker; never initialized by a request.
   integrationSharedBudget?: IntegrationSharedBudget // Alternative: same legacy slot allocator, isolated real guide records.
   guideCollection?: Record<string, GuideCollectionRecord> // Authoritative, retained beyond the operation TTL.
+  jitIdentity?: import("./jit-identity-records").JitIdentityLedger
 }
 
 const EMPTY: Db = { version: 1, sessions: {}, operations: {}, redemptions: {}, outbox: {}, idempotency: {}, nonces: {} }
@@ -231,6 +236,7 @@ async function redisUnlock(b: RedisBackend, token: string) {
 // ── housekeeping (keeps the single blob small on a long-running demo) ─
 const RETAIN_MS = 3 * 24 * 60 * 60 * 1000
 function prune(db: Db) {
+  pruneJitIdentitySecrets(db)
   const cutoff = Date.now() - RETAIN_MS
   const stale = (iso: string) => { const t = Date.parse(iso); return Number.isFinite(t) && t < cutoff }
   const expired = (iso: string | undefined) => Boolean(iso) && (!Number.isFinite(Date.parse(iso!)) || Date.parse(iso!) <= Date.now())
@@ -269,12 +275,16 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       const marker = db.integrationCutover ? structuredClone(db.integrationCutover) : undefined
       const collection = db.guideCollection ? structuredClone(db.guideCollection) : undefined
       const shared = db.integrationSharedBudget ? structuredClone(assertSharedBudget(db)) : undefined
+      const jit = db.jitIdentity ? structuredClone(db.jitIdentity) : undefined, imports = jitImportBindings(db)
+      refreshJitImportedIdentities(db)
       const result = await fn(db)
+      refreshJitImportedIdentities(db)
       if (budget) assertIntegrationSuiBudgetMonotonic(budget, db)
       else if (db.integrationSuiBudget !== undefined) assertIntegrationSuiBudget(db)
       assertIntegrationCutoverMonotonic(marker, db)
       assertGuideCollectionMonotonic(collection, db)
       assertSharedBudgetMonotonic(shared, db)
+      assertJitIdentityMonotonic(jit, db); assertJitImportBindings(imports, db)
       prune(db)
       filePersist(b.path, db)
       fileCache = db
@@ -297,12 +307,16 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       const marker = db.integrationCutover ? structuredClone(db.integrationCutover) : undefined
       const collection = db.guideCollection ? structuredClone(db.guideCollection) : undefined
       const shared = db.integrationSharedBudget ? structuredClone(assertSharedBudget(db)) : undefined
+      const jit = db.jitIdentity ? structuredClone(db.jitIdentity) : undefined, imports = jitImportBindings(db)
+      refreshJitImportedIdentities(db)
       const result = await fn(db)
+      refreshJitImportedIdentities(db)
       if (budget) assertIntegrationSuiBudgetMonotonic(budget, db)
       else if (db.integrationSuiBudget !== undefined) assertIntegrationSuiBudget(db)
       assertIntegrationCutoverMonotonic(marker, db)
       assertGuideCollectionMonotonic(collection, db)
       assertSharedBudgetMonotonic(shared, db)
+      assertJitIdentityMonotonic(jit, db); assertJitImportBindings(imports, db)
       prune(db)
       if (cutover) await redisCutoverPersist(b, cutover, db, token, sourceToken)
       else await redisPersist(b, db, token)
@@ -405,6 +419,7 @@ export async function refreshIntegrationSuiAuthorization(): Promise<void> {
   if (!op || op.operationId !== current.owner.operationId || op.sessionId !== current.owner.sessionId || op.status !== "pending" || !["delegation", "agent", "fulfillment"].includes(op.phase) ||
     !Number.isFinite(Date.parse(op.expiresAt)) || Date.parse(op.expiresAt) <= now ||
     (current.migrationId !== null && current.migrationId !== (observed.control.version === 2 ? observed.control.scopeId : observed.control.marker.migrationId))) return authorizationUnavailable()
+  assertJitImportedIdentity(observed.db, op)
   current.expiresAt = Math.min(Date.parse(op.expiresAt), Date.parse(observed.control.version === 2 ? observed.control.expiresAt : observed.control.marker.expiresAt))
   current.migrationId = observed.control.version === 2 ? observed.control.scopeId : observed.control.marker.migrationId
   current.verifiedAt = now

@@ -6,6 +6,7 @@ import { createHmac } from "node:crypto"
 import { assertExternalServicesEnabled, hkConfig, HK_SERVICE_ACCESS } from "./config"
 import { identityPolicyChanged } from "./identity-policy"
 import { withStore, type Db, type OperationRecord } from "./store"
+import { refreshJitImportedIdentity } from "./jit-identity-import"
 import type { CredentialSummary, PresentationSummary } from "./types"
 import { digestOf, HkError } from "./util"
 import { createOpenDidBridgeClient, openDidUtcTime, resolveOpenDidCxSubject, type OpenDidBridgeClient, type OpenDidCxEvidence, type OpenDidOffer, type VerifiedCxKycBinding } from "./adapters/opendid-provider"
@@ -44,7 +45,7 @@ function alias(state: OpenDidProviderState, kind: string, value: string): string
 function stateReason(op: OperationRecord, now: number): string | null {
   const s = op.secrets.openDidProvider, i = op.identity
   if (!supportedPolicy(op)) return "opendid_policy_unsupported"
-  if (op.execution !== "provider" || !op.consent || !i || i.mode !== "cx" || i.source !== "cx_mobile_id" || i.personVerified !== true || !i.subjectRef || !future(i.expiresAt, now)) return "opendid_identity_required"
+  if (op.execution !== "provider" || !op.consent || !i || i.mode !== "cx" || i.source !== "cx_mobile_id" || i.personVerified !== true || i.sourceCurrent === false || !i.subjectRef || !future(i.expiresAt, now)) return "opendid_identity_required"
   if (!s || s.version !== "bridge-v1" || s.operationId !== op.operationId || s.operationBinding !== operationBinding(op)
     || s.subjectDigest !== digestOf(s.subject) || s.subject.kind !== "cx_evidence_ref" || s.subject.personVerified !== true
     || s.subject.evidenceRef !== i.evidenceId || s.subject.adultVerified !== i.adultVerified) return "opendid_operation_binding"
@@ -117,7 +118,10 @@ export function assertProviderPermissionForOperation(op: OperationRecord, expect
 
 function owned(db: Db, sessionId: string, operationId: string): OperationRecord {
   const op = db.operations[operationId]
-  if (!op || op.sessionId !== sessionId) throw fail("not_found", "Operation not found", 404)
+  if (!op || op.sessionId !== sessionId || op.kind === "identity_check") throw fail("not_found", "Operation not found", 404)
+  // Invalid source removes authority, but must not prevent cancellation or
+  // terminal cleanup of an already-started native request.
+  refreshJitImportedIdentity(db, op)
   return op
 }
 function touch(op: OperationRecord, s: OpenDidProviderState, now: number): void {
@@ -149,7 +153,7 @@ export function createProviderOperationService(deps: { atomic: AtomicStore; brid
   function validate(op: OperationRecord, action: ProviderOperationAction | "permission") {
     if (!supportedPolicy(op)) throw fail("opendid_policy_unsupported", "The native provider policy does not authorize this journey", 503)
     if (!op.identity || op.identity.source !== "cx_mobile_id" || op.identity.mode !== "cx" || op.identity.personVerified !== true || !op.identity.subjectRef || !op.consent || op.execution !== "provider") throw fail("opendid_identity_required", "Verified CX identity and consent are required")
-    if (action !== "cancel" && (changedIdentity(op) || !future(op.identity.expiresAt, now()))) throw fail("opendid_identity_required", "Current verified CX identity is required")
+    if (action !== "cancel" && (changedIdentity(op) || op.identity.sourceCurrent === false || !future(op.identity.expiresAt, now()))) throw fail("opendid_identity_required", "Current verified CX identity is required")
     if (action !== "cancel" && (op.status !== "pending" || !future(op.expiresAt, now()))) throw fail("opendid_operation_inactive", "This operation is no longer active")
     if (op.credential && op.credential.mode !== "opendid") throw fail("opendid_mode_changed", "Cancel and restart with the selected credential provider")
     if (action === "issuance/start" && !["issuance", "presentation", "proposal"].includes(op.phase)) throw fail("opendid_phase", "OpenDID issuance is not available in this phase")
@@ -163,7 +167,7 @@ export function createProviderOperationService(deps: { atomic: AtomicStore; brid
           const op = owned(db, ctx.sessionId, id), s = op.secrets.openDidProvider
           if (!s) return null
           // Outer cancellation, expiry, identity/policy drift wins over an in-flight result.
-          const invalid = operationBinding(op) !== s.operationBinding || changedIdentity(op)
+          const invalid = operationBinding(op) !== s.operationBinding || changedIdentity(op) || op.identity?.sourceCurrent === false
           const dead = ["cancelled", "expired", "failed", "unknown"].includes(op.status)
           const expired = !future(op.expiresAt, now()) || !future(op.identity?.expiresAt, now())
           if (!terminal(s.phase) && (invalid || dead || expired)) {
@@ -179,7 +183,7 @@ export function createProviderOperationService(deps: { atomic: AtomicStore; brid
           const op = owned(db, ctx.sessionId, id), current = op.secrets.openDidProvider
           if ((current?.revision ?? null) !== expectedRevision || next.operationId !== id || next.ownerBinding !== deps.bridge.ownerBinding(ctx) || next.operationBinding !== ctx.operationBinding) return false
           const terminalUpdate = terminal(next.phase)
-          const active = op.status === "pending" && future(op.expiresAt, now()) && future(op.identity?.expiresAt, now()) && !changedIdentity(op)
+          const active = op.status === "pending" && future(op.expiresAt, now()) && future(op.identity?.expiresAt, now()) && !changedIdentity(op) && op.identity?.sourceCurrent !== false
           if (!terminalUpdate && (!active || operationBinding(op) !== ctx.operationBinding)) return false
           // Terminal updates are allowed after enclosing cancellation only to remove authority/finish cleanup.
           if (terminalUpdate && !current) return false

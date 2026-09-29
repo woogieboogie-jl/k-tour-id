@@ -299,6 +299,7 @@ export type OndoBDeviceState = {
 }
 
 export const B_DEVICE_KEY = ONDO_B_DEVICE_STORAGE_KEY
+const B_PLACE_MEMORY_KEY = "ondo-b.place-memories.v1"
 export const B_ACCOUNT_SESSION_KEY = "ondo-b.account.v1"
 const LEGACY_SESSION_KEY = "ondo.session.v3"
 const B_PREFERENCES = new Set(ONDO_B_DISCOVERY_PREFERENCES.map((preference) => preference.id))
@@ -1597,6 +1598,7 @@ export function OndoBProvider({ children }: { children: ReactNode }) {
     clearBDeviceContent: () => {
       let previous: {
         device: string | null
+        placeMemories: string | null
         labs: string | null
         account: string | null
         actionGate: string | null
@@ -1613,6 +1615,7 @@ export function OndoBProvider({ children }: { children: ReactNode }) {
       try {
         previous = {
           device: window.localStorage.getItem(B_DEVICE_KEY),
+          placeMemories: window.localStorage.getItem(B_PLACE_MEMORY_KEY),
           labs: window.sessionStorage.getItem("ondo-b.labs.v1"),
           account: window.sessionStorage.getItem(B_ACCOUNT_SESSION_KEY),
           actionGate: window.sessionStorage.getItem(B_ACTION_GATE_SESSION_KEY),
@@ -1635,6 +1638,7 @@ export function OndoBProvider({ children }: { children: ReactNode }) {
           if (!restoreStorageValue(storage, key, value)) restored = false
         }
         restoreValue(window.localStorage, B_DEVICE_KEY, previous.device)
+        restoreValue(window.localStorage, B_PLACE_MEMORY_KEY, previous.placeMemories)
         restoreValue(window.sessionStorage, "ondo-b.labs.v1", previous.labs)
         restoreValue(window.sessionStorage, B_ACCOUNT_SESSION_KEY, previous.account)
         restoreValue(window.sessionStorage, B_ACTION_GATE_SESSION_KEY, previous.actionGate)
@@ -1659,6 +1663,7 @@ export function OndoBProvider({ children }: { children: ReactNode }) {
       // The only destructive session mutation is last, after every tombstone
       // write has been verified, so a failed clear can restore the snapshot.
       const removedLegacySession = tombstonesWritten
+        && removeStorageValueWithReadback(window.localStorage, B_PLACE_MEMORY_KEY)
         && removeStorageValueWithReadback(window.sessionStorage, FUNDING_RAIL_SESSION_KEY_B)
         && removeStorageValueWithReadback(window.sessionStorage, RESERVATION_SAMPLE_KEY)
         && removeStorageValueWithReadback(window.sessionStorage, ACCOUNT_SERVICES_SAMPLE_KEY_B)
@@ -1706,6 +1711,7 @@ export function OndoBProvider({ children }: { children: ReactNode }) {
         forgetBActionGateRuntimeAuthorityAfterReset(window.sessionStorage)
         clearGuestAfter19MemoryB()
         clearAllPrivateNoteDraftMemory()
+        window.dispatchEvent(new Event("ondo:b:place-memories"))
         window.dispatchEvent(new CustomEvent(B_ACTION_AXIS_SESSION_EVENT, { detail: DEFAULT_B_ACTION_GATE_SESSION }))
         window.dispatchEvent(new CustomEvent(GLOBAL_AFTER19_SESSION_EVENT, { detail: DEFAULT_GLOBAL_AFTER19_SESSION }))
         window.dispatchEvent(new CustomEvent(B_ACTIVITY_PROFILE_CLEAR_EVENT))

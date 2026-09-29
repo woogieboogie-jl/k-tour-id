@@ -52,8 +52,10 @@ import { kpassDecisionLabel } from "./kpass-decision-copy"
 import { isReviewCredentialDraftB, simulatedCredentialStatusB } from "./ktour-id-setup-model-b"
 import { resolveTravelerAxisPresentationB } from "./traveler-id-status-b"
 import styles from "./traveler-id-entry-b.module.css"
+import { identityReviewOptionsB, useIdentityReviewModeB } from "./identity-review-mode-b"
+import { jitPersonLabelB, useJitIdentityStatusB } from "./jit-pass-setup-b"
 
-const actionGateSessionOptions = qaReviewFixtureOptions
+const actionGateSessionOptions = identityReviewOptionsB
 
 const COPY = {
   en: {
@@ -216,7 +218,8 @@ export function TravelerIdEntryB() {
   // The Pass content retains its scroll position while a check is open.
   // Mount the task at the themed viewport, never inside that scrolled content.
   const checkHost = typeof document === "undefined" ? null : document.querySelector("[data-testid='ondo-canvas']")
-  const reviewMode = useQaControls()
+  const reviewMode = useIdentityReviewModeB()
+  const actualIdentity = useJitIdentityStatusB(!reviewMode)
   const [personOutcome, setPersonOutcome] = useState<LocalCheckOutcome | null>(null)
   const [ageOutcome, setAgeOutcome] = useState<LocalCheckOutcome | null>(null)
   const [actionSession, setActionSession] = useState<BActionGateSession>(DEFAULT_B_ACTION_GATE_SESSION)
@@ -315,6 +318,7 @@ export function TravelerIdEntryB() {
   }, [activeCheck, directCheckPresence.phase])
 
   function openCheck(check: LocalCheckKind) {
+    if (!reviewMode && check === "person") { actions.openIdentitySetup("traveler_id"); return }
     if (state.identityCredential) {
       const decision = evaluateKPassService(state.identityCredential, { service: check === "age" ? "age" : "person" })
       const canProveMissingAge = check === "age" && decision.reason === "age_proof_required"
@@ -478,26 +482,26 @@ export function TravelerIdEntryB() {
               <h3>{copy.accountTitle}</h3>
             </article>
 
-            <article className={styles.statusCard} data-testid="traveler-id-person" data-status={personStatus ?? "none"} data-review-result={personReviewResult ?? "none"}>
-              <div className={styles.statusTop}>{personReviewResult ? <ShieldCheck size={20} aria-hidden="true" /> : <UserRoundCheck size={20} aria-hidden="true" />}<span>{personReviewResult === "current" ? copy.reviewResult : personReviewResult === "expired" ? copy.reviewExpired : outcomeLabel(locale, personStatus)}</span></div>
+            <article className={styles.statusCard} data-testid="traveler-id-person" data-status={!reviewMode ? actualIdentity?.person.state ?? "none" : personStatus ?? "none"} data-review-result={reviewMode ? personReviewResult ?? "none" : "none"}>
+              <div className={styles.statusTop}>{personReviewResult ? <ShieldCheck size={20} aria-hidden="true" /> : <UserRoundCheck size={20} aria-hidden="true" />}<span>{!reviewMode ? jitPersonLabelB(locale, actualIdentity) : personReviewResult === "current" ? copy.reviewResult : personReviewResult === "expired" ? copy.reviewExpired : outcomeLabel(locale, personStatus)}</span></div>
               <h3>{copy.personTitle}</h3>
               <button ref={personRef} type="button" aria-label={copy.checkPerson} data-testid="traveler-id-person-check" onClick={() => openCheck("person")}><span className={styles.actionLabel}>{copy.checkPerson}</span><ChevronRight size={17} aria-hidden="true" /></button>
             </article>
 
-            <article className={styles.statusCard} data-testid="traveler-id-age" data-status={ageStatus ?? "none"} data-review-result={ageReviewResult ? "true" : "false"}>
-              <div className={styles.statusTop}><CalendarClock size={20} aria-hidden="true" /><span>{ageReviewResult ? copy.reviewResult : outcomeLabel(locale, ageStatus)}</span></div>
+            <article className={styles.statusCard} data-testid="traveler-id-age" data-status={!reviewMode ? "unsupported" : ageStatus ?? "none"} data-review-result={reviewMode && ageReviewResult ? "true" : "false"}>
+              <div className={styles.statusTop}><CalendarClock size={20} aria-hidden="true" /><span>{!reviewMode ? copy.unsupported : ageReviewResult ? copy.reviewResult : outcomeLabel(locale, ageStatus)}</span></div>
               <h3>{copy.ageTitle}</h3>
-              <button ref={ageRef} type="button" aria-label={copy.checkAge} data-testid="traveler-id-age-check" onClick={() => openCheck("age")}><span className={styles.actionLabel}>{copy.checkAge}</span><ChevronRight size={17} aria-hidden="true" /></button>
+              {reviewMode ? <button ref={ageRef} type="button" aria-label={copy.checkAge} data-testid="traveler-id-age-check" onClick={() => openCheck("age")}><span className={styles.actionLabel}>{copy.checkAge}</span><ChevronRight size={17} aria-hidden="true" /></button> : <p>{locale === "ko" ? "19세 이상 증명은 아직 연결되지 않았어요. 야간 지도 설정과는 별개예요." : locale === "ja" ? "19歳以上の証明は未接続です。夜の地図設定とは別です。" : "19+ proof is not connected. Night-map settings are separate."}</p>}
             </article>
 
-            <article className={styles.statusCard} data-testid="traveler-id-credential" data-status={credentialStatus} data-review-result={credentialReviewResult ?? "none"}>
-              <div className={styles.statusTop}>{credentialReviewResult ? <ShieldCheck size={20} aria-hidden="true" /> : <KTourIdMark size={20} />}<span>{credentialLifecycleLabel ?? (credentialReviewResult === "current" ? copy.credentialReview : credentialReviewResult === "expired" ? copy.credentialReviewExpired : state.identityCredential ? copy.credentialReady : copy.credentialEmpty)}</span></div>
+            <article className={styles.statusCard} data-testid="traveler-id-credential" data-status={reviewMode ? credentialStatus : "none"} data-review-result={reviewMode ? credentialReviewResult ?? "none" : "none"}>
+              <div className={styles.statusTop}>{reviewMode && credentialReviewResult ? <ShieldCheck size={20} aria-hidden="true" /> : <KTourIdMark size={20} />}<span>{!reviewMode ? copy.credentialEmpty : credentialLifecycleLabel ?? (credentialReviewResult === "current" ? copy.credentialReview : credentialReviewResult === "expired" ? copy.credentialReviewExpired : state.identityCredential ? copy.credentialReady : copy.credentialEmpty)}</span></div>
               <h3>{copy.credentialTitle}</h3>
               <button type="button" aria-label={copy.credentialOpen} data-testid="traveler-id-ktour-id-open" onClick={() => actions.openIdentitySetup("traveler_id")}><span className={styles.actionLabel}>{copy.credentialOpen}</span><ChevronRight size={17} aria-hidden="true" /></button>
             </article>
 
-            <article className={styles.statusCard} data-testid="traveler-id-payment" data-status={paymentStatus ?? "none"} data-review-result={paymentReviewResult ?? "none"}>
-              <div className={styles.statusTop}>{paymentReviewResult ? <ShieldCheck size={20} aria-hidden="true" /> : <WalletCards size={20} aria-hidden="true" />}<span>{paymentReviewResult === "current" ? copy.reviewResult : paymentReviewResult === "expired" ? copy.reviewExpired : outcomeLabel(locale, paymentStatus)}</span></div>
+            <article className={styles.statusCard} data-testid="traveler-id-payment" data-status={!reviewMode ? "unsupported" : paymentStatus ?? "none"} data-review-result={reviewMode ? paymentReviewResult ?? "none" : "none"}>
+              <div className={styles.statusTop}>{reviewMode && paymentReviewResult ? <ShieldCheck size={20} aria-hidden="true" /> : <WalletCards size={20} aria-hidden="true" />}<span>{!reviewMode ? copy.unsupported : paymentReviewResult === "current" ? copy.reviewResult : paymentReviewResult === "expired" ? copy.reviewExpired : outcomeLabel(locale, paymentStatus)}</span></div>
               <h3>{copy.paymentTitle}</h3>
             </article>
           </div>

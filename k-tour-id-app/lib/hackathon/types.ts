@@ -29,6 +29,9 @@ export type IdentityEvidence = {
   verifiedAt: string
   expiresAt: string
   providerTransactionRef: string
+  /** Server-only policy provenance hash; optional on pre-JIT historical rows. */
+  providerPolicyDigest?: string
+  sourceCurrent?: boolean // Derived authority for an imported proof, not a new provider claim.
 }
 
 export type CredentialSummary = {
@@ -136,7 +139,7 @@ export type ChainRecord = {
 export type OperationResult = {
   journey?: import("./guide-contract").GuideJourney
   operationId: string
-  kind: "demo_entitlement"
+  kind: "demo_entitlement" | "identity_check"
   venueId: string
   campaignId: string
   policyVersion: number

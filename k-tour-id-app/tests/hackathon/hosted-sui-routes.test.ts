@@ -103,3 +103,15 @@ test("strict payload boundaries precede session and provider access", async () =
   ] as Array<[string[], unknown]>) await deny(await call(path, { method: "POST", cookie: access, body: JSON.stringify(payload) }), 403, "hosted_sui_scope")
   for (const body of ["null", "[]", "invalid", JSON.stringify({ value: "x".repeat(32768) })]) await deny(await call(["sessions"], { method: "POST", cookie: access, body }), 400, "bad_request")
 })
+
+test("JIT identity endpoints preserve access, exact-body and origin guards before any provider/session work", async () => {
+  const id = "idn_abcdefghijklmnop", auth = "ida_abcdefghijklmnop", access = await cookie()
+  for (const path of [["identity", "eligibility"], ["identity", "requests", id], ["identity", "requests", id, "receipt"]]) await deny(await call(path), 401, "hosted_sui_access_denied")
+  for (const path of [["identity", "requests"], ["identity", "requests", id, "start"], ["identity", "requests", id, "complete"], ["identity", "requests", id, "cancel"], ["identity", "authorizations", auth, "consume"]]) {
+    await deny(await call(path, { method: "POST", body: "invalid" }), 401, "hosted_sui_access_denied")
+    await deny(await call(path, { method: "POST", cookie: access, headers: { origin: "https://evil.invalid" } }), 403, "csrf")
+  }
+  await deny(await call(["identity", "requests", id, "complete"], { method: "POST", cookie: access, body: JSON.stringify({ sample: { outcome: "verified" } }) }), 400, "bad_request")
+  await deny(await call(["identity", "requests", id, "start"], { method: "POST", cookie: access, body: JSON.stringify({ mobile: "true" }) }), 400, "bad_request")
+  await deny(await call(["identity", "eligibility"], { cookie: access, query: "?approved=true" }), 403, "hosted_sui_scope")
+})

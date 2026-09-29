@@ -157,7 +157,8 @@ function OndoBShell({ slots }: { slots: OndoBAppSlots }) {
       pendingMyKoreaReturnFocus.current = null
       const surface = receipt.sourceKind === "official"
         ? { kind: "venue" as const, venueId: receipt.venueId }
-        : { kind: "editorial_place" as const, editorialPlaceId: receipt.editorialPlaceId }
+        : receipt.sourceKind === "editorial" ? { kind: "editorial_place" as const, editorialPlaceId: receipt.editorialPlaceId }
+        : { kind: "map" as const }
       actions.setTab("ondo")
       actions.setSurface(surface)
       // MapEntry also consumes the discovery traversal when it is mounted. Its

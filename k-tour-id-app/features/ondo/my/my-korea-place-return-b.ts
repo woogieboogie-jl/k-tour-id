@@ -1,6 +1,7 @@
 import { isCanonicalVenueId, type CanonicalVenueId } from "@/lib/ondo/venues/canonical-allowlist"
 import { isEditorialPlaceId, type EditorialPlaceB } from "../pulse-b/japan-first-pulse-model-b"
 import { hasExactOwnKeys } from "../contracts/return-to-integrity"
+import { personalPlaceByIdB } from "../place/place-memory-model-b"
 
 /**
  * Public, navigation-only context for returning from a canonical Place to the
@@ -13,6 +14,7 @@ export const MY_KOREA_SAVED_HEADING_ID = "my-korea-saved-heading"
 export const MY_KOREA_SAVED_HEADING_SELECTOR = `#${MY_KOREA_SAVED_HEADING_ID}`
 export const MY_KOREA_SAVED_OFFICIAL_OPENER_ATTRIBUTE = "data-my-korea-saved-official"
 export const MY_KOREA_SAVED_EDITORIAL_OPENER_ATTRIBUTE = "data-my-korea-saved-editorial"
+export const MY_KOREA_SAVED_DISCOVERY_OPENER_ATTRIBUTE = "data-my-korea-saved-discovery"
 
 const JOURNEY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const JOURNEY_ID = /^MYK-B-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -29,8 +31,9 @@ type MyKoreaPlaceReturnBaseB = Readonly<{
 }>
 
 export type MyKoreaPlaceReturnTargetB =
-  | Readonly<{ sourceKind: "official"; venueId: CanonicalVenueId; editorialPlaceId?: never }>
-  | Readonly<{ sourceKind: "editorial"; venueId?: never; editorialPlaceId: EditorialPlaceB["id"] }>
+  | Readonly<{ sourceKind: "official"; venueId: CanonicalVenueId; editorialPlaceId?: never; discoveryPlaceId?: never }>
+  | Readonly<{ sourceKind: "editorial"; venueId?: never; editorialPlaceId: EditorialPlaceB["id"]; discoveryPlaceId?: never }>
+  | Readonly<{ sourceKind: "discovery"; venueId?: never; editorialPlaceId?: never; discoveryPlaceId: string }>
 
 export type MyKoreaPlaceReturnReceiptB = MyKoreaPlaceReturnBaseB & MyKoreaPlaceReturnTargetB
 
@@ -75,12 +78,16 @@ export function sanitizeMyKoreaPlaceReturnReceipt(value: unknown): MyKoreaPlaceR
     || (value.phase !== "origin" && value.phase !== "place")
     || value.section !== "saved"
     || !isBoundedScrollTop(value.scrollTop)
-    || (value.sourceKind !== "official" && value.sourceKind !== "editorial")) return null
+    || (value.sourceKind !== "official" && value.sourceKind !== "editorial" && value.sourceKind !== "discovery")) return null
 
-  const sourceKey = value.sourceKind === "official" ? "venueId" : "editorialPlaceId"
+  const sourceKey = value.sourceKind === "official" ? "venueId" : value.sourceKind === "editorial" ? "editorialPlaceId" : "discoveryPlaceId"
   if (!hasExactOwnKeys(value as Record<string, unknown>, [...BASE_KEYS, sourceKey])) return null
 
   const scrollTop = Object.is(value.scrollTop, -0) ? 0 : value.scrollTop
+  if (value.sourceKind === "discovery") {
+    if (typeof value.discoveryPlaceId !== "string" || personalPlaceByIdB(value.discoveryPlaceId)?.kind !== "discovery") return null
+    return Object.freeze({ v: 1, journeyId: value.journeyId, phase: value.phase, section: "saved", scrollTop, sourceKind: "discovery", discoveryPlaceId: value.discoveryPlaceId })
+  }
   if (value.sourceKind === "official") {
     if (!isCanonicalVenueId(value.venueId)) return null
     return Object.freeze({
@@ -163,7 +170,7 @@ export function isSameMyKoreaPlaceReturnSource(left: unknown, right: unknown) {
     ? first.venueId === second.venueId
     : first.sourceKind === "editorial" && second.sourceKind === "editorial"
       ? first.editorialPlaceId === second.editorialPlaceId
-      : false
+      : first.sourceKind === "discovery" && second.sourceKind === "discovery" && first.discoveryPlaceId === second.discoveryPlaceId
 }
 
 /** A place receipt may unwind only to its exact, same-source origin receipt. */
@@ -185,7 +192,8 @@ export function myKoreaPlaceReturnOpenerSelector(receipt: unknown): string | nul
   if (!canonical) return null
   return canonical.sourceKind === "official"
     ? `[${MY_KOREA_SAVED_OFFICIAL_OPENER_ATTRIBUTE}='${canonical.venueId}']`
-    : `[${MY_KOREA_SAVED_EDITORIAL_OPENER_ATTRIBUTE}='${canonical.editorialPlaceId}']`
+    : canonical.sourceKind === "editorial" ? `[${MY_KOREA_SAVED_EDITORIAL_OPENER_ATTRIBUTE}='${canonical.editorialPlaceId}']`
+    : `[${MY_KOREA_SAVED_DISCOVERY_OPENER_ATTRIBUTE}='${canonical.discoveryPlaceId}']`
 }
 
 export function myKoreaPlaceReturnFocusTarget(receipt: unknown): MyKoreaPlaceReturnFocusTargetB | null {

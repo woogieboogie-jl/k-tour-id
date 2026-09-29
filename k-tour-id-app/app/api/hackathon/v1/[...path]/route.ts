@@ -2,7 +2,7 @@
 // Not a vendor API. Every mutating call is same-origin + session-bound.
 import { NextResponse } from "next/server"
 import { hkPublicConfig, HK_CONSENT_VERSION } from "@/lib/hackathon/config"
-import { assertSameOrigin, ensureSession, requireSession } from "@/lib/hackathon/session"
+import { assertSameOrigin, ensureSession, getSession, requireSession } from "@/lib/hackathon/session"
 import { digestOf, HkError } from "@/lib/hackathon/util"
 import { guideReadiness } from "@/lib/hackathon/guide-policy"
 import { providerOperationAction } from "@/lib/hackathon/provider-operation"
@@ -21,6 +21,9 @@ import { assertHostedSuiTarget, assertHostedSuiOrigin, requireHostedSuiAccess, g
 import { isGuideProductionProfile } from "@/lib/hackathon/guide-production-profile"
 import { assertGuideProductionTarget, assertGuideProductionOrigin, requireGuideProductionAccess, grantGuideProductionAccess, guideProductionRouteAllowed, assertGuideProductionBody } from "@/lib/hackathon/guide-production-access"
 import { isGuideJourney } from "@/lib/hackathon/guide-contract"
+import { jitIdentity } from "@/lib/hackathon/jit-identity"
+import { jitIdentityRouteAllowed, assertJitIdentityBody } from "@/lib/hackathon/jit-identity-routes"
+import { refreshJitImportedIdentity } from "@/lib/hackathon/jit-identity-import"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -113,6 +116,11 @@ export async function GET(req: Request, ctx: Ctx) {
   if (process.env.HK_API_ENABLED !== "1" || process.env.NEXT_PUBLIC_HK_ENABLED !== "1") return json({ error: { code: "not_found" } }, 404)
   const { path } = await ctx.params
   try {
+    if (path[0] === "identity" && jitIdentityRouteAllowed("GET", path)) {
+      if (path[1] === "eligibility") return json(await jitIdentity.eligibility((await getSession())?.sessionId ?? null))
+      const s = await requireSession()
+      return json(path[3] === "receipt" ? await jitIdentity.receipt(s.sessionId, path[2]) : await jitIdentity.get(s.sessionId, path[2]))
+    }
     if (path.length === 2 && path[0] === "guide" && path[1] === "collection") {
       const s = await requireSession()
       return json(await svc.guideCollection(s.sessionId))
@@ -131,7 +139,11 @@ export async function GET(req: Request, ctx: Ctx) {
       const cfg = hkPublicConfig()
       if (path[1] !== cfg.campaign.venueId) return json({ supported: false, campaign: null, operation: null })
       // Only an in-progress operation is resumable; finished ones stay reachable via /operations/{id} and the evidence screen.
-      const live = await readStore((db) => Object.values(db.operations).filter((o) => o.sessionId === s.sessionId && o.campaignId === cfg.campaign.campaignId && o.status === "pending").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null)
+      const live = await readStore((db) => {
+        const op = Object.values(db.operations).filter((o) => o.kind !== "identity_check" && o.sessionId === s.sessionId && o.campaignId === cfg.campaign.campaignId && o.status === "pending").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null
+        if (op) refreshJitImportedIdentity(db, op)
+        return op
+      })
       const redeemed = await readStore((db) => (s.subjectRef ? db.redemptions[`${s.subjectRef}::${cfg.campaign.campaignId}`] ?? null : null))
       return json({ supported: true, campaign: cfg.campaign, modes: cfg.modes, consentVersion: HK_CONSENT_VERSION, operation: live ? svc.toResult(live) : null, redeemed: redeemed ? { redemptionRef: redeemed.redemptionRef, redeemedAt: redeemed.redeemedAt } : null })
     }
@@ -230,6 +242,16 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     // Integration already required exact Origin + immutable proxy agreement.
     if (!integrationPreview && !hostedSui && !guideProduction) await assertSameOrigin()
+    if (path[0] === "identity" && jitIdentityRouteAllowed("POST", path)) {
+      const b = checkedBody ?? await integrationPreviewBody(req)
+      assertJitIdentityBody(path, b)
+      const s = path.length === 2 ? await ensureSession() : await requireSession()
+      if (path.length === 2) return json(await jitIdentity.create(s.sessionId, b))
+      if (path[1] === "authorizations") return json(await jitIdentity.consume(s.sessionId, path[2], b))
+      if (path[3] === "start") return json(await jitIdentity.start(s.sessionId, path[2], b.mobile as boolean))
+      if (path[3] === "complete") return json(await jitIdentity.complete(s.sessionId, path[2]))
+      return json(await jitIdentity.cancel(s.sessionId, path[2]))
+    }
     if (path[0] === "sessions") { const s = await ensureSession(); return json({ ok: true, sessionId: s.sessionId.slice(0, 8) + "…" }) }
     if (path[0] === "zklogin" && path[1] === "prove") {
       const b = checkedBody ?? await body(req)
@@ -247,7 +269,9 @@ export async function POST(req: Request, ctx: Ctx) {
       const b = checkedBody ?? await body(req)
       const venueId = str(b.venueId, 120)
       const vc = venueCtx(venueId, locale(b.locale))
-      return json(await svc.createOperation({ sessionId: s.sessionId, venueId, consentVersion: str(b.consentVersion, 64), locale: vc.locale, venueName: vc.venueName }))
+      if (Boolean(b.identityAuthorizationRef) !== Boolean(b.identityContextDigest)) throw new HkError("bad_request", "Incomplete identity approval", 400)
+      return json(await svc.createOperation({ sessionId: s.sessionId, venueId, consentVersion: str(b.consentVersion, 64), locale: vc.locale, venueName: vc.venueName,
+        ...(b.identityAuthorizationRef ? { identityAuthorizationRef: str(b.identityAuthorizationRef, 80), identityContextDigest: str(b.identityContextDigest, 80) } : {}) }))
     }
     if (path[0] === "operations" && path[1]) {
       const id = path[1]; const action = path.slice(2).join("/")

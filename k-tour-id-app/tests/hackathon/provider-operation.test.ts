@@ -158,3 +158,12 @@ test("refresh status does not reset a downstream operation phase", async () => {
   await h.service.refreshPermission(SESSION, OP)
   assert.equal(h.row().phase, "delegation")
 })
+
+test("invalid imported CX source blocks permission but permits native cancellation cleanup", async () => {
+  const h = setup(); await h.action("issuance/start")
+  await h.mutate(op => { op.secrets.identityImport = { sourceOperationId: "op_missing_source", evidenceId: "evidence_missing", authorizationRef: "ida_abcdefghijklmnop", contextDigest: "0x" + "a".repeat(64), importedAt: iso() } })
+  await assert.rejects(h.service.refreshPermission(SESSION, OP), code("opendid_identity_required"))
+  const result = await h.action("cancel")
+  assert.equal(result.provider.offer, null); assert.equal(h.counts.cancel, 1)
+  assert.equal(result.record.identity?.sourceCurrent, false)
+})

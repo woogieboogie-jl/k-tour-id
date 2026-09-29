@@ -62,6 +62,11 @@ import {
   type BActionReturnTo,
 } from "./action-gate-contract-b"
 import styles from "./action-gate-coordinator-b.module.css"
+import type { JitIdentityContext } from "@/lib/hackathon/jit-identity-contract"
+import { JitIdentityCheckB } from "./jit-identity-check-b"
+import { jitContextForAction } from "./jit-action-context-b"
+import { forgetJitAuthorization, hasJitAuthorization, JIT_IDENTITY_CHANGED, rememberJitAuthorization } from "./jit-identity-authority-b"
+import { identityReviewOptionsB, useIdentityReviewModeB } from "./identity-review-mode-b"
 
 const FOCUSABLE = "button:not([disabled]),[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex='-1'])"
 
@@ -423,7 +428,7 @@ const COPY = {
   },
 } as const
 
-const actionGateSessionOptions = qaReviewFixtureOptions
+const actionGateSessionOptions = identityReviewOptionsB
 
 function personRouteForIdentityMethod(method: "mobile_id" | "mobile_residence_card" | "passport_ekyc" | null): BPersonRouteB | null {
   if (method === "mobile_id") return "mobile_id_cx"
@@ -511,13 +516,15 @@ function normalizePersonReviewOutcome(value: unknown): PersonReviewOutcome | nul
 
 export function BActionGateCoordinator() {
   const { state, actions } = useOndoB()
-  const reviewMode = useQaControls()
+  const reviewMode = useIdentityReviewModeB()
   const [session, setSession] = useState<BActionGateSession>(DEFAULT_B_ACTION_GATE_SESSION)
   const [ageSession, setAgeSession] = useState<GlobalAfter19SessionB | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const [clock, setClock] = useState(() => new Date())
   const [view, setView] = useState<GateRenderView>("intro")
   const [readyTokenId, setReadyTokenId] = useState<string | null>(null)
+  const [jitContext, setJitContext] = useState<JitIdentityContext | null>(null)
+  const [jitRevision, setJitRevision] = useState(0)
   const [observedResidenceAvailability, setObservedResidenceAvailability] = useState<ResidenceAvailability | null>(null)
   const [presentationRequest, setPresentationRequest] = useState<OndoBPresentationRequest | null>(null)
   const autoOpenedCredentialRef = useRef<string | null>(null)
@@ -527,6 +534,13 @@ export function BActionGateCoordinator() {
   const layerRef = useRef<HTMLDivElement | null>(null)
   const dialogRef = useRef<HTMLElement | null>(null)
   const pending = session.pending
+  useEffect(() => {
+    let current = true
+    setJitContext(null)
+    if (pending && !reviewMode) void jitContextForAction(pending).then(value => { if (current) setJitContext(value) }).catch(() => {})
+    return () => { current = false }
+  }, [pending?.tokenId, reviewMode])
+  useEffect(() => { const changed = () => setJitRevision(value => value + 1); window.addEventListener(JIT_IDENTITY_CHANGED, changed); return () => window.removeEventListener(JIT_IDENTITY_CHANGED, changed) }, [])
   const copy = COPY[state.locale]
   const personRoute = pending && session.personRoute?.tokenId === pending.tokenId ? session.personRoute.route : null
   const configuredResidenceAvailability: ResidenceAvailability = reviewMode
@@ -621,11 +635,12 @@ export function BActionGateCoordinator() {
   const satisfied = useMemo(() => {
     const result = new Set<BActionGateKind>()
     if (state.account === "ACC-ACTIVE") result.add("account")
-    if (axisReady(session.person, clock) && (!state.identityCredential || evaluateKPassService(state.identityCredential, { service: "person" }).status === "allowed")) result.add("person")
-    if (ageSession && isGlobalAfter19AgeCurrent(ageSession, clock) && (!state.identityCredential || evaluateKPassService(state.identityCredential, { service: "age" }).status === "allowed")) result.add("age")
-    if (axisReady(session.payment, clock)) result.add("payment_kyc")
+    if (reviewMode && axisReady(session.person, clock) && (!state.identityCredential || evaluateKPassService(state.identityCredential, { service: "person" }).status === "allowed")) result.add("person")
+    if (!reviewMode && pending && hasJitAuthorization(pending.tokenId, hashBActionReturnTo(pending), clock.getTime())) result.add("person")
+    if (reviewMode && ageSession && isGlobalAfter19AgeCurrent(ageSession, clock) && (!state.identityCredential || evaluateKPassService(state.identityCredential, { service: "age" }).status === "allowed")) result.add("age")
+    if (reviewMode && axisReady(session.payment, clock)) result.add("payment_kyc")
     return result
-  }, [ageSession, clock, pending, session, state.account, state.identityCredential])
+  }, [ageSession, clock, pending, session, state.account, state.identityCredential, reviewMode, jitRevision])
 
   const canonicalGate = pending?.gatePlan.find((gate) => !satisfied.has(gate)) ?? null
   const checkoutContext = pending ? privateContextForBAction(pending) : null
@@ -1214,6 +1229,7 @@ export function BActionGateCoordinator() {
     // Durable abandon is the publication boundary. Until it succeeds, the
     // overlay, private action context and consumer draft all stay untouched.
     if (!abandonPendingBAction(window.sessionStorage, returning, cancelAt, actionGateSessionOptions(), () => {
+      forgetJitAuthorization(returning.tokenId)
       actions.cancelAccountActivation()
       personReviewRef.current = null
       ageReviewRef.current = null
@@ -1272,6 +1288,18 @@ export function BActionGateCoordinator() {
   if (!expiredReturn && !activeGate) return null
   const resolvedView: GateRenderView = expiredReturn ? "expired" : view
   const gate = activeGate ?? pending.gatePlan.at(-1) ?? "account"
+  if (!reviewMode && !expiredReturn && (gate === "person" || gate === "age") && (pending.cta === "SUBMIT_LOCAL_SIGNAL" || pending.cta === "JOIN_TABLE")) return <div ref={layerRef} className={styles.layer} data-testid="ondo-b-action-gate" data-ondo-layer="critical" data-modal-layer-priority={ONDO_MODAL_PRIORITY.critical} data-active-gate={gate} data-return-cta={pending.cta}>
+    <div className={styles.backdrop} aria-hidden="true" />
+    <section ref={dialogRef} className={styles.dialog} role="dialog" tabIndex={-1} aria-modal="true" aria-label="OmniOne CX" onKeyDown={handleKeyDown}>
+      <header><span><ShieldCheck size={18} aria-hidden="true" />K-Tour ID</span><button type="button" aria-label={copy.cancel} onClick={() => cancel()}><X size={18} aria-hidden="true" /></button></header>
+      <div className={styles.body}>{jitContext ? <JitIdentityCheckB key={pending.tokenId} locale={state.locale} context={jitContext} onCancel={() => cancel()} onAuthorized={request => {
+        const latest = restoreBActionGateSession(window.sessionStorage, new Date(), actionGateSessionOptions())
+        const snapshot = hashBActionReturnTo(pending)
+        if (!snapshot || latest.pending?.tokenId !== pending.tokenId || hashBActionReturnTo(latest.pending) !== snapshot) return
+        if (rememberJitAuthorization(pending.tokenId, snapshot, request)) setClock(new Date())
+      }} /> : <div className={styles.content}><p>{state.locale === "ko" ? "요청을 준비하고 있어요." : state.locale === "ja" ? "リクエストを準備しています。" : "Preparing your request."}</p><button type="button" onClick={() => cancel()}>{copy.cancel}</button></div>}</div>
+    </section>
+  </div>
   const isCheckout = pending.cta === "START_CHECKOUT"
   const isExperience = pending.cta === "REDEEM_DEMO_ENTITLEMENT"
   const experienceCopy = EXPERIENCE_COPY_B[state.locale]

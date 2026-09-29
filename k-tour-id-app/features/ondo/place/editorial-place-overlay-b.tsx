@@ -15,7 +15,7 @@ import type { SheetPresencePhase } from "../shared/ui/use-sheet-presence"
 import { ONDO_B_JEJU_TABLE } from "../connect/table-model"
 import { capturePlaceServiceMapReturnB } from "../map/place-service-map-return-b"
 import { PlacePeekActionsB } from "./place-service-actions-b"
-import { PlaceDetailActionsB } from "./place-detail-actions-b"
+import { CommonPlaceExperienceB } from "./common-place-experience-b"
 import styles from "./editorial-place-overlay-b.module.css"
 
 const FOCUSABLE = "a[href],button:not([disabled]),summary,[tabindex]:not([tabindex='-1'])"
@@ -312,13 +312,16 @@ export function EditorialPlaceOverlayB({ editorialPlaceId, locale: mountedLocale
   return (
     <div id="editorial-place-dialog" ref={layerRef} className={styles.layer} role="dialog" aria-modal="true" aria-labelledby="editorial-place-title" aria-busy={closing ? "true" : undefined} tabIndex={-1} data-testid="ondo-b-editorial-place-overlay" data-modal-layer-priority={ONDO_MODAL_PRIORITY.detail} data-editorial-place-id={place.id} data-editorial-presence={presenceState} data-truth-kind="editorial-place" data-official-record="false" data-pulse-eligible="false" data-save-state={saved ? "saved" : "idle"} onClickCapture={consumeClosingInput} onPointerDownCapture={consumeClosingInput} onKeyDownCapture={consumeClosingInput} onKeyDown={trapFocus}>
       <button type="button" className={styles.backdrop} onClick={closeDetails} aria-label={copy.back} tabIndex={-1} />
-      <article className={styles.sheet}>
+      <article className={styles.sheet} data-common-place-root={activePlace.id}>
         <header>
           <button ref={closeRef} type="button" onClick={closeDetails} aria-label={copy.back}><ArrowLeft size={19} aria-hidden="true" /></button>
           <span><MapPin size={17} aria-hidden="true" />{copy.truth}</span>
           <button type="button" onClick={close} aria-label={copy.close}><X size={19} aria-hidden="true" /></button>
         </header>
         <div className={styles.body} data-place-service-scroll="true">
+          <CommonPlaceExperienceB placeId={activePlace.id} locale={locale} saved={saved} onSave={toggleSaved} directions={directions}
+            saveTestId="ondo-b-editorial-place-save" directionsTestId="ondo-b-editorial-place-directions"
+            classes={{ decisions: styles.actions, saveLabel: styles.saveLabel }} identity={<>
           {heroMedia ? (
             <figure className={styles.hero} data-testid="ondo-b-editorial-place-hero">
               <img src={heroMedia.src} alt={heroMedia.alt[locale]} />
@@ -328,20 +331,16 @@ export function EditorialPlaceOverlayB({ editorialPlaceId, locale: mountedLocale
             <p>{place.sourceCollection[locale]}</p>
             <h2 id="editorial-place-title">{place.name[locale]}</h2>
           </section>
-          <PlaceDetailActionsB placeId={activePlace.id} locale={locale} />
+          </>} context={<>
           <section className={styles.editorialContext} role="group" aria-label={editorialSummary} data-testid="ondo-b-editorial-place-temperature" data-coverage-intensity={coverageIntensity} data-temperature-model={JEJU_EDITORIAL_TEMPERATURE.model} data-editorial-temperature-mode={JEJU_EDITORIAL_TEMPERATURE.mode} data-temperature-score="none" data-temperature-visual-grammar="editorial-label" data-pulse-numeric="hidden">
             <MapPin size={16} aria-hidden="true" /><span>{editorialLabel}</span>
           </section>
           <p className={styles.address}><MapPin size={17} aria-hidden="true" /><span><b>{copy.address}</b><span lang={locale === "ko" ? "ko" : "en"}>{address}</span></span></p>
-          <div className={styles.actions}>
-            <button type="button" onClick={toggleSaved} aria-label={saved ? copy.remove : copy.save} aria-pressed={saved} data-testid="ondo-b-editorial-place-save"><Bookmark size={18} aria-hidden="true" /><span className={styles.saveLabel}>{saved ? copy.remove : copy.save}</span></button>
-            <a href={directions} target="_blank" rel="noreferrer" aria-label={copy.directions} title={copy.directions} data-testid="ondo-b-editorial-place-directions" data-visual-priority="secondary"><Navigation size={18} aria-hidden="true" /></a>
-          </div>
-          {activePlace.category === "food" ? <button type="button" className={styles.tableAction} onClick={openTable} data-place-service={table ? "table" : undefined} data-testid={table ? "ondo-b-editorial-place-table" : "ondo-b-editorial-place-browse-tables"}>
+          </>} table={activePlace.category === "food" ? <button type="button" className={styles.tableAction} onClick={openTable} data-place-service={table ? "table" : undefined} data-testid={table ? "ondo-b-editorial-place-table" : "ondo-b-editorial-place-browse-tables"}>
             <UsersRound size={19} aria-hidden="true" />
             <span><strong>{table ? copy.table : copy.browseTables}</strong>{table ? <small>{copy.tableHint}</small> : null}</span>
             <ChevronRight size={18} aria-hidden="true" />
-          </button> : null}
+          </button> : null} />
           {visualSnapshot.saveError ? <p className={styles.error} role="alert">{copy.saveFailed}</p> : null}
           <details className={styles.sources} aria-label={copy.source}>
             <summary aria-label={copy.sourceDetails}><span><Database size={17} aria-hidden="true" /><b>VISITKOREA</b></span><ChevronRight size={17} aria-hidden="true" /></summary>

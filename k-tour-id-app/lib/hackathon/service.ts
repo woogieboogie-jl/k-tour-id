@@ -26,13 +26,15 @@ import { assertGuideReady, operationAction, operationCampaign } from "./guide-po
 import { commitGuideCollection, guideCollectionForSession, mirrorGuideCollection, guideSaveConflict } from "./guide-collection"
 import { refreshProviderPermission, assertProviderPermissionForOperation } from "./provider-operation"
 import { requiresIntegrationSuiLimits, assertIntegrationSuiLimits, assertIntegrationSuiOperation, claimIntegrationSuiOperation, INTEGRATION_SUI_LIMITS } from "./integration-sui-limits"
+import { refreshJitImportedIdentity, assertJitImportedIdentity, importJitIdentity } from "./jit-identity-import"
 
 /** Public role pin for evidence/read-only UI. Private signing keys are loaded
  * only by consequential adapters inside a fresh, owned budget capability. */
 export function chainAgentAddress(): string {
   return requiresIntegrationSuiLimits() ? assertIntegrationSuiLimits().agentAddress : suiKeys().agentAddress
 }
-function authorizedSui<T>(sessionId: string, operationId: string, fn: () => T | Promise<T>): Promise<T> {
+async function authorizedSui<T>(sessionId: string, operationId: string, fn: () => T | Promise<T>): Promise<T> {
+  await readStore(db => { const op = db.operations[operationId]; assert(op?.sessionId === sessionId, "not_found", "Operation not found", 404); assertJitImportedIdentity(db, op) })
   return requiresIntegrationSuiLimits() ? withIntegrationSuiAuthorization({ sessionId, operationId }, fn) : Promise.resolve().then(fn)
 }
 
@@ -97,7 +99,7 @@ export function toResult(op: OperationRecord): OperationResult {
 }
 
 function allowed(op: OperationRecord): { allowedActions: AllowedAction[]; safeNextAction: NextAction } {
-  if (identityPolicyChanged(op.identity)) {
+  if (identityPolicyChanged(op.identity) || op.secrets.identityImportInvalid) {
     const canCancel = op.status === "pending" && op.phase !== "agent" && op.phase !== "fulfillment" &&
       (!op.delegation?.userTxDigest || op.delegation.status === "failed")
     return { allowedActions: ["check_status", "reconcile", ...(canCancel ? ["cancel" as const] : []), "return"], safeNextAction: "return" }
@@ -139,8 +141,8 @@ function fail(op: OperationRecord, code: string, message: string, retryable = fa
 }
 
 export async function loadOperation(sessionId: string, operationId: string): Promise<OperationRecord> {
-  const op = await readStore((db) => db.operations[operationId])
-  if (!op || op.sessionId !== sessionId) throw new HkError("not_found", "operation not found", 404)
+  const op = await readStore((db) => { const row = db.operations[operationId]; if (row) refreshJitImportedIdentity(db, row); return row })
+  if (!op || op.sessionId !== sessionId || op.kind === "identity_check") throw new HkError("not_found", "operation not found", 404)
   const terminalCx = ["failed", "cancelled", "expired"].includes(op.status) &&
     (op.secrets.cxToken || op.secrets.cxTxId || op.secrets.cxCxId || op.secrets.cxStartClaim || op.identity?.handoff)
   if ((op.status === "pending" && isPast(op.expiresAt)) || (op.identity?.handoff && isPast(op.identity.handoff.expiresAt)) ||
@@ -164,7 +166,8 @@ export async function loadOperation(sessionId: string, operationId: string): Pro
 async function mutate<T>(sessionId: string, operationId: string, fn: (op: OperationRecord, db: Parameters<Parameters<typeof withStore>[0]>[0]) => Promise<T> | T): Promise<T> {
   return withStore(async (db) => {
     const op = db.operations[operationId]
-    if (!op || op.sessionId !== sessionId) throw new HkError("not_found", "operation not found", 404)
+    if (!op || op.sessionId !== sessionId || op.kind === "identity_check") throw new HkError("not_found", "operation not found", 404)
+    refreshJitImportedIdentity(db, op)
     expireIfNeeded(op)
     return fn(op, db)
   })
@@ -187,17 +190,22 @@ function assertIdentityPending(op: OperationRecord) {
 }
 
 // ── create ────────────────────────────────────────────────────────────
-export async function createOperation(input: { sessionId: string; venueId: string; consentVersion: string; locale: "ko" | "en" | "ja"; venueName: string }, guide = false) {
+export async function createOperation(input: { sessionId: string; venueId: string; consentVersion: string; locale: "ko" | "en" | "ja"; venueName: string; identityAuthorizationRef?: string; identityContextDigest?: string }, guide = false) {
   if (guide) await assertGuideReady()
   if (requiresIntegrationSuiLimits()) { assertIntegrationSuiLimits(); await readIntegrationSuiActivation() }
   const c = guide ? { ...GUIDE_SAVE_V2, purpose: GUIDE_SAVE_V2.action } : hkConfig().campaign
   assert(input.venueId === c.venueId, "venue_unsupported", "this place has no demo entitlement", 404)
   assert(input.consentVersion === (guide ? GUIDE_SAVE_V2.consentVersion : HK_CONSENT_VERSION), "consent_version", "consent version mismatch")
   assert(!isPast(c.endsAt), "campaign_closed", "campaign ended", 409)
+  assert(Boolean(input.identityAuthorizationRef) === Boolean(input.identityContextDigest) && !(guide && input.identityAuthorizationRef), "jit_identity_scope", "Identity approval scope changed", 403)
   return withStore((db) => {
     // one live operation per session+campaign; reuse instead of duplicating
     const live = Object.values(db.operations).find((o) => o.sessionId === input.sessionId && o.campaignId === c.campaignId && o.status === "pending")
-    if (live) { expireIfNeeded(live); if (live.status === "pending") return toResult(live) }
+    if (live) { expireIfNeeded(live); if (live.status === "pending") {
+      if (input.identityAuthorizationRef) assert(live.secrets.identityImport?.authorizationRef === input.identityAuthorizationRef && live.secrets.identityImport.contextDigest === input.identityContextDigest, "jit_identity_scope", "A different perk is already in progress", 409)
+      refreshJitImportedIdentity(db, live)
+      return toResult(live)
+    } }
     if (guide) {
       const conflict = guideSaveConflict(db, db.sessions[input.sessionId]?.subjectRef)
       if (conflict) throw new HkError(conflict, "Open the saved guide or check the existing save instead.", 409)
@@ -217,6 +225,7 @@ export async function createOperation(input: { sessionId: string; venueId: strin
       identity: null, credential: null, presentation: null, proposal: null, delegation: null, agent: null, fulfillment: null, chain: null, error: null,
       sessionId: input.sessionId, secrets: { proposalPromptDigest: undefined }, audit: [{ at: now, event: "created", detail: { locale: input.locale, venueName: input.venueName } }],
     }
+    if (input.identityAuthorizationRef) importJitIdentity(db, op, input.identityAuthorizationRef, input.identityContextDigest!)
     if (requiresIntegrationSuiLimits() && process.env.HK_INTEGRATION_SUI_TARGET === INTEGRATION_SUI_LIMITS.targetId) claimIntegrationSuiOperation(db, op.operationId)
     db.operations[op.operationId] = op
     return toResult(op)
@@ -228,6 +237,7 @@ export async function guideCollection(sessionId: string): Promise<GuideCollectio
     const items = guideCollectionForSession(db, sessionId)
     const pending = Object.values(db.operations).filter(op => op.sessionId === sessionId && isGuideJourney(op) &&
       op.status === "pending" && !isPast(op.expiresAt)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+    if (pending) refreshJitImportedIdentity(db, pending)
     return { items, pendingOperation: pending ? toResult(pending) : null }
   })
 }

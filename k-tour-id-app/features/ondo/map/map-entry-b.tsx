@@ -39,6 +39,8 @@ import { TemperatureTimelineB } from "./temperature-timeline-b"
 import { TravelerActivityMapB } from "./traveler-activity-map-b"
 import { RESEARCHED_FOOD_B, researchedFoodByIdB, researchFoodMatchesB } from "./researched-food-b"
 import { ResearchedFoodListB, ResearchedFoodPanelB } from "./researched-food-panel-b"
+import { personalPlaceByIdB } from "../place/place-memory-model-b"
+import { PersonalPlaceMapPinB } from "../place/personal-place-map-pin-b"
 import { MapBalanceEntryB } from "./map-balance-entry-b"
 import { registerPlaceServiceMapCaptureB } from "./place-service-map-return-b"
 import { PLACE_SERVICE_RETURN_EVENT_B, SHOW_BALANCE_PLACES_EVENT_B, resolveCommercePlaceB } from "../commerce-b/place-service-registry-b"
@@ -1491,6 +1493,7 @@ export function MapEntryB() {
   const selectedVenueId = state.surface.kind === "venue" ? state.surface.venueId : null
   const [selectedEditorialPlaceId, setSelectedEditorialPlaceId] = useState<EditorialPlaceB["id"] | null>(null)
   const [selectedResearchId, setSelectedResearchId] = useState<string | null>(null)
+  const [pendingContentMapFocus, setPendingContentMapFocus] = useState<string | null>(null)
   const [researchReturnFocus, setResearchReturnFocus] = useState<{ placeId: string; focus: "offer" | "reservation" | "table" } | null>(null)
   const selectedResearch = selectedResearchId ? researchedFoodByIdB(selectedResearchId) : null
   // A commerce handoff hides this sheet without losing its exact research id.
@@ -3299,6 +3302,41 @@ export function MapEntryB() {
     setResearchReturnFocus(null)
   }
 
+  function openResearchPlace(id: string) {
+    const place = researchedFoodByIdB(id)
+    if (!place || place.city !== city) return
+    updateCityContext({ camera: mapRef.current ? cameraSnapshot(mapRef.current) : undefined })
+    if (!openBDiscoveryCollectionPlace(id)) return
+    setCollectionDetailId(id)
+    setSelectedResearchId(id)
+  }
+
+  function showContentPlaceOnMap(id: string) {
+    const place = personalPlaceByIdB(id)
+    if (!place || place.kind !== "discovery" || place.city !== city) return
+    setView("map")
+    setPendingContentMapFocus(id)
+    const current = readBDiscoveryHistory()
+    if (current?.discoveryPlaceId === id) replaceBDiscoveryHistoryForActiveDocument({ ...current, view: "map" })
+  }
+
+  useEffect(() => {
+    if (!pendingContentMapFocus) return
+    if (state.tab !== "ondo") { setPendingContentMapFocus(null); return }
+    const place = personalPlaceByIdB(pendingContentMapFocus)
+    if (!place || place.city !== city || ![selectedResearchId, collectionDetailId].includes(place.id)) { setPendingContentMapFocus(null); return }
+    const map = mapRef.current
+    if (!map || mapState !== "ready" || effectiveView !== "map") return
+    // Wait for list/modal layout to settle; a pre-load camera is overwritten by
+    // the map's initial city fit. Cancel if the user changes the selected place.
+    let frame = window.requestAnimationFrame(() => { frame = window.requestAnimationFrame(() => {
+      map.resize()
+      moveMap(map, { center: [place.longitude, place.latitude], zoom: 14.5, pitch: 0, padding: { top: 150, bottom: 190, left: 24, right: 24 } })
+      setPendingContentMapFocus(null)
+    }) })
+    return () => window.cancelAnimationFrame(frame)
+  }, [pendingContentMapFocus, selectedResearchId, collectionDetailId, city, mapState, effectiveView, state.tab])
+
   function editDiscoveryQuery(nextQuery: string) {
     // Ordinary text and the selected editorial mood intersect in either order.
     // A story is a reading scope, not a second filter; typed mood commands still
@@ -3986,7 +4024,7 @@ export function MapEntryB() {
                 active={state.tab === "ondo" && effectiveView === "map" && !editorialOpen}
                 selectedVenueId={selectedVenueId ?? selectedEditorialPlaceId ?? selectedResearchId}
                 onSelectPoint={(id) => {
-                  if (researchedFoodByIdB(id)) { setSelectedResearchId(id); return }
+                  if (researchedFoodByIdB(id)) { openResearchPlace(id); return }
                   const editorial = editorialPlaceById(id)
                   if (editorial) openEditorialPlaceDetailRef.current(editorial)
                   else {
@@ -4046,7 +4084,7 @@ export function MapEntryB() {
         {effectiveView === "list" || mapState === "error" ? (
           <div ref={listPanelRef} className={styles.listPanel} data-testid="ondo-b-list-panel" onScroll={(event) => rememberListScroll(event.currentTarget.scrollTop)}>
             {balancePlacesActive ? <button type="button" className={styles.balanceFilter} data-testid="map-balance-places-filter" aria-label={BALANCE_MAP_COPY[locale].clear} aria-pressed="true" onClick={clearBalancePlaces}>{BALANCE_MAP_COPY[locale].places}<X size={13} aria-hidden="true" /></button> : null}
-            {collection ? <DiscoveryCollectionResultsB key={`${collection}:list`} id={collection} locale={locale} places={collectionPlaces} selected={collectionSelected} onSelect={selectCollectionPin} onOpen={openCollectionPlace} onClose={() => goBackFromBDiscovery("city")} layout="list" suspended={state.surface.kind !== "map" || Boolean(selectedResearchId || collectionDetailId)} viewControl={collectionViewControl} {...collectionRecovery} /> : <ResearchedFoodListB places={researchedFoods} locale={locale} onSelect={place => setSelectedResearchId(place.id)} />}
+            {collection ? <DiscoveryCollectionResultsB key={`${collection}:list`} id={collection} locale={locale} places={collectionPlaces} selected={collectionSelected} onSelect={selectCollectionPin} onOpen={openCollectionPlace} onClose={() => goBackFromBDiscovery("city")} layout="list" suspended={state.surface.kind !== "map" || Boolean(selectedResearchId || collectionDetailId)} viewControl={collectionViewControl} {...collectionRecovery} /> : <ResearchedFoodListB places={researchedFoods} locale={locale} onSelect={place => openResearchPlace(place.id)} />}
             {mapState === "error" ? <div className={styles.mapError} role="status" data-testid="ondo-b-map-fallback-status"><span>{city === "jeju" ? copy.editorialMapUnavailable : copy.mapUnavailable}</span><button type="button" onClick={retryMap}>{copy.retryMap}</button></div> : null}
             {retryListForeground && mapState === "loading" && mapProgressVisible ? <div className={styles.mapRetryStatus} role="status" data-testid="ondo-b-map-retry-status"><i aria-hidden="true" /><span>{city === "jeju" ? copy.editorialMapLoading : copy.mapLoading}</span></div> : null}
             {collection || researchedFoods.length > 0 && (city === "jeju" ? editorialPlaces.length === 0 : venues.length === 0) ? null : city === "jeju" ? (
@@ -4110,7 +4148,7 @@ export function MapEntryB() {
           }}
           enabled={state.tab === "ondo" && !collection && effectiveView === "map" && !editorialOpen && !selectedVenueId && !selectedEditorialPlaceId && !selectedResearchId && !entryTransitionCity}
           onSelect={id => {
-            if (researchedFoodByIdB(id)) { setSelectedResearchId(id); return }
+            if (researchedFoodByIdB(id)) { openResearchPlace(id); return }
             const editorial = editorialPlaceById(id)
             if (editorial) { openEditorialPlaceDetailRef.current(editorial); return }
             const venue = CANONICAL_MAP_VENUES_COMPACT.find(item => item.id === id)
@@ -4157,14 +4195,10 @@ export function MapEntryB() {
         onDemo={sampleEnvironment ? () => { flushSync(() => setMapOptionsOpen(false)); window.dispatchEvent(new Event(SAMPLE_INFO_EVENT)) } : undefined}
         onClose={() => setMapOptionsOpen(false)}
       /> : null}
-      {collectionMarket && state.tab === "ondo" ? <DiscoveryMarketDetailB place={collectionMarket} locale={locale} onClose={closeCollectionPlace} /> : null}
+      {!collection && effectiveView === "map" && state.tab === "ondo" ? <PersonalPlaceMapPinB map={mapState === "ready" ? mapRef.current : null} place={selectedResearchId ? personalPlaceByIdB(selectedResearchId, locale) : null} /> : null}
+      {collectionMarket && state.tab === "ondo" ? <DiscoveryMarketDetailB place={collectionMarket} locale={locale} onClose={closeCollectionPlace} onMap={() => showContentPlaceOnMap(collectionMarket.id)} /> : null}
       {selectedResearch && state.tab === "ondo" ? <ResearchedFoodPanelB place={selectedResearch} locale={locale} returnFocus={researchReturnFocus?.placeId === selectedResearch.id ? researchReturnFocus.focus : undefined} onClose={closeCollectionPlace} onMap={() => {
-        if (readBDiscoveryHistory()?.discoveryPlaceId) { closeCollectionPlace(); return }
-        setSelectedResearchId(null)
-        setView("map")
-        updateCityContext({ view: "map" })
-        const map = mapRef.current
-        if (map) { map.resize(); moveMap(map, { center: [selectedResearch.longitude, selectedResearch.latitude], zoom: 14.5 }) }
+        showContentPlaceOnMap(selectedResearch.id)
       }} /> : null}
     </div>
   )

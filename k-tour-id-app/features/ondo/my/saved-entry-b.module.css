@@ -231,3 +231,6 @@
 @media (prefers-reduced-motion: reduce) {
   .removeLayer { backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
+.personalVisit { display:flex; justify-content:space-between; align-items:center; gap:12px; min-height:52px; width:100%; padding:16px; border:1px solid var(--ondo-line); border-radius:16px; color:var(--ondo-ink); background:var(--ondo-surface-raised); text-align:left; font:inherit; font-size:14px; line-height:1.5; cursor:pointer; }
+.personalVisit:focus-visible { outline:3px solid var(--ondo-focus-ring,#2563eb); outline-offset:3px; }
+.personalVisit svg { flex-shrink:0; }

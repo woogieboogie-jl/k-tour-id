@@ -27,6 +27,9 @@ import { isCxPreview, isReadinessPreview } from "@/lib/hackathon/preview-readine
 import { HackathonReadinessB } from "./hackathon-readiness-b"
 import { HackathonCxPreviewB } from "./hackathon-cx-preview-b"
 import { HackathonIntegrationPreviewGate } from "./hackathon-integration-preview-b"
+import { JitIdentityCheckB } from "../identity-b/jit-identity-check-b"
+import { consumeJitRequestReceipt, jitContext, jitIdentityCall, parseJitEligibility, sameJitContext } from "../identity-b/jit-identity-client-b"
+import type { JitIdentityContext, JitIdentityRequest } from "@/lib/hackathon/jit-identity-contract"
 
 type Locale = "ko" | "en" | "ja"
 const T = {
@@ -155,6 +158,8 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [consent, setConsent] = useState(false)
+  const [reuseIdentity, setReuseIdentity] = useState<JitIdentityContext | null>(null)
+  const reuseIdentityRef = useRef<JitIdentityContext | null>(null)
   const [approve, setApprove] = useState(false)
   const [evidence, setEvidence] = useState<Record<string, unknown> | null>(null)
   const [signer, setSigner] = useState<StoredSigner | null>(null)
@@ -248,7 +253,48 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
   }, [close])
 
   // ── step actions ──────────────────────────────────────────────────
-  const start = () => run("start", async () => { if (consent && info?.supported) setOp(guide ? await createGuideOperationB(locale) : await api.create(detail.venueId, info?.consentVersion ?? config?.consentVersion ?? "", locale)) })
+  const start = () => run("start", async () => {
+    if (!consent || !info?.supported || closedRef.current) return
+    if (!guide && config?.modes.cx === "cx" && config.isolatedMock === false) {
+      // A status read does not approve reuse. Ask for this perk's explicit
+      // purpose consent only when there is already a valid server-side proof.
+      // First-time perk verification stays in its own budgeted operation.
+      const eligibility = parseJitEligibility(await jitIdentityCall("identity/eligibility"))
+      if (closedRef.current) return
+      if (eligibility.execution === "provider" && eligibility.person.state === "verified") {
+        const context = await jitContext({ action: "designated_perk", purpose: "person", venueId: detail.venueId, tableId: null }, crypto.randomUUID())
+        if (closedRef.current) return
+        reuseIdentityRef.current = context
+        setReuseIdentity(context)
+        return
+      }
+    }
+    setOp(guide ? await createGuideOperationB(locale) : await api.create(detail.venueId, info?.consentVersion ?? config?.consentVersion ?? "", locale))
+  })
+  const acceptIdentityReuse = (request: JitIdentityRequest) => run("start", async () => {
+    const context = reuseIdentityRef.current
+    if (closedRef.current || !consent || !context || !sameJitContext(request.context, context) || !request.authorizationRef || op || guide) return
+    await consumeJitRequestReceipt(request)
+    if (closedRef.current || reuseIdentityRef.current !== context) return
+    let result: OperationResult
+    try {
+      result = await api.create(detail.venueId, info?.consentVersion ?? config?.consentVersion ?? "", locale, {
+        identityAuthorizationRef: request.authorizationRef, identityContextDigest: context.contextDigest,
+      })
+    } catch (cause) {
+      // The server may have committed before the response was lost. Restore
+      // the same session/place journey by GET, never repeat a provider action.
+      const current = await api.entitlements(detail.venueId).catch(() => null)
+      if (!current?.supported || !current.operation || current.campaign?.campaignId !== info?.campaign?.campaignId) throw cause
+      result = current.operation
+    }
+    if (closedRef.current || reuseIdentityRef.current !== context) return
+    setOp(result)
+    setSigner(readSigner(result.operationId))
+    try { vcRef.current = JSON.parse(sessionStorage.getItem(`ondo-b.hackathon.vc:${result.operationId}`) ?? "null") } catch { vcRef.current = null }
+    reuseIdentityRef.current = null
+    setReuseIdentity(null)
+  })
   const identityStart = () => run("identity", async () => { if (op) setOp(await api.identityStart(op.operationId, isMobile)) })
   const identityComplete = (sample?: { outcome: string; subjectSeed: string }) => run("identity", async () => { if (op) setOp(await api.identityComplete(op.operationId, sample)) })
   const issueAndAck = useCallback(() => run("issue", async () => {
@@ -333,7 +379,8 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
   const approveSample = () => identityComplete({ outcome: "verified", subjectSeed: sampleSeed })
 
   const stepIndex = journeyStepIndex(op)
-  const activePhase = op?.status === "pending" ? op.phase : null
+  const identitySourceInvalid = op?.status === "pending" && op.identity?.sourceCurrent === false
+  const activePhase = op?.status === "pending" && !identitySourceInvalid ? op.phase : null
   const delegationNeedsCheck = Boolean(op?.delegation && op.delegation.status !== "awaiting_signature")
   const delegationMayStop = !op?.delegation?.userTxDigest || op.delegation.status === "failed"
   const reviewing = viewStep !== null && viewStep < stepIndex
@@ -393,7 +440,20 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
           {guide && error && !op ? <button type="button" className={styles.secondary} data-testid="guide-bootstrap-retry" onClick={() => setBootstrapAttempt(value => value + 1)}>{c.reconcile}</button> : null}
           {guide && error ? <details className={styles.card}><summary>{tr("연결 정보", "Connection details", "接続情報")}</summary><code data-testid="guide-error-code">{error}</code></details> : null}
 
-          {!op ? (
+          {identitySourceInvalid && op ? <section className={styles.card} data-testid="hackathon-identity-source-invalid">
+            <h3>{tr("신원 확인 상태가 변경됐어요", "Your identity check is no longer valid", "本人確認の状態が変わりました")}</h3>
+            <p>{tr("기존 확인이 만료되었거나 취소되어 다음 단계로 진행할 수 없어요. 같은 요청의 상태를 확인하거나 중단한 뒤 다시 시작해 주세요. 이미 전송한 실행이 취소된다는 뜻은 아니에요.", "The earlier check expired or was cancelled. Check this request, or stop before starting again. This does not undo an action already submitted.", "以前の確認が期限切れ、または取り消されたため次に進めません。同じ要求の状態を確認するか、中止してからやり直してください。送信済みの実行が取り消されるわけではありません。")}</p>
+            <div className={styles.actions}>
+              {op.allowedActions.includes("reconcile") ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button> : null}
+              {op.allowedActions.includes("cancel") ? <button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button> : null}
+              <button type="button" className={styles.secondary} onClick={() => close(true)} data-testid="hackathon-return">{c.back}</button>
+            </div>
+          </section> : null}
+
+          {!op && reuseIdentity ? <JitIdentityCheckB locale={locale} context={reuseIdentity} onAuthorized={acceptIdentityReuse} onCancel={() => {
+            reuseIdentityRef.current = null; setReuseIdentity(null); setConsent(false)
+          }} /> : null}
+          {!op && !reuseIdentity ? (
             <section className={styles.card}>
               <h3>{c.consentTitle}</h3>
               <p>{c.consentBody}</p>

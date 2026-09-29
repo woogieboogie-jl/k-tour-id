@@ -21,6 +21,7 @@
 .suggestions strong { font-size: 14px; line-height: 1.3; }
 .suggestions small { color: var(--ondo-muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .results { max-height: min(38dvh, calc(100% - 180px - env(safe-area-inset-top) - env(safe-area-inset-bottom))); overflow: auto; overscroll-behavior: contain; padding: 10px 12px 0; scrollbar-width: thin; }
+.results[data-suspended="true"] { visibility:hidden; pointer-events:none; }
 /* The sticky reader paints in a separate layer above the WebGL map. Explicitly
    clip that layer to its rounded surface: overflow alone leaves a rectangular
    painted strip outside the panel on Chromium. The unbounded list stays open. */

@@ -15,6 +15,7 @@
 import { hkConfig, HK_TTL } from "../config"
 import { hmacHex, nowIso, plusMs, randomId, HkError } from "../util"
 import type { IdentityEvidence, IdentityHandoff } from "../types"
+import { currentCxPolicyDigest } from "../identity-policy"
 
 export type CxStart = { handoff: IdentityHandoff; token?: string; txId?: string; cxId?: string }
 
@@ -221,5 +222,6 @@ export async function cxComplete(opts: {
     evidenceId: randomId("evd"), subjectRef, source: "cx_mobile_id", mode: "cx", provider: c.provider,
     personVerified: true, adultVerified: adult === undefined ? null : Boolean(adult === true || adult === "Y" || adult === "true"),
     verifiedAt: nowIso(), expiresAt: plusMs(HK_TTL.evidenceMs), providerTransactionRef: verifiedTxId,
+    providerPolicyDigest: currentCxPolicyDigest(),
   } }
 }

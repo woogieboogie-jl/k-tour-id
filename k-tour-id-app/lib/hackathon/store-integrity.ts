@@ -6,6 +6,7 @@ import { isGuideJourney } from "./guide-contract"
 import type { OperationRecord } from "./store"
 import { parseIntegrationCutoverMarker, assertIntegrationCutoverMonotonic } from "./integration-cutover"
 import { assertSharedBudget } from "./integration-shared-budget"
+import { assertJitIdentityLedger } from "./jit-identity-integrity"
 
 /** Reject corrupt/incompatible storage instead of clearing redemption history. */
 export function parseStoredJourney(raw: unknown): Db {
@@ -33,6 +34,9 @@ export function parseStoredJourney(raw: unknown): Db {
   }
   if (db.guideCollection !== undefined) {
     try { assertGuideCollectionStore(db.guideCollection) } catch { throw invalid() }
+  }
+  if (db.jitIdentity !== undefined) {
+    try { assertJitIdentityLedger(db.jitIdentity) } catch { throw invalid() }
   }
   for (const op of Object.values(db.operations as Record<string, OperationRecord>)) {
     if (op.journey !== undefined && !isGuideJourney(op)) throw invalid()

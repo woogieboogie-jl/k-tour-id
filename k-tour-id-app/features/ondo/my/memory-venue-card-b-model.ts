@@ -5,13 +5,14 @@ import {
   type EditorialPlaceB,
 } from "../pulse-b/japan-first-pulse-model-b"
 import type { OndoBLocale } from "../shared/state/ondo-b-preferences"
+import type { PersonalPlaceB } from "../place/place-memory-model-b"
 
-export type MyKoreaMemorySourceKindB = "official_directory" | "editorial_place"
+export type MyKoreaMemorySourceKindB = "official_directory" | "editorial_place" | "discovery_place"
 export type MyKoreaMemoryMediaKindB = "category_illustration" | "editorial_illustration" | "pictogram_fallback"
 
 export type MyKoreaMemoryCardViewModelB = Readonly<{
   objectId: string
-  objectNamespace: "canonical-venue" | "jeju-editorial-place"
+  objectNamespace: "canonical-venue" | "jeju-editorial-place" | "discovery-place"
   title: string
   subtitle: string
   accessibleLabel: string
@@ -259,4 +260,19 @@ export function editorialMemoryCardViewModelB(place: EditorialPlaceB, locale: On
       crop: stableMyKoreaMemoryCropB("jeju-editorial-place", place.id),
     }),
   })
+}
+
+/** A native research/market bookmark, not an official merchant or accepted perk. */
+export function discoveryMemoryCardViewModelB(place: PersonalPlaceB, locale: OndoBLocale): MyKoreaMemoryCardViewModelB {
+  const copy = COPY[locale]
+  return {
+    objectId: place.id, objectNamespace: "discovery-place", title: place.name, subtitle: place.address,
+    accessibleLabel: `${place.name}. ${copy.editorial}. ${place.address}`,
+    source: { kind: "discovery_place", label: copy.editorial, officialRecord: false },
+    recordProvenance: { sourceId: place.source, label: place.source },
+    media: { kind: "pictogram_fallback", src: null, mediaSourceId: "pictogram:place", exactVenuePhoto: false, alt: "", label: copy.editorialPlace,
+      mediaCredit: copy.pictogramCredit, rights: { mode: "interface_pictogram", label: copy.pictogramRights }, disclosureLabel: copy.imageDetails,
+      recordSourceLabel: copy.recordSource, mediaCreditLabel: copy.mediaCreditLabel, rightsLabel: copy.rightsLabel, fallbackLabel: copy.editorialPlace,
+      failureLabel: copy.unavailable, crop: "50% 50%" },
+  }
 }

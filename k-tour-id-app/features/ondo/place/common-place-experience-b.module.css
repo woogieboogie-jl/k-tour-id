@@ -1,0 +1,12 @@
+.trip { min-width:0; padding:16px; border:1px solid var(--ondo-line); border-radius:20px; }
+.trip > h3 { margin:0 0 10px; font-size:14px; color:var(--ondo-muted); }
+.decisions { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; min-width:0; }
+.decisions > button, .decisions > a, .visit { display:flex; gap:10px; align-items:center; justify-content:center; min-height:48px; min-width:0; border:1px solid var(--ondo-line); border-radius:16px; background:var(--ondo-surface-raised); color:var(--ondo-ink); padding:12px; text-decoration:none; cursor:pointer; font-size:14px; line-height:1.5; overflow-wrap:anywhere; }
+.decisions svg, .visit svg { flex-shrink:0; }
+.decisions :focus-visible, .journal :focus-visible { outline:3px solid var(--ondo-focus-ring,#2563eb); outline-offset:3px; }
+.journal { display:grid; min-width:0; gap:10px; padding:14px 0; }
+.journal > p, .local { font-size:12px; color:var(--ondo-muted); line-height:1.6; margin:0; }
+.visit { justify-content:flex-start; width:100%; }
+.local summary { min-height:36px; display:flex; align-items:center; cursor:pointer; }
+.error { color:var(--ondo-ink); font-size:13px; }
+.srOnly { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }

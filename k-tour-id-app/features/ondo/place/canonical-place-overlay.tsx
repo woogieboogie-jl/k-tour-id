@@ -43,9 +43,7 @@ import { canonicalVenueMoodImage } from "../map/canonical-venue-capsule-b"
 import { ONDO_B_TABLES, ondoBTableTimeline } from "../connect/table-model"
 import { capturePlaceServiceMapReturnB } from "../map/place-service-map-return-b"
 import { PlacePeekActionsB } from "./place-service-actions-b"
-import { PlaceDetailActionsB } from "./place-detail-actions-b"
-import { JourneyVisitEntryB } from "../commerce-b/journey-visit-b"
-import { ExperienceEntryB } from "../experience-b/experience-b"
+import { CommonPlaceExperienceB } from "./common-place-experience-b"
 import {
   canonicalFactFreshness,
   canonicalFactState,
@@ -1083,13 +1081,18 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
   return (
     <div id="canonical-place-dialog" ref={layerRef} className={styles.layer} role={openFact ? undefined : "dialog"} aria-modal={openFact ? undefined : "true"} aria-labelledby={openFact ? undefined : "canonical-place-title"} aria-busy={closing ? "true" : undefined} tabIndex={-1} data-testid="canonical-place-overlay" data-modal-layer-priority={ONDO_MODAL_PRIORITY.detail} data-place-presence={presenceState} data-venue-id={venue.id} data-save-state={saveStatus} data-detail-source={venue.sourceRefId} data-source-snapshot={venue.sourceSnapshotAt.slice(0, 10)} onKeyDown={handleDetailKeyDown} onClickCapture={consumeClosingInput} onPointerDownCapture={consumeClosingInput} onKeyDownCapture={consumeClosingInput}>
       <button type="button" className={styles.backdrop} onClick={closeDetails} aria-label={copy.back} tabIndex={-1} />
-      <article ref={detailRef} className={styles.detail} data-place-return-sheet-snap="detail">
+      <article ref={detailRef} className={styles.detail} data-place-return-sheet-snap="detail" data-common-place-root={currentVenueId}>
         <header>
           <button ref={closeRef} type="button" onClick={closeDetails} aria-label={copy.back} data-place-return-focus="detail_back"><ArrowLeft size={19} /></button>
           <span>{district}</span>
           <button type="button" onClick={close} aria-label={copy.close} data-place-return-focus="detail_close"><X size={19} /></button>
         </header>
         <div ref={bodyRef} className={styles.body} data-place-return-scroll="detail" data-place-service-scroll="true">
+          <CommonPlaceExperienceB placeId={currentVenueId} locale={locale} saved={saved} onSave={toggleSave} directions={directions}
+            classes={{ actions: styles.placeActions, trip: styles.tripActions, decisions: styles.decisionActions, saveLabel: styles.saveActionLabel }}
+            actionsTestId="canonical-place-actions" tripTestId="canonical-trip-actions" decisionsTestId="canonical-place-decisions"
+            saveTestId="canonical-venue-save" directionsTestId="canonical-venue-primary-directions" onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open"
+            identity={
           <section className={styles.detailIdentityStage} data-testid="canonical-place-identity-stage" data-pulse-level={pulse.level} data-place-return-section="identity">
             <div className={styles.placeAtmosphere} data-testid="canonical-place-atmosphere" aria-hidden="true"><i /><i /><i /></div>
             <span className={styles.detailCategoryPictogram} role="img" aria-label={`${category} · ${name.officialName}`}><Utensils size={22} aria-hidden="true" /></span>
@@ -1113,7 +1116,7 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
               <p className={styles.address} role={renderedDetailState === "loading" ? "status" : undefined} aria-live={renderedDetailState === "loading" ? "polite" : undefined} data-detail-state={renderedDetailState} data-address-truth={addressEvidence?.truth ?? (renderedDetailState === "ready" ? "UNKNOWN" : renderedDetailState.toUpperCase())}><MapPin size={16} />{address}</p>
             )}
           </section>
-
+          } temperature={
           <details className={styles.pulsePanel} data-testid="canonical-place-pulse" data-pulse-level={pulse.level} data-pulse-numeric="hidden" data-place-return-section="temperature" data-place-return-open-section="temperature">
             <summary aria-label={pulseTitle} data-place-return-focus="temperature">
               <div><span>{copy.temperature}</span><h3 className={styles.srOnly}>{pulseTitle}</h3><span className={styles.pulseVisualMeter} data-testid="canonical-place-temperature-meter" aria-hidden="true"><i /></span></div>
@@ -1146,14 +1149,7 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
             ) : null}
             </div>
           </details>
-
-          <PlaceDetailActionsB placeId={currentVenueId} locale={locale} className={styles.placeActions} testId="canonical-place-actions" onOffer={openMealBenefitFromPlace} offerTestId="canonical-meal-benefit-open" includeGuide={false} />
-          <section className={styles.tripActions} data-testid="canonical-trip-actions" aria-labelledby="canonical-trip-actions-title">
-            <h3 id="canonical-trip-actions-title">{locale === "ko" ? "가이드·여행 기록" : locale === "ja" ? "ガイド・旅の記録" : "Guides & memories"}</h3>
-            <ExperienceEntryB placeId={currentVenueId} locale={locale} />
-            <JourneyVisitEntryB key={`journey-${currentVenueId}`} locale={locale} venueId={currentVenueId} />
-          </section>
-          {placeTable ? (
+          } table={placeTable ? (
             <section className={styles.tableActions} aria-label={copy.table} data-place-return-section="table">
               <button type="button" className={styles.tablePrimary} onClick={openTableFromPlace} data-testid="canonical-place-table" data-place-service="table">
                 <UsersRound size={18} aria-hidden="true" />
@@ -1165,11 +1161,7 @@ export function CanonicalPlaceOverlay({ locale: mountedLocale, presenceState, ve
                 <span><strong>{copy.after19}</strong><small>{copy.after19Body}</small></span>
               </aside> : null}
             </section>
-          ) : null}
-          <div className={styles.decisionActions} data-testid="canonical-place-decisions" data-place-return-section="decisions">
-            <button type="button" onClick={toggleSave} aria-label={saved ? copy.removeSaved : copy.save} aria-pressed={saved} data-testid="canonical-venue-save" data-visual-priority="secondary" data-place-return-focus="save"><Bookmark size={18} /><span className={styles.saveActionLabel}>{saved ? copy.removeSaved : copy.save}</span></button>
-            <a href={directions} target="_blank" rel="noreferrer" aria-label={copy.directions} title={copy.directions} data-testid="canonical-venue-primary-directions" data-visual-priority="secondary" data-place-return-focus="directions"><Navigation size={18} aria-hidden="true" /></a>
-          </div>
+          ) : null} />
 
           <section className={styles.before} data-testid="canonical-place-details-to-check" data-place-return-section="pre_visit" tabIndex={-1}>
             <header className={styles.beforeHeader} data-place-return-focus="pre_visit" tabIndex={-1}>
