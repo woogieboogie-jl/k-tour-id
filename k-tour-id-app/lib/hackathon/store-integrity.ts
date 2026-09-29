@@ -5,6 +5,7 @@ import { assertGuideCollectionStore } from "./guide-collection"
 import { isGuideJourney } from "./guide-contract"
 import type { OperationRecord } from "./store"
 import { parseIntegrationCutoverMarker, assertIntegrationCutoverMonotonic } from "./integration-cutover"
+import { assertSharedBudget } from "./integration-shared-budget"
 
 /** Reject corrupt/incompatible storage instead of clearing redemption history. */
 export function parseStoredJourney(raw: unknown): Db {
@@ -26,6 +27,9 @@ export function parseStoredJourney(raw: unknown): Db {
   if (db.integrationCutover !== undefined) {
     try { const marker = parseIntegrationCutoverMarker(db.integrationCutover); assertIntegrationCutoverMonotonic(marker, parsed as Db) }
     catch { throw invalid() }
+  }
+  if (db.integrationSharedBudget !== undefined) {
+    try { assertSharedBudget(parsed as Db) } catch { throw invalid() }
   }
   if (db.guideCollection !== undefined) {
     try { assertGuideCollectionStore(db.guideCollection) } catch { throw invalid() }

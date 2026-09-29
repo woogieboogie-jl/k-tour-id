@@ -24,6 +24,8 @@ import { assertGuideCollectionMonotonic, type GuideCollectionRecord } from "./gu
 import type { OpenDidProviderState } from "./opendid-provider-lifecycle"
 import { CUTOVER_SCOPE, assertCommittedCutover, assertCutoverSourceUnchanged, assertIntegrationCutoverMonotonic, nextCutoverControl, parseIntegrationCutoverControl,
   type IntegrationCutoverMarker, type IntegrationCutoverControl } from "./integration-cutover"
+import { assertSharedBudget, assertSharedBudgetMonotonic, assertSharedBudgetState, parseSharedBudgetControl, initialSharedBudgetState, nextSharedBudgetState,
+  SHARED_BUDGET_COMMIT_LUA, SHARED_BUDGET_INITIALIZE_LUA, type IntegrationSharedBudget, type SharedBudgetControl } from "./integration-shared-budget"
 
 export type OperationRecord = OperationResult & {
   sessionId: string
@@ -67,6 +69,7 @@ export type Db = {
   nonces: Record<string, { operationId: string; consumedAt: string | null; createdAt: string }>
   integrationSuiBudget?: IntegrationSuiBudget // Retained across operation pruning; never initialized by runtime.
   integrationCutover?: IntegrationCutoverMarker // Operator-only provisioned marker; never initialized by a request.
+  integrationSharedBudget?: IntegrationSharedBudget // Alternative: same legacy slot allocator, isolated real guide records.
   guideCollection?: Record<string, GuideCollectionRecord> // Authoritative, retained beyond the operation TTL.
 }
 
@@ -124,7 +127,7 @@ function fileLoad(path: string): Db {
   if (!existsSync(path)) { fileCache = structuredClone(EMPTY); return fileCache }
   // An unreadable ledger must never silently become a fresh, redeemable account.
   const loaded = parseStoredJourney(readFileSync(path, "utf8"))
-  if (loaded.integrationCutover) throw new HkError("store_configuration", "Cutover requires the approved durable store.", 503)
+  if (loaded.integrationCutover || loaded.integrationSharedBudget) throw new HkError("store_configuration", "Cutover requires the approved durable store.", 503)
   fileCache = loaded
   return fileCache
 }
@@ -143,18 +146,18 @@ async function redisLoad(b: RedisBackend): Promise<Db> {
     const raw = await redisCmd<string | null>(b, ["EVAL", "-- ktour-canary-load\nif redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('GET', KEYS[2]) end return false", 2, b.canary.ownerKey, b.key, b.canary.ownerToken])
     if (raw === null) throw new HkError("store_canary_ownership", "Canary ownership is unavailable.", 503)
     const db = parseStoredJourney(raw)
-    if (db.integrationCutover) throw new HkError("store_configuration", "Cutover cannot use temporary canary storage.", 503)
+    if (db.integrationCutover || db.integrationSharedBudget) throw new HkError("store_configuration", "Cutover cannot use temporary canary storage.", 503)
     return db
   }
   const raw = await redisCmd<string | null>(b, ["GET", b.key])
   if (raw === null) return structuredClone(EMPTY)
   const db = parseStoredJourney(raw)
   // A removed runtime flag or copied marker must not downgrade dual-key CAS.
-  if (db.integrationCutover) throw new HkError("store_configuration", "Cutover requires atomic control verification.", 503)
+  if (db.integrationCutover || db.integrationSharedBudget) throw new HkError("store_configuration", "Cutover requires atomic control verification.", 503)
   return db
 }
 
-type CutoverRead = { db: Db; control: IntegrationCutoverControl; raw: string; controlRaw: string; sourceRaw: string; configuration: string }
+type CutoverRead = { db: Db; control: IntegrationCutoverControl | SharedBudgetControl; raw: string; controlRaw: string; sourceRaw: string; configuration: string }
 function cutoverStoreRequired() { return requiresIntegrationSuiLimits() }
 function assertCutoverBackend(b: Backend): asserts b is RedisBackend {
   if (b.kind !== "redis" || b.canary || b.key !== CUTOVER_SCOPE.targetKey || process.env.HK_INTEGRATION_SUI_TARGET !== "selfhosted-testnet") {
@@ -170,11 +173,11 @@ async function redisCutoverLoad(b: RedisBackend): Promise<CutoverRead> {
   if (!Array.isArray(pair) || pair.length !== 3 || typeof pair[0] !== "string" || typeof pair[1] !== "string") {
     throw new HkError("integration_sui_migration_required", "The shared execution budget migration is not prepared.", 503)
   }
-  let control: IntegrationCutoverControl
-  try { control = parseIntegrationCutoverControl(JSON.parse(pair[1])) } catch { throw new HkError("store_corrupt", "Cutover control is unavailable.", 503) }
+  let control: IntegrationCutoverControl | SharedBudgetControl
+  try { const parsed = JSON.parse(pair[1]); control = parsed?.version === 2 ? parseSharedBudgetControl(parsed) : parseIntegrationCutoverControl(parsed) } catch { throw new HkError("store_corrupt", "Cutover control is unavailable.", 503) }
   const db = parseStoredJourney(pair[0])
-  assertCommittedCutover(db, control)
-  assertCutoverSourceUnchanged(pair[2], control.marker)
+  if (control.version === 2) assertSharedBudgetState(db, control, pair[2])
+  else { assertCommittedCutover(db, control); assertCutoverSourceUnchanged(pair[2], control.marker) }
   assertIntegrationSuiLimits()
   if (configuration !== integrationSuiAuthorizationScopeDigest()) throw new HkError("integration_sui_scope", "Integration configuration changed while checking execution authority.", 503)
   return { db, control, raw: pair[0], controlRaw: pair[1], sourceRaw: pair[2] as string, configuration }
@@ -182,9 +185,17 @@ async function redisCutoverLoad(b: RedisBackend): Promise<CutoverRead> {
 const CUTOVER_PERSIST_LUA = `-- ktour-cutover-runtime-commit-v1
 if redis.call('GET',KEYS[1])~=ARGV[1] or redis.call('GET',KEYS[2])~=ARGV[2] or redis.call('GET',KEYS[3])~=ARGV[3] or redis.call('GET',KEYS[4])~=ARGV[6] then return 0 end
 redis.call('SET',KEYS[2],ARGV[4]); redis.call('SET',KEYS[3],ARGV[5]); return 1`
-async function redisCutoverPersist(b: RedisBackend, previous: CutoverRead, db: Db, token: string) {
+async function redisCutoverPersist(b: RedisBackend, previous: CutoverRead, db: Db, token: string, sourceToken?: string) {
   assertIntegrationSuiLimits()
   if (previous.configuration !== integrationSuiAuthorizationScopeDigest()) throw new HkError("integration_sui_scope", "Integration configuration changed before saving execution authority.", 503)
+  if (previous.control.version === 2) {
+    if (!sourceToken) throw new HkError("store_lease_lost", "The shared allocation lease is unavailable.", 503)
+    const next = nextSharedBudgetState(previous.db, previous.control, previous.sourceRaw, db)
+    const committed = await redisCmd<number>(b, ["EVAL", SHARED_BUDGET_COMMIT_LUA, 5, `${b.key}:lock`, b.key, CUTOVER_SCOPE.controlKey, `${CUTOVER_SCOPE.sourceKey}:lock`, CUTOVER_SCOPE.sourceKey,
+      token, sourceToken, previous.raw, previous.controlRaw, previous.sourceRaw, JSON.stringify(db), JSON.stringify(next.control), next.sourceRaw])
+    if (committed !== 1) throw new HkError("store_lease_lost", "Journey changed while reserving its shared execution slot.", 503)
+    return
+  }
   const control = nextCutoverControl(previous.db, previous.control, db)
   const committed = await redisCmd<number>(b, ["EVAL", CUTOVER_PERSIST_LUA, 4, `${b.key}:lock`, b.key, CUTOVER_SCOPE.controlKey, CUTOVER_SCOPE.sourceKey,
     token, previous.raw, previous.controlRaw, JSON.stringify(db), JSON.stringify(control), previous.sourceRaw])
@@ -257,33 +268,47 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       const budget = db.integrationSuiBudget ? structuredClone(assertIntegrationSuiBudget(db)) : undefined
       const marker = db.integrationCutover ? structuredClone(db.integrationCutover) : undefined
       const collection = db.guideCollection ? structuredClone(db.guideCollection) : undefined
+      const shared = db.integrationSharedBudget ? structuredClone(assertSharedBudget(db)) : undefined
       const result = await fn(db)
       if (budget) assertIntegrationSuiBudgetMonotonic(budget, db)
       else if (db.integrationSuiBudget !== undefined) assertIntegrationSuiBudget(db)
       assertIntegrationCutoverMonotonic(marker, db)
       assertGuideCollectionMonotonic(collection, db)
+      assertSharedBudgetMonotonic(shared, db)
       prune(db)
       filePersist(b.path, db)
       fileCache = db
       return structuredClone(result)
     }
     const token = await redisLock(b)
+    let sourceToken: string | undefined
+    const sourceBackend: RedisBackend = { ...b, key: CUTOVER_SCOPE.sourceKey }
     try {
-      const cutover = cutoverStoreRequired() ? await redisCutoverLoad(b) : undefined
+      let cutover = cutoverStoreRequired() ? await redisCutoverLoad(b) : undefined
+      if (cutover?.control.version === 2) {
+        // All new writers use this lock order; old writers hold only source.
+        // Re-read after acquiring source so no legacy allocation can be missed.
+        sourceToken = await redisLock(sourceBackend)
+        cutover = await redisCutoverLoad(b)
+        if (cutover.control.version !== 2) throw new HkError("store_corrupt", "Shared allocation mode changed.", 503)
+      }
       const db = cutover ? structuredClone(cutover.db) : await redisLoad(b)
       const budget = db.integrationSuiBudget ? structuredClone(assertIntegrationSuiBudget(db)) : undefined
       const marker = db.integrationCutover ? structuredClone(db.integrationCutover) : undefined
       const collection = db.guideCollection ? structuredClone(db.guideCollection) : undefined
+      const shared = db.integrationSharedBudget ? structuredClone(assertSharedBudget(db)) : undefined
       const result = await fn(db)
       if (budget) assertIntegrationSuiBudgetMonotonic(budget, db)
       else if (db.integrationSuiBudget !== undefined) assertIntegrationSuiBudget(db)
       assertIntegrationCutoverMonotonic(marker, db)
       assertGuideCollectionMonotonic(collection, db)
+      assertSharedBudgetMonotonic(shared, db)
       prune(db)
-      if (cutover) await redisCutoverPersist(b, cutover, db, token)
+      if (cutover) await redisCutoverPersist(b, cutover, db, token, sourceToken)
       else await redisPersist(b, db, token)
       return structuredClone(result)
     } finally {
+      if (sourceToken) await redisUnlock(sourceBackend, sourceToken)
       await redisUnlock(b, token)
     }
   }
@@ -310,6 +335,36 @@ export async function readIntegrationSuiActivation() {
   // A provider read may straddle the configured expiry or a runtime change.
   assertIntegrationSuiLimits()
   return { db, control }
+}
+
+/** Explicit server/operator provisioning, never called from routes/readiness.
+ * Compatible mode preserves the source and its budget. A lost response is not
+ * permission to reset: the next call validates and returns existing state. */
+export async function initializeIntegrationSharedBudget() {
+  if (!cutoverStoreRequired()) throw new HkError("integration_sui_scope", "The integration profile is unavailable.", 503)
+  assertIntegrationSuiLimits()
+  const configuration = integrationSuiAuthorizationScopeDigest(), b = backend(); assertCutoverBackend(b)
+  const sourceBackend: RedisBackend = { ...b, key: CUTOVER_SCOPE.sourceKey }, token = await redisLock(b)
+  let sourceToken: string | undefined
+  try {
+    sourceToken = await redisLock(sourceBackend)
+    const values = await redisCmd<unknown>(b, ["MGET", b.key, CUTOVER_SCOPE.controlKey, CUTOVER_SCOPE.sourceKey])
+    if (!Array.isArray(values) || values.length !== 3 || typeof values[2] !== "string") throw new HkError("integration_shared_budget", "Existing shared allocation history is required.", 503)
+    assertIntegrationSuiLimits()
+    if (configuration !== integrationSuiAuthorizationScopeDigest()) throw new HkError("integration_sui_scope", "Integration configuration changed during preparation.", 503)
+    if (values[0] !== null || values[1] !== null) {
+      if (typeof values[0] !== "string" || typeof values[1] !== "string") throw new HkError("integration_shared_budget", "Shared allocation preparation is incomplete.", 503)
+      const db = parseStoredJourney(values[0]); let control: unknown
+      try { control = JSON.parse(values[1]) } catch { throw new HkError("store_corrupt", "Shared allocation control is unavailable.", 503) }
+      assertSharedBudgetState(db, control, values[2])
+      return { initialized: false, replayed: true, mode: "shared-reservation" as const }
+    }
+    const next = initialSharedBudgetState(values[2])
+    const committed = await redisCmd<number>(b, ["EVAL", SHARED_BUDGET_INITIALIZE_LUA, 5, `${b.key}:lock`, b.key, CUTOVER_SCOPE.controlKey, `${CUTOVER_SCOPE.sourceKey}:lock`, CUTOVER_SCOPE.sourceKey,
+      token, sourceToken, values[2], JSON.stringify(next.db), JSON.stringify(next.control)])
+    if (committed !== 1) throw new HkError("store_lease_lost", "Shared allocation changed while preparing. Check existing state before retrying.", 503)
+    return { initialized: true, replayed: false, mode: "shared-reservation" as const }
+  } finally { if (sourceToken) await redisUnlock(sourceBackend, sourceToken); await redisUnlock(b, token) }
 }
 
 type IntegrationSuiOwner = Readonly<{ sessionId: string; operationId: string }>
@@ -349,9 +404,9 @@ export async function refreshIntegrationSuiAuthorization(): Promise<void> {
   assertIntegrationSuiOperation(observed.db, current.owner.operationId)
   if (!op || op.operationId !== current.owner.operationId || op.sessionId !== current.owner.sessionId || op.status !== "pending" || !["delegation", "agent", "fulfillment"].includes(op.phase) ||
     !Number.isFinite(Date.parse(op.expiresAt)) || Date.parse(op.expiresAt) <= now ||
-    (current.migrationId !== null && current.migrationId !== observed.control.marker.migrationId)) return authorizationUnavailable()
-  current.expiresAt = Math.min(Date.parse(op.expiresAt), Date.parse(observed.control.marker.expiresAt))
-  current.migrationId = observed.control.marker.migrationId
+    (current.migrationId !== null && current.migrationId !== (observed.control.version === 2 ? observed.control.scopeId : observed.control.marker.migrationId))) return authorizationUnavailable()
+  current.expiresAt = Math.min(Date.parse(op.expiresAt), Date.parse(observed.control.version === 2 ? observed.control.expiresAt : observed.control.marker.expiresAt))
+  current.migrationId = observed.control.version === 2 ? observed.control.scopeId : observed.control.marker.migrationId
   current.verifiedAt = now
 }
 /** Narrow server-only adapter boundary. Hosted/isolated callers retain their

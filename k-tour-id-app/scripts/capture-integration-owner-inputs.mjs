@@ -10,7 +10,7 @@ import { Wallet } from 'ethers'
 
 export const OWNER_INPUT_DIRECTORY = '/Users/woogieboogie/.local/share/ktour-integration-owner-inputs'
 export const OMNIONE_RECORDER = '0x003403Cb95c2FFd66BC5748738d96C4A5B48b4ba'
-const names = Object.freeze({ omnione: 'HK_OMNIONE_PRIVATE_KEY', google: 'NEXT_PUBLIC_GOOGLE_CLIENT_ID', gemini: 'GEMINI_API_KEY' })
+const names = Object.freeze({ omnione: 'HK_OMNIONE_PRIVATE_KEY', 'omnione-rpc': 'HK_OMNIONE_RPC_URL', google: 'NEXT_PUBLIC_GOOGLE_CLIENT_ID', gemini: 'GEMINI_API_KEY' })
 const fail = code => { const e = new Error(code); e.code = code; throw e }
 const owned = stat => Number.isInteger(process.getuid?.()) && stat.uid === process.getuid()
 const notFound = error => error?.code === 'ENOENT'
@@ -18,7 +18,16 @@ async function statOrNull(path) { try { return await lstat(path) } catch (e) { i
 
 /** Pure local syntax/derived-address check, not an online credential check. */
 export function validateOwnerInput(kind, raw) {
-  if (!Object.hasOwn(names, kind) || typeof raw !== 'string' || !raw || raw !== raw.trim() || raw.length > 512 || /[\x00-\x20\x7f-\uffff]/.test(raw)) fail('invalid_input')
+  if (!Object.hasOwn(names, kind) || typeof raw !== 'string' || !raw || raw !== raw.trim() || raw.length > (kind === 'omnione-rpc' ? 4608 : 512) || /[\x00-\x20\x7f-\uffff]/.test(raw)) fail('invalid_input')
+  if (kind === 'omnione-rpc') {
+    let url
+    try { url = new URL(raw) } catch { fail('invalid_rpc_url') }
+    const token = url.searchParams.get('token') ?? ''
+    if (url.origin !== 'https://stage-chainapi.omnione.net' || url.pathname !== '/' || url.username || url.password || url.hash ||
+      [...url.searchParams.keys()].join(',') !== 'token' || !/^[A-Za-z0-9_.-]{32,4096}$/.test(token) ||
+      raw !== `https://stage-chainapi.omnione.net/?token=${token}`) fail('invalid_rpc_url')
+    return raw
+  }
   if (kind === 'omnione') {
     if (!/^(?:0x)?[a-fA-F0-9]{64}$/.test(raw)) fail('invalid_private_key')
     const value = raw.startsWith('0x') ? raw : `0x${raw}`
@@ -120,7 +129,8 @@ export async function persistOwnerInput(kind, raw, directory = OWNER_INPUT_DIREC
   }
 }
 
-export async function captureHiddenInput(input = process.stdin, output = process.stderr) {
+export async function captureHiddenInput(input = process.stdin, output = process.stderr, maxLength = 512) {
+  if (!Number.isSafeInteger(maxLength) || maxLength < 1 || maxLength > 4608) fail('invalid_input')
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') fail('tty_required')
   return new Promise((resolveValue, reject) => {
     let value = '', done = false
@@ -139,7 +149,7 @@ export async function captureHiddenInput(input = process.stdin, output = process
         if (char === '\u0003' || char === '\u0004' || char === '\u001b') return cancel()
         if (char === '\r' || char === '\n') return value ? finish(null, value) : cancel()
         if (char === '\u007f' || char === '\b') { value = value.slice(0, -1); continue }
-        if (char.charCodeAt(0) < 0x21 || char.charCodeAt(0) > 0x7e || value.length >= 512) return finish('invalid_input')
+        if (char.charCodeAt(0) < 0x21 || char.charCodeAt(0) > 0x7e || value.length >= maxLength) return finish('invalid_input')
         value += char
       }
     }
@@ -151,7 +161,7 @@ export async function captureHiddenInput(input = process.stdin, output = process
 }
 async function main() {
   if (process.argv.length !== 3 || !Object.hasOwn(names, process.argv[2])) {
-    process.stderr.write('Usage: node scripts/capture-integration-owner-inputs.mjs omnione|google|gemini\nDo not place credentials in arguments or environment variables.\n')
+    process.stderr.write('Usage: node scripts/capture-integration-owner-inputs.mjs omnione|google|gemini|omnione-rpc\nDo not place credentials in arguments or environment variables.\n')
     process.exitCode = 2; return
   }
   try {
@@ -161,7 +171,7 @@ async function main() {
       const old = await readDocument(join(OWNER_INPUT_DIRECTORY, 'inputs.json'))
       if (old && Object.hasOwn(old.doc.inputs, names[kind])) fail('input_already_exists')
     }
-    const raw = await captureHiddenInput()
+    const raw = await captureHiddenInput(undefined, undefined, kind === 'omnione-rpc' ? 4608 : 512)
     const result = await persistOwnerInput(kind, raw)
     process.stdout.write(`Saved ${result.stored} securely. No deployment or external call was made.\n`)
   } catch (e) {
@@ -169,7 +179,7 @@ async function main() {
       process.stderr.write('Saved locally, but durable completion could not be confirmed. Do not re-enter; request a read-only check. No values were printed.\n')
       process.exitCode = 1; return
     }
-    const allowed = ['cancelled', 'tty_required', 'invalid_input', 'invalid_private_key', 'recorder_mismatch', 'invalid_client_id', 'invalid_api_key', 'unsafe_path', 'unsafe_directory_permissions', 'unsafe_file_permissions', 'invalid_existing_file', 'file_changed', 'input_capture_busy', 'input_already_exists']
+    const allowed = ['cancelled', 'tty_required', 'invalid_input', 'invalid_rpc_url', 'invalid_private_key', 'recorder_mismatch', 'invalid_client_id', 'invalid_api_key', 'unsafe_path', 'unsafe_directory_permissions', 'unsafe_file_permissions', 'invalid_existing_file', 'file_changed', 'input_capture_busy', 'input_already_exists']
     process.stderr.write(`Not saved: ${allowed.includes(e?.code) ? e.code : 'local_storage_error'}. No values were printed.\n`)
     process.exitCode = 1
   }

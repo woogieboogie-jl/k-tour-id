@@ -34,6 +34,16 @@ test("unrecognized codes and invalid statuses cannot inject response data or suc
   }
 })
 
+test("shared-budget and cutover refusal remains a non-retryable unavailable response with fixed copy", () => {
+  for (const code of ["integration_shared_budget", "integration_cutover_unverified", "integration_cutover_source_changed", "integration_cutover_authority_unavailable", "integration_cutover_operator_configuration", "integration_cutover_outcome_unknown", "integration_cutover_conflict"]) {
+    const result = safeHkError(new HkError(code, providerText, 503))
+    assert.equal(result.status, 503)
+    assert.equal(result.error.code, code)
+    assert.equal(result.error.retryable, false)
+    assert.equal(JSON.stringify(result).includes(PRIVATE), false)
+  }
+})
+
 test("hostile getters and proxy values fail closed without inspection or logging", () => {
   const error = new HkError("wallet_proof", PRIVATE)
   Object.defineProperty(error, "code", { get() { throw new Error(PRIVATE) } })

@@ -8,6 +8,7 @@ test("future guide build carries only positive-allowlisted metadata, never crede
   assert.equal(env.HK_GUIDE_PRODUCTION_ENABLED, "0")
   assert.equal(env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW, "0")
   assert.equal(env.NEXT_PUBLIC_HK_HOSTED_SUI, "0")
+  assert.equal(env.NEXT_PUBLIC_HK_DEMO_ENTRY, "0")
   assert.equal(JSON.stringify(env).includes("private"), false)
 })
 test("guide build rejects wrong project/branch/platform, env files and local code injection", () => {

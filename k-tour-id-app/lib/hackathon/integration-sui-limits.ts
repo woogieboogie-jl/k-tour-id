@@ -5,6 +5,7 @@ import { HkError } from "./util"
 import { assertCommittedCutover, type CutoverDb } from "./integration-cutover"
 import { createHash } from "node:crypto"
 import { isGuideProductionProfile, guideProductionPreflightIssues } from "./guide-production-profile"
+import { assertSharedBudget, claimSharedOperation, type IntegrationSharedBudget } from "./integration-shared-budget"
 
 type Env = Record<string, string | undefined>
 export const INTEGRATION_SUI_LIMITS = Object.freeze({
@@ -103,7 +104,7 @@ export type IntegrationSuiBudget = {
   gasBudgetMIST: number
   operationIds: string[]
 } & IntegrationSuiMigration
-type BudgetDb = { integrationSuiBudget?: unknown; operations: Record<string, unknown> }
+type BudgetDb = { version?: 1; integrationSuiBudget?: unknown; integrationSharedBudget?: IntegrationSharedBudget; operations: Record<string, unknown> }
 
 /** Pure provisioning template, NOT called by runtime/store code. Provisioning a
  * real ledger requires a separate explicit operator audit and atomic write. */
@@ -134,9 +135,17 @@ export function assertIntegrationSuiBudget(db: BudgetDb): IntegrationSuiBudget {
   return b
 }
 export function assertIntegrationSuiOperation(db: BudgetDb, operationId: string) {
+  if (db.integrationSharedBudget) {
+    if (db.version !== 1 || !assertSharedBudget({ ...db, version: 1 }).operationIds.includes(operationId)) throw invalidBudget()
+    return
+  }
   if (!assertIntegrationSuiBudget(db).operationIds.includes(operationId)) throw invalidBudget()
 }
 export function claimIntegrationSuiOperation(db: BudgetDb, operationId: string) {
+  if (db.integrationSharedBudget) {
+    if (db.version !== 1) throw invalidBudget()
+    claimSharedOperation({ ...db, version: 1 }, operationId); return
+  }
   const b = assertIntegrationSuiBudget(db)
   if (!OP.test(operationId) || b.operationIds.includes(operationId) || b.priorHostedOperationIds.includes(operationId)) throw invalidBudget()
   if (b.operationIds.length + b.priorHostedOperationIds.length >= INTEGRATION_SUI_LIMITS.maxOperations) throw new HkError("integration_sui_limit", "This integration journey has reached its execution limit.", 429)

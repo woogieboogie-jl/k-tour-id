@@ -19,7 +19,7 @@ import { B_DISCOVERY_TRAVERSAL_EVENT } from "../map/b-discovery-history"
 import { useOndoB } from "../shared/state/ondo-b-provider"
 import { ONDO_MODAL_PRIORITY } from "../shared/ui/modal-layer-priority"
 import { useDocumentScrollLock, useModalIsolation } from "../shared/ui/use-modal-isolation"
-import { HACKATHON_ENABLED, HACKATHON_DEMO_ENTRY, HACKATHON_OPEN_EVENT_B, manualHackathonDetail, openHackathonVenueB, readPendingHackathon, writePendingHackathon, type HackathonOpenDetail } from "./hackathon-campaign"
+import { HACKATHON_ENABLED, HACKATHON_DEMO_ENTRY, HACKATHON_GUIDE_PRODUCTION, HACKATHON_OPEN_EVENT_B, manualHackathonDetail, openHackathonVenueB, readPendingHackathon, writePendingHackathon, type HackathonOpenDetail } from "./hackathon-campaign"
 import { ApiError, api, beginZkLogin, canonicalJson, clearJourneySecrets, clearZkLoginReturn, createDemoSigner, ensureHolderKey, finishZkLogin, holderSign, isTerminalZkLoginError, readSigner, sha256Hex, signPersonalMessage, signTransactionBytes, fromBase64, type EntitlementInfo, type PublicConfig, type StoredSigner } from "./hackathon-client"
 import styles from "./hackathon-b.module.css"
 import { journeyStepIndex } from "./hackathon-navigation"
@@ -90,7 +90,7 @@ export function HackathonEntitlementLayerB() {
     if (hk) { url.searchParams.delete("hk"); window.history.replaceState(window.history.state, "", url.toString()) }
     return () => window.removeEventListener(HACKATHON_OPEN_EVENT_B, onOpen)
   }, [])
-  if (!open) return null
+  if (!open || (HACKATHON_GUIDE_PRODUCTION && open.source !== "guide")) return null
   const JourneyView = open.source === "guide" ? GuideJourney : process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1" ? HostedSuiJourney : process.env.NEXT_PUBLIC_HK_INTEGRATION_PREVIEW === "1" ? IntegrationJourney
     : isCxPreview() ? HackathonCxPreviewB : isReadinessPreview() ? HackathonReadinessB : Journey
   return <JourneyView key={`${open.source ?? "legacy"}:${open.resumeOperationId ?? open.venueId}`} detail={open} onClose={(restore = true) => {

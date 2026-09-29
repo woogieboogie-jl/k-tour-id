@@ -23,6 +23,8 @@ holder_key holder_mismatch idempotency_conflict identity_start_pending identity_
 identity_cancelled identity_failed identity_expired isolated_mock_external_disabled
 integration_preview_unavailable integration_preview_access_denied integration_preview_scope
 integration_sui_scope integration_sui_budget integration_sui_limit integration_sui_migration_required
+integration_shared_budget integration_cutover_unverified integration_cutover_source_changed
+integration_cutover_authority_unavailable integration_cutover_operator_configuration integration_cutover_outcome_unknown integration_cutover_conflict
 hosted_sui_unavailable hosted_sui_access_denied hosted_sui_scope hosted_sui_limit
 no_session nonce not_found omnione_evidence_unavailable omnione_submission_not_started
 omnione_transaction_mismatch omnione_unconfigured opendid_provider_unimplemented
@@ -63,6 +65,13 @@ const FIXED: Record<string, string> = {
   integration_sui_budget: "The retained integration execution budget is unavailable.",
   integration_sui_limit: "This integration journey has reached its execution limit.",
   integration_sui_migration_required: "The shared execution budget migration is not prepared.",
+  integration_shared_budget: "The shared execution budget is unavailable. No new execution is authorized.",
+  integration_cutover_unverified: "Execution authorization is not ready. No new execution is authorized.",
+  integration_cutover_source_changed: "Execution authorization changed. Check the current status; do not resubmit.",
+  integration_cutover_authority_unavailable: "Execution authorization is unavailable. No new execution is authorized.",
+  integration_cutover_operator_configuration: "Execution authorization is unavailable. No new execution is authorized.",
+  integration_cutover_outcome_unknown: "The preparation result is unconfirmed. Check the saved state; do not resubmit.",
+  integration_cutover_conflict: "Execution authorization changed. Check the current status; do not resubmit.",
   no_session: "Your session is unavailable. Start again to continue.",
   not_found: "The requested item could not be found.",
   operation_changed: "This request changed. Check its current status before continuing.",

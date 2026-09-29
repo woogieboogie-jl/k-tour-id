@@ -1,5 +1,13 @@
 # Shared Sui budget: one-way integration cutover
 
+> **Superseded as the recommended main-guide activation path.** The 2026-09-29
+> follow-up audit found a compatible single-pool reservation protocol; see
+> [shared-budget preparation](INTEGRATION_SHARED_BUDGET_2026-09-29.md).
+> The one-way fenced protocol below remains implemented and fail-closed, but its
+> old-writer retirement requirement is **not an owner prerequisite for the new
+> shared-reservation path**. Do not delete deployments or request a shutdown on
+> the strength of this historical plan.
+
 Status: **local machinery implemented; no remote cutover performed; activation blocked**.
 The production `vercel.json` remains the existing hosted-Sui profile. This work
 does not claim a new unified OmniOne record or a production guide E2E success.

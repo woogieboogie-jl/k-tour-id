@@ -59,7 +59,23 @@ Reviewed screenshots (local QA artifacts):
 - `/tmp/ktour-guide-access-final-20260929/tests-e2e-ktour-guide-main-5405c-k-approval-or-sample-signer-desktop-chromium/guide-identity-ja.png`
 - `/tmp/ktour-guide-access-final-20260929/tests-e2e-ktour-guide-main-2f930-with-pending-audit-distinct-mobile-chromium/guide-pass-ja.png`
 
-## Deployed read-only acceptance
+## Dedicated guide artifact: legacy-entry exclusion
+
+The dedicated `NEXT_PUBLIC_HK_GUIDE_PRODUCTION=1` artifact now excludes the historical venue CTA, menu shortcut, direct convenience helper, forged legacy open events and persisted v1 resume. The same canonical venue with an explicit `source: "guide"` still opens the real readiness boundary; an old pending pointer is neither deleted nor upgraded to a guide result. A second render guard prevents a legacy journey from mounting in the guide profile. With the guide flag off, the existing hosted CX/Sui entry behavior is unchanged. These guards do not weaken the global review/sample permission boundary.
+
+`tests/hackathon/guide-ui-campaign-profile.test.ts` exercises the real module in two fresh, credential-free processes: **2/2 passing**, both guide-only exclusion and preserved hosted behavior.
+
+The actual production artifact was compiled with `node scripts/hackathon-guide-build.mjs` (**build and TypeScript passed**) and served by `next start` on local port 3172 using only that builder's positive-allowlisted environment, with `HK_GUIDE_PRODUCTION_ENABLED=0`. `tests/e2e/ktour-guide-built-profile.spec.ts` then passed **6/6** on Japanese mobile 390px and desktop 1440px (32.2 seconds, one worker, zero retries). This suite uses the actual readiness response, not an API success fixture; every browser mutation and non-passive external request is blocked before forwarding. It asserts no attempted integration mutation, no generic operation/config reads from legacy shortcuts, and no page errors. It also confirms the free reader and unavailable-save return remain usable.
+
+The first run passed five cases; one test helper waited on a paused map timeline indefinitely. The helper was corrected to await only the current modal's bounded entry animation, without disabling product motion, and all six cases were rerun. Both final screenshots were actually viewed: Japanese text, close button, continued-reading button and retry button are contained and readable. The sole local server was stopped after verification. This proves the built runtime-OFF boundaries, not live provider integration or activation. The build exercised exclusion even with the old demo-shortcut flag still set; the subsequent builder/preparer hardening additionally sets that flag to zero.
+
+- Mobile: `/tmp/ktour-guide-built-profile-final-20260929/tests-e2e-ktour-guide-buil-93852-ue-and-menu-CTAs-are-absent-mobile-chromium/guide-built-runtime-off-ja.png`
+- Desktop: `/tmp/ktour-guide-built-profile-final-20260929/tests-e2e-ktour-guide-buil-93852-ue-and-menu-CTAs-are-absent-desktop-chromium/guide-built-runtime-off-ja.png`
+- Run JSON SHA256: `7a6af099e93a54152f5e689882b89701f7cac61b991fc63de181d45670ff0507` (Playwright's `artifacts/qa/playwright/results.json` at completion; the default report path may be replaced by later suites).
+
+Independent source review: **GO**, no P0/P1 issues. Explicit guide access remains canonical-venue/readiness-bound; historical pending state is not promoted. This is not permission to enable providers.
+
+## Deployed read-only acceptance (hosted profile)
 
 `tests/e2e/ktour-guide-production-readonly.spec.ts` requires explicit `GUIDE_REMOTE_READ_ONLY=1` and a root-approved `PLAYWRIGHT_BASE_URL`. It uses a fresh browser, blocks every non-read HTTP request before forwarding, checks the real deployed guide/readiness/Pass paths, and does not synthesize successful provider results. It must pass on the built/deployed artifact separately from the intercepted fixtures.
 

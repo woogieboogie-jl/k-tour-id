@@ -6,10 +6,13 @@ import { readBDiscoveryHistory, type BDiscoveryHistoryEntry } from "../map/b-dis
  * where the CTA renders. Keep in sync with the server env. */
 export const HACKATHON_CAMPAIGN_VENUE_ID = process.env.NEXT_PUBLIC_HK_CAMPAIGN_VENUE_ID ?? "mois-0021cd596bc5b2a922ad"
 export const HACKATHON_ENABLED = process.env.NEXT_PUBLIC_HK_ENABLED === "1"
+/** The dedicated guide artifact must not offer or resume the historical v1
+ * entitlement. Its only journey entry is the explicit, readiness-gated guide. */
+export const HACKATHON_GUIDE_PRODUCTION = process.env.NEXT_PUBLIC_HK_GUIDE_PRODUCTION === "1"
 /** Demo shortcut: a floating map button + `/hackathon` deep link that jump to the
  * designated venue so the journey can be clicked through without searching the map.
  * Off by default (visual tests); set NEXT_PUBLIC_HK_DEMO_ENTRY=1 in .env.local. */
-export const HACKATHON_DEMO_ENTRY = HACKATHON_ENABLED && process.env.NEXT_PUBLIC_HK_DEMO_ENTRY === "1"
+export const HACKATHON_DEMO_ENTRY = HACKATHON_ENABLED && !HACKATHON_GUIDE_PRODUCTION && process.env.NEXT_PUBLIC_HK_DEMO_ENTRY === "1"
 
 export const HACKATHON_OPEN_EVENT_B = "ondo:b:hackathon-open"
 export const HACKATHON_PENDING_KEY = "ondo-b.hackathon.pending.v1"
@@ -29,7 +32,7 @@ export function manualHackathonDetail(value: unknown): HackathonOpenDetail | nul
 }
 
 export function isHackathonVenue(venueId: unknown) {
-  return HACKATHON_ENABLED && typeof venueId === "string" && venueId === HACKATHON_CAMPAIGN_VENUE_ID
+  return HACKATHON_ENABLED && !HACKATHON_GUIDE_PRODUCTION && typeof venueId === "string" && venueId === HACKATHON_CAMPAIGN_VENUE_ID
 }
 
 export function requestHackathonOpenB(detail: HackathonOpenDetail) {
@@ -45,7 +48,7 @@ export function requestHackathonOpenB(detail: HackathonOpenDetail) {
  * return (city switch included). A short delay lets the map register its listener
  * when this is called right after first paint (`/hackathon` deep link). */
 export function openHackathonVenueB(delayMs = 0) {
-  if (typeof window === "undefined" || !HACKATHON_ENABLED) return
+  if (typeof window === "undefined" || !HACKATHON_ENABLED || HACKATHON_GUIDE_PRODUCTION) return
   window.setTimeout(() => {
     if (!requestPlaceServiceReturnB(HACKATHON_CAMPAIGN_VENUE_ID, "offer")) return
     // The place sheet opens at its compact level; expand it (same as tapping

@@ -9,6 +9,7 @@ import { captureHiddenInput, persistOwnerInput, validateOwnerInput, OWNER_INPUT_
 
 const GOOGLE = '123456789012-syntheticclientonly0001.apps.googleusercontent.com'
 const GEMINI = 'AIza' + 'syntheticfixtureonly00000000000000000'
+const RPC = 'https://stage-chainapi.omnione.net/?token=' + 'synthetic-token-not-a-credential.'.repeat(30)
 async function temporary(t) {
   const base = await mkdtemp(join(await realpath(tmpdir()), 'ktour-owner-fixture-'))
   await chmod(base, 0o700)
@@ -42,6 +43,30 @@ test('private durable file preserves existing inputs and refuses key replacement
   await assert.rejects(persistOwnerInput('google', GOOGLE, dir), { code: 'input_already_exists' })
   assert.equal(await readFile(path, 'utf8'), bytes)
   assert.deepEqual(await readdir(dir), ['inputs.json'])
+})
+test('provided Omni RPC is pinned, separately stored and never replaces the missing recorder key', async t => {
+  assert.equal(validateOwnerInput('omnione-rpc', RPC), RPC)
+  for (const value of [RPC.replace('https:', 'http:'), RPC.replace('stage-chainapi.', 'test.stage-chainapi.'), RPC.replace('omnione.net', 'evil.invalid'), RPC + '&token=duplicate', RPC + '#fragment', RPC.replace('/?token', '/other?token'), 'https://stage-chainapi.omnione.net/?token=short', RPC.replace('https://', 'https://user@')]) {
+    assert.throws(() => validateOwnerInput('omnione-rpc', value), { code: 'invalid_rpc_url' })
+  }
+  const dir = await temporary(t)
+  await persistOwnerInput('omnione-rpc', RPC, dir)
+  await persistOwnerInput('google', GOOGLE, dir)
+  const doc = JSON.parse(await readFile(join(dir, 'inputs.json'), 'utf8'))
+  assert.equal(doc.inputs.HK_OMNIONE_RPC_URL, RPC)
+  assert.equal(doc.inputs.HK_OMNIONE_PRIVATE_KEY, undefined)
+  assert.equal(doc.inputs.NEXT_PUBLIC_GOOGLE_CLIENT_ID, GOOGLE)
+  await assert.rejects(persistOwnerInput('omnione-rpc', RPC, dir), { code: 'input_already_exists' })
+})
+test('long hidden RPC input is supported only by an explicit bounded capture mode', async () => {
+  const f = tty(), pending = captureHiddenInput(f.input, f.output, 4608)
+  f.input.emit('data', RPC + '\r')
+  assert.equal(await pending, RPC)
+  assert.equal(f.text().includes('synthetic-token'), false)
+  const ordinary = tty(), tooLong = captureHiddenInput(ordinary.input, ordinary.output)
+  ordinary.input.emit('data', RPC + '\r')
+  await assert.rejects(tooLong, { code: 'invalid_input' })
+  await assert.rejects(captureHiddenInput(f.input, f.output, 4609), { code: 'invalid_input' })
 })
 test('concurrent input capture cannot overwrite or split existing state', async t => {
   const dir = await temporary(t)
