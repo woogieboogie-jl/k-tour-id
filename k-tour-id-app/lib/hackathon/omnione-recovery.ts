@@ -1,16 +1,20 @@
 // Chain-read-only recovery. No service/config/Wallet import or submission capability.
 import { randomUUID } from "node:crypto"
 import type { Db, OutboxRecord } from "./store"
-import { nonzeroHex32, OMNIONE_STAGE } from "./omnione-evidence"
+import { nonzeroHex32 } from "./omnione-evidence"
+import { sameOmnioneTarget, storedOmnioneTarget } from "./omnione-targets"
+import { mirrorGuideCollection } from "./guide-collection"
 import { readOmnioneReceiptEvidence, type OmnioneReceiptResult, type OmnioneRpcReader } from "./omnione-readonly"
 
 export type RecoveryRepository = { read: () => Promise<Db>; mutate: <T>(work: (db: Db) => T, cleanup?: boolean) => Promise<T> }
 const eligible = (row: OutboxRecord) => row && (row.status === "submitted" || row.status === "unknown") && nonzeroHex32(row.txHash) && nonzeroHex32(row.eventKey) && nonzeroHex32(row.payloadCommitment)
-const unchanged = (row: OutboxRecord, before: OutboxRecord) => row.operationId === before.operationId && row.txHash === before.txHash && row.eventKey === before.eventKey && row.payloadCommitment === before.payloadCommitment
+const unchanged = (row: OutboxRecord, before: OutboxRecord) => row.operationId === before.operationId && row.txHash === before.txHash && row.eventKey === before.eventKey && row.payloadCommitment === before.payloadCommitment && sameOmnioneTarget(row.target, before.target)
 function mirror(db: Db, row: OutboxRecord, at: string) {
+  mirrorGuideCollection(db, row)
   const op = db.operations[row.operationId]
   if (!op?.chain || op.chain.outboxId !== row.outboxId || op.chain.eventKey !== row.eventKey || op.chain.payloadCommitment !== row.payloadCommitment) return
-  op.chain = { outboxId: row.outboxId, eventKey: row.eventKey, payloadCommitment: row.payloadCommitment, status: row.status, txHash: row.txHash, blockNumber: row.blockNumber, attempts: row.attempts, lastError: row.lastError, confirmedAt: row.confirmedAt }
+  if (!sameOmnioneTarget(op.omnioneTarget, row.target) || !sameOmnioneTarget(op.chain.target, row.target)) return
+  op.chain = { target: storedOmnioneTarget(row.target), outboxId: row.outboxId, eventKey: row.eventKey, payloadCommitment: row.payloadCommitment, status: row.status, txHash: row.txHash, blockNumber: row.blockNumber, attempts: row.attempts, lastError: row.lastError, confirmedAt: row.confirmedAt }
   op.revision += 1; op.updatedAt = at
   op.audit.push({ at, event: `chain.${row.status}` })
 }
@@ -51,6 +55,7 @@ export async function recoverOmnioneOutbox(options: { repository: RecoveryReposi
     const claimId = `obx_recover_${randomUUID()}`
     let claimed = false
     try {
+      const target = storedOmnioneTarget(snapshot.target)
       claimed = await options.repository.mutate(current => {
         const row = current.outbox[id]
         if (!eligible(row) || !unchanged(row, snapshot) || Date.now() >= deadline ||
@@ -59,7 +64,7 @@ export async function recoverOmnioneOutbox(options: { repository: RecoveryReposi
         return true
       })
       if (!claimed) { summary.skipped++; continue }
-      const result = await readOmnioneReceiptEvidence(options.rpc, { txHash: snapshot.txHash!, eventKey: snapshot.eventKey, payloadCommitment: snapshot.payloadCommitment, registry: OMNIONE_STAGE.registry, recorder: OMNIONE_STAGE.recorder, chainId: OMNIONE_STAGE.chainId })
+      const result = await readOmnioneReceiptEvidence(options.rpc, { txHash: snapshot.txHash!, eventKey: snapshot.eventKey, payloadCommitment: snapshot.payloadCommitment, registry: target.registry, recorder: target.recorder, chainId: target.chainId })
       summary.checked++
       const saved = await options.repository.mutate(current => {
         const row = current.outbox[id]

@@ -31,16 +31,18 @@ export type ProposalInput = { venueId: string; campaignId: string; venueName: st
 const INJECTION = /(ignore (all|previous|prior)|system prompt|developer mode|transfer|send (sui|coin|token)|private key|seed phrase|amount|₩|\$\d|discount|refund|reservation)/i
 
 function validate(raw: unknown, input: ProposalInput): { ok: true; output: ProposalOutput } | { ok: false; reason: string } {
-  if (!raw || typeof raw !== "object") return { ok: false, reason: "not_object" }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, reason: "not_object" }
   const o = raw as Record<string, unknown>
+  if (Object.keys(o).sort().join(",") !== "action,language,rationale,summary,target,title") return { ok: false, reason: "keys_invalid" }
   if (o.action !== (input.action ?? "redeem_demo_entitlement")) return { ok: false, reason: "action_not_allowed" }
   const target = o.target as Record<string, unknown> | undefined
-  if (!target || target.venueId !== input.venueId || target.campaignId !== input.campaignId) return { ok: false, reason: "target_mismatch" }
+  if (!target || typeof target !== "object" || Array.isArray(target) || Object.keys(target).sort().join(",") !== "campaignId,venueId" || target.venueId !== input.venueId || target.campaignId !== input.campaignId) return { ok: false, reason: "target_mismatch" }
   const str = (k: string, max: number) => typeof o[k] === "string" && (o[k] as string).trim().length > 0 && (o[k] as string).length <= max ? (o[k] as string).trim() : null
   const title = str("title", 60), summary = str("summary", 200), rationale = str("rationale", 260)
   if (!title || !summary || !rationale) return { ok: false, reason: "text_invalid" }
   if (INJECTION.test(`${title} ${summary} ${rationale}`)) return { ok: false, reason: "guard_tripped" }
-  const language = o.language === "en" || o.language === "ja" ? o.language : "ko"
+  if (o.language !== input.language) return { ok: false, reason: "language_mismatch" }
+  const language = input.language
   return { ok: true, output: { action: input.action ?? "redeem_demo_entitlement", target: { venueId: input.venueId, campaignId: input.campaignId }, title, summary, rationale, language } }
 }
 
@@ -55,9 +57,21 @@ export async function proposePerk(input: ProposalInput): Promise<ProposalSummary
     const guide = input.action === "save-neighborhood-guide-to-pass"
     const message = JSON.stringify({ venue: { id: input.venueId, name: input.venueName, category: input.category, district: input.district }, campaign: { id: input.campaignId, kind: guide ? "save_free_public_guide_to_travel_pass" : "non_financial_experience_perk", usesLeft: 1 }, context: { timeOfDay: input.timeOfDay, language: input.language } })
     const system = guide ? SYSTEM.replaceAll("redeem_demo_entitlement", input.action!) + " This only saves an already freely readable neighborhood guide to the travel pass. Do not promise admission, payment, age permission, reservations, or a financial benefit." : SYSTEM
-    const res = await geminiGenerate({ key: process.env.GEMINI_API_KEY, model: c.model, system, message, maxOutputTokens: 400, temperature: 0.3 })
+    const responseJsonSchema = {
+      type: "object", additionalProperties: false,
+      required: ["action", "target", "title", "summary", "rationale", "language"],
+      properties: {
+        action: { type: "string", enum: [input.action ?? "redeem_demo_entitlement"] },
+        target: { type: "object", additionalProperties: false, required: ["venueId", "campaignId"], properties: {
+          venueId: { type: "string", enum: [input.venueId] }, campaignId: { type: "string", enum: [input.campaignId] },
+        } },
+        title: { type: "string" }, summary: { type: "string" }, rationale: { type: "string" },
+        language: { type: "string", enum: [input.language] },
+      },
+    }
+    const res = await geminiGenerate({ key: process.env.GEMINI_API_KEY, model: c.model, system, message, maxOutputTokens: 1024, temperature: 0.3, responseJsonSchema })
     let parsed: unknown = null
-    if (res.reply) { try { parsed = JSON.parse(res.reply.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim()) } catch { parsed = null } }
+    if (res.reply) { try { parsed = JSON.parse(res.reply) } catch { parsed = null } }
     const v = validate(parsed, input)
     if (v.ok && !res.error && res.model) {
       output = v.output

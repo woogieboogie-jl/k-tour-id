@@ -9,6 +9,7 @@ import http from "node:http"
 import https from "node:https"
 import { readStore, withStore, type OperationRecord, type OutboxRecord } from "../../lib/hackathon/store"
 import { HkError, nowIso, plusMs, randomId } from "../../lib/hackathon/util"
+import { omnioneTargetSnapshot } from "../../lib/hackathon/omnione-targets"
 
 const fixtureHash = "0x" + "1".repeat(64), fixtureCommitment = "0x" + "2".repeat(64)
 const root = mkdtempSync(join(tmpdir(), "cx-chain-outbox-audit-"))
@@ -46,7 +47,7 @@ mock.module(new URL("../../lib/hackathon/adapters/omnione.ts", import.meta.url).
     return { ...submitResult }
   },
 } })
-const { processOutbox } = await import("../../lib/hackathon/service")
+const { processOutbox, evidence } = await import("../../lib/hackathon/service")
 
 before(() => {
   process.env.HK_ISOLATED_MOCK = "1"; process.env.HK_DATA_DIR = root
@@ -90,6 +91,27 @@ test("unconfigured chain leaves the audit pending without dispatch", async () =>
   const result = await processOutbox(outboxId)
   assert.equal(result?.status, "pending"); assert.equal(result?.txHash, null)
   assert.equal(submitCalls, 0); assert.equal(registryCalls, 0)
+})
+
+test("receipt evidence describes persisted target, never current deployment settings", async () => {
+  const ids = await seed("submitted")
+  const op = await readStore(db => db.operations[ids.operationId])
+  const old = evidence(op).omnione!
+  assert.equal(old.registry, omnioneTargetSnapshot().registry)
+  const target = omnioneTargetSnapshot("stage-20260930")
+  const migratedFixture = structuredClone(op); migratedFixture.omnioneTarget = target; migratedFixture.chain!.target = target
+  const newer = evidence(migratedFixture).omnione!
+  assert.equal(newer.registry, target.registry); assert.equal(newer.recorder, target.recorder)
+  assert.notEqual(old.registry, newer.registry)
+})
+test("store CAS refuses simultaneous operation/outbox retargeting and preserves prior row", async () => {
+  const ids = await seed("submitted"), target = omnioneTargetSnapshot("stage-20260930")
+  await assert.rejects(withStore(db => {
+    db.operations[ids.operationId].omnioneTarget = target; db.operations[ids.operationId].chain!.target = target
+    db.outbox[ids.outboxId].target = target
+  }), /history/i)
+  assert.equal((await readStore(db => db.outbox[ids.outboxId])).target, undefined)
+  assert.equal(submitCalls, 0)
 })
 
 test("submitted audit retries only receipt lookup and confirms matching registry data", async () => {

@@ -44,6 +44,22 @@ test('private durable file preserves existing inputs and refuses key replacement
   assert.equal(await readFile(path, 'utf8'), bytes)
   assert.deepEqual(await readdir(dir), ['inputs.json'])
 })
+test('Gemini authorization tokens are header-safe opaque syntax, not AIza-only or online validation', async t => {
+  const authorization = 'AQ.' + 'synthetic_fixture-only.~+/'.repeat(8) + '=='
+  assert.equal(validateOwnerInput('gemini', authorization), authorization)
+  assert.equal(validateOwnerInput('gemini', 'x'.repeat(512)).length, 512)
+  for (const invalid of ['x'.repeat(31), 'x'.repeat(513), authorization + '\r\nX-Injected: value', 'https://provider.invalid/' + 'x'.repeat(40), 'Bearer ' + authorization, 'x'.repeat(40) + '"', 'x'.repeat(40) + '\\', 'x'.repeat(40) + '한', 'x'.repeat(40) + '===']) {
+    assert.throws(() => validateOwnerInput('gemini', invalid))
+  }
+  const dir = await temporary(t)
+  await persistOwnerInput('gemini', authorization, dir)
+  // Loading the document for another input must preserve modern keys too.
+  await persistOwnerInput('google', GOOGLE, dir)
+  const path = join(dir, 'inputs.json'), doc = JSON.parse(await readFile(path, 'utf8'))
+  assert.equal(doc.inputs.GEMINI_API_KEY, authorization)
+  assert.equal((await lstat(path)).mode & 0o777, 0o600)
+  await assert.rejects(persistOwnerInput('gemini', GEMINI, dir), { code: 'input_already_exists' })
+})
 test('provided Omni RPC is pinned, separately stored and never replaces the missing recorder key', async t => {
   assert.equal(validateOwnerInput('omnione-rpc', RPC), RPC)
   for (const value of [RPC.replace('https:', 'http:'), RPC.replace('stage-chainapi.', 'test.stage-chainapi.'), RPC.replace('omnione.net', 'evil.invalid'), RPC + '&token=duplicate', RPC + '#fragment', RPC.replace('/?token', '/other?token'), 'https://stage-chainapi.omnione.net/?token=short', RPC.replace('https://', 'https://user@')]) {

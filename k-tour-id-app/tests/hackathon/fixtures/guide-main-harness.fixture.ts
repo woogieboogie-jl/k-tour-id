@@ -66,7 +66,7 @@ globalThis.fetch = (async (raw: string | URL | Request, init?: RequestInit) => {
   if (url.origin === "https://graphql.testnet.sui.io" && url.pathname === "/graphql") return json({ data: { verifySignature: { success: false } } })
   if (url.origin === "https://generativelanguage.googleapis.com") {
     const input = JSON.parse(body.contents.at(-1).parts[0].text)
-    return json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ action: control.badAi ? "transfer" : GUIDE_SAVE_V2.action, target: { venueId: input.venue.id, campaignId: input.campaign.id }, title: "街歩きガイド", summary: "旅のパスにガイドを保存します。", rationale: "次の街歩きに役立つガイドです。", language: "ja" }) }] } }] })
+    return json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({ action: control.badAi ? "transfer" : GUIDE_SAVE_V2.action, target: { venueId: input.venue.id, campaignId: input.campaign.id }, title: "街歩きガイド", summary: "旅のパスにガイドを保存します。", rationale: "次の街歩きに役立つガイドです。", language: "ja" }) }] } }] })
   }
   if (url.origin === "https://bridge.fixture.invalid") {
     assert.match(new Headers(init?.headers).get("x-ktour-owner") ?? "", /^[a-f0-9]{64}$/)
@@ -81,7 +81,7 @@ globalThis.fetch = (async (raw: string | URL | Request, init?: RequestInit) => {
       if (url.pathname.endsWith("/status")) { counters.status++; return json({ issuanceId: key, active: !control.revoked, reason: control.revoked ? "status_revoked" : null, checkedAt: iso() }) }
       if (url.pathname.endsWith("/cancel")) { value.state = "cancelled"; value.offer = null; value.credential = null; return json(value) }
       value.state = "issued"; value.revision++; value.offer = null
-      value.credential = { vcId: `urn:fixture:${key}`, issuerDid: "did:fixture:issuer", schemaId: "fixture-proposed-guide-v2", validFrom: iso(-1000), validUntil: iso(600_000), holderBinding: id(key) }
+      value.credential = { vcId: `urn:fixture:${key}`, issuerDid: "did:fixture:issuer", schemaId: "https://schema.fixture.invalid/fixture-proposed-guide-v2", validFrom: iso(-1000), validUntil: iso(600_000), holderBinding: id(key) }
       return json(value)
     }
     if (url.pathname === "/bridge/v1/presentations") {
@@ -101,7 +101,7 @@ globalThis.fetch = (async (raw: string | URL | Request, init?: RequestInit) => {
 }) as typeof fetch
 
 const { withStore, readStore } = await import("../../../lib/hackathon/store")
-const bridge = createOpenDidBridgeClient({ baseUrl: "https://bridge.fixture.invalid", trustedOrigin: "https://bridge.fixture.invalid", serviceToken: "fixture-token-".padEnd(40, "x"), ownerBindingSecret: "fixture-owner-binding-".padEnd(40, "x"), issuerDid: "did:fixture:issuer", schemaId: "fixture-proposed-guide-v2" })
+const bridge = createOpenDidBridgeClient({ baseUrl: "https://bridge.fixture.invalid", trustedOrigin: "https://bridge.fixture.invalid", serviceToken: "fixture-token-".padEnd(40, "x"), ownerBindingSecret: "fixture-owner-binding-".padEnd(40, "x"), issuerDid: "did:fixture:issuer", schemaId: "https://schema.fixture.invalid/fixture-proposed-guide-v2" })
 const opBinding = (op: OperationRecord) => digestOf({ operationId: op.operationId, sessionId: op.sessionId, identity: op.identity, consent: op.consent, journey: op.journey, expiresAt: op.expiresAt })
 function projection(op: OperationRecord, s: OpenDidProviderState) {
   const c = s.issuance?.credential, p = s.presentation

@@ -1,7 +1,8 @@
 // Offline, allowlisted evidence export. No service/config/store runtime imports:
 // importing this module cannot load credentials, connect, sign or mutate a ledger.
 import { digestOf, sha256Hex } from "./util"
-import { OMNIONE_STAGE, verifyOmnioneReceiptEvidence } from "./omnione-evidence"
+import { verifyOmnioneReceiptEvidence } from "./omnione-evidence"
+import { sameOmnioneTarget, storedOmnioneTarget } from "./omnione-targets"
 
 export const SUBMISSION_INPUT_SCHEMA = "ktour-submission-input/v1"
 export const SUBMISSION_SCHEMA = "ktour-submission-evidence/v1"
@@ -181,7 +182,13 @@ export function buildSubmissionEvidence(input: unknown, now = Date.now()) {
     payload.kind === "DemoEntitlementRedeemed" && payload.schemaVersion === "KPassHackathonCredential/v1" && payload.campaignRef === o.campaignId &&
     payload.policyVersion === o.policyVersion && hex32(payload.salt) && payload.suiDigestCommitment === (str(agent.txDigest) ? sha256Hex(agent.txDigest) : null) &&
     payload.manifestCommitment === agent.manifestCommitment && ob.payloadCommitment === digestOf(payload))
-  check("omnione_service_binding", expectedOmni.chainId === OMNIONE_STAGE.chainId && expectedOmni.registry === OMNIONE_STAGE.registry && expectedOmni.recorder === OMNIONE_STAGE.recorder &&
+  let pinnedOmnione = false
+  try {
+    const target = storedOmnioneTarget(ob.target)
+    pinnedOmnione = sameOmnioneTarget(chain.target, target) && (o.omnioneTarget === undefined || sameOmnioneTarget(o.omnioneTarget, target)) &&
+      expectedOmni.chainId === target.chainId && expectedOmni.registry === target.registry && expectedOmni.recorder === target.recorder
+  } catch { /* Invalid/unregistered targets cannot produce a complete evidence export. */ }
+  check("omnione_service_binding", pinnedOmnione &&
     matches(serviceOmni, { chainId: expectedOmni.chainId, registry: expectedOmni.registry, ...pick(ob, ["eventKey", "payloadCommitment", "status", "txHash", "blockNumber", "confirmedAt"]) }))
   let suppliedReceiptChecked = false
   if (root.omnioneReceipt !== undefined) {

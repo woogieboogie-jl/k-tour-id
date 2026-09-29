@@ -1,4 +1,4 @@
-import { hkConfig, HK_SERVICE_ACCESS } from "./config"
+import { hkConfig, HK_SERVICE_ACCESS, omnioneConfigurationReady } from "./config"
 import { GUIDE_SAVE_V2, isGuideJourney, type GuideReadiness, type GuideReadinessCheck } from "./guide-contract"
 import { isHostedSuiProfile } from "./hosted-sui-profile"
 import { requiresIntegrationSuiLimits, integrationSuiPreflightIssues } from "./integration-sui-limits"
@@ -25,7 +25,7 @@ export async function guideReadiness(now = Date.now()): Promise<GuideReadiness> 
     identity: c.cx.mode === "cx" && !c.isolatedMock,
     credential: provider && c.opendid.mode === "opendid" && providerIntegrationAvailable(),
     execution,
-    audit: provider && Boolean(c.omnione.rpcUrl && c.omnione.privateKey && c.omnione.registryAddress),
+    audit: provider && omnioneConfigurationReady(c),
     login: provider && Boolean(c.sui.googleClientId && c.sui.zkSaltSeed && selectZkLoginProvider(process.env)),
     ai: provider && c.ai.mode === "gemini",
     campaign: Number.isFinite(now) && now < Date.parse(GUIDE_SAVE_V2.endsAt),

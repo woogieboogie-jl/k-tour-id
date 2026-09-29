@@ -17,6 +17,7 @@ import { hkConfig } from "./config"
 import type { OperationResult } from "./types"
 import { HkError } from "./util"
 import { parseStoredJourney } from "./store-integrity"
+import { omnioneTargetBindings, assertOmnioneTargetMonotonic } from "./omnione-target-integrity"
 import { previewRedisConfig, storeRedisCommand, type StoreCanaryOwnership } from "./redis-config"
 import { hostedIntegrationRedisConfig, requiresHostedIntegrationRedis } from "./hosted-store-config"
 import { assertIntegrationSuiBudget, assertIntegrationSuiBudgetMonotonic, assertIntegrationSuiOperation, assertIntegrationSuiLimits, integrationSuiAuthorizationScopeDigest, requiresIntegrationSuiLimits, type IntegrationSuiBudget } from "./integration-sui-limits"
@@ -30,6 +31,7 @@ import { assertSharedBudget, assertSharedBudgetMonotonic, assertSharedBudgetStat
   SHARED_BUDGET_COMMIT_LUA, SHARED_BUDGET_INITIALIZE_LUA, type IntegrationSharedBudget, type SharedBudgetControl } from "./integration-shared-budget"
 
 export type OperationRecord = OperationResult & {
+  omnioneTarget?: import("./omnione-targets").OmnioneTargetSnapshot
   sessionId: string
   secrets: {
     identityImport?: { sourceOperationId: string; evidenceId: string; authorizationRef: string; contextDigest: string; importedAt: string }
@@ -54,6 +56,7 @@ export type OperationRecord = OperationResult & {
 export type SessionRecord = { sessionId: string; createdAt: string; lastSeenAt: string; subjectRef: string | null }
 export type RedemptionRecord = { redemptionRef: string; subjectRef: string; campaignId: string; operationId: string; redeemedAt: string }
 export type OutboxRecord = {
+  target?: import("./omnione-targets").OmnioneTargetSnapshot
   outboxId: string; operationId: string; eventKey: string; payloadCommitment: string; payload: Record<string, unknown>
   status: "pending" | "submitted" | "confirmed" | "failed" | "unknown"; txHash: string | null; blockNumber: number | null
   attempts: number; lastError: string | null; createdAt: string; updatedAt: string; confirmedAt: string | null
@@ -276,6 +279,7 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       const collection = db.guideCollection ? structuredClone(db.guideCollection) : undefined
       const shared = db.integrationSharedBudget ? structuredClone(assertSharedBudget(db)) : undefined
       const jit = db.jitIdentity ? structuredClone(db.jitIdentity) : undefined, imports = jitImportBindings(db)
+      const chainTargets = omnioneTargetBindings(db)
       refreshJitImportedIdentities(db)
       const result = await fn(db)
       refreshJitImportedIdentities(db)
@@ -285,6 +289,7 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       assertGuideCollectionMonotonic(collection, db)
       assertSharedBudgetMonotonic(shared, db)
       assertJitIdentityMonotonic(jit, db); assertJitImportBindings(imports, db)
+      assertOmnioneTargetMonotonic(chainTargets, db)
       prune(db)
       filePersist(b.path, db)
       fileCache = db
@@ -308,6 +313,7 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       const collection = db.guideCollection ? structuredClone(db.guideCollection) : undefined
       const shared = db.integrationSharedBudget ? structuredClone(assertSharedBudget(db)) : undefined
       const jit = db.jitIdentity ? structuredClone(db.jitIdentity) : undefined, imports = jitImportBindings(db)
+      const chainTargets = omnioneTargetBindings(db)
       refreshJitImportedIdentities(db)
       const result = await fn(db)
       refreshJitImportedIdentities(db)
@@ -317,6 +323,7 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       assertGuideCollectionMonotonic(collection, db)
       assertSharedBudgetMonotonic(shared, db)
       assertJitIdentityMonotonic(jit, db); assertJitImportBindings(imports, db)
+      assertOmnioneTargetMonotonic(chainTargets, db)
       prune(db)
       if (cutover) await redisCutoverPersist(b, cutover, db, token, sourceToken)
       else await redisPersist(b, db, token)

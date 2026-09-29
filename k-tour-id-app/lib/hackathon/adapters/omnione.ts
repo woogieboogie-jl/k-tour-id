@@ -7,8 +7,9 @@
 import { Contract, JsonRpcProvider, Wallet, getBytes, hexlify, keccak256, zeroPadValue } from "ethers"
 import { assertExternalServicesEnabled, hkConfig } from "../config"
 import { HkError } from "../util"
-import { OMNIONE_STAGE, evidenceFail, nonzeroHex32, sameHex, validateOmnioneExpectation } from "../omnione-evidence"
-import { omnioneRpcReader, readOmnioneReceiptEvidence, type OmnioneReceiptResult } from "../omnione-readonly"
+import { evidenceFail, nonzeroHex32, validateOmnioneExpectation } from "../omnione-evidence"
+import { configuredOmnioneTarget, storedOmnioneTarget, sameOmnioneTarget, type OmnioneTargetSnapshot } from "../omnione-targets"
+import { approvedOmnioneRpc, omnioneRpcReader, readOmnioneReceiptEvidence, type OmnioneReceiptResult } from "../omnione-readonly"
 import { checkedOmnioneSigningTarget, verifyOmnioneSigningAuthority } from "../omnione-signing-preflight"
 
 const ABI = [
@@ -20,52 +21,67 @@ const ABI = [
 ]
 
 let providerSingleton: JsonRpcProvider | null = null
-function provider() {
+let providerConfig: { rpcUrl: string; chainId: number } | null = null
+function provider(target?: OmnioneTargetSnapshot) {
   assertExternalServicesEnabled("OmniOne Chain")
   const c = hkConfig().omnione
   if (!c.rpcUrl) throw new HkError("omnione_unconfigured", "HK_OMNIONE_RPC_URL missing", 503)
-  if (!providerSingleton) providerSingleton = new JsonRpcProvider(c.rpcUrl, { chainId: c.chainId, name: "omnione-stage" }, { staticNetwork: true })
+  if (!approvedOmnioneRpc(c.rpcUrl)) evidenceFail("rpc_configuration_invalid")
+  const chainId = storedOmnioneTarget(target).chainId
+  if (providerConfig && (providerConfig.rpcUrl !== c.rpcUrl || providerConfig.chainId !== chainId)) evidenceFail("rpc_configuration_changed")
+  if (!providerSingleton) {
+    providerSingleton = new JsonRpcProvider(c.rpcUrl, { chainId, name: "omnione-stage" }, { staticNetwork: true })
+    providerConfig = { rpcUrl: c.rpcUrl, chainId }
+  }
   return providerSingleton
 }
-function signer() {
+function signer(target?: OmnioneTargetSnapshot) {
   assertExternalServicesEnabled("OmniOne Chain signing")
   const c = hkConfig().omnione
   if (!c.privateKey) throw new HkError("omnione_unconfigured", "HK_OMNIONE_PRIVATE_KEY missing", 503)
-  return new Wallet(c.privateKey, provider())
+  if (!sameOmnioneTarget(target, configuredOmnioneTarget(c))) evidenceFail("target_configuration_changed")
+  return new Wallet(c.privateKey, provider(target))
 }
-function registry(withSigner: boolean) {
+function registry(withSigner: boolean, target?: OmnioneTargetSnapshot) {
   assertExternalServicesEnabled("OmniOne Chain")
-  const c = hkConfig().omnione
-  if (!c.registryAddress) throw new HkError("omnione_unconfigured", "HK_OMNIONE_REGISTRY_ADDRESS missing", 503)
-  return new Contract(c.registryAddress, ABI, withSigner ? signer() : provider())
+  const t = storedOmnioneTarget(target)
+  return new Contract(t.registry, ABI, withSigner ? signer(t) : provider(t))
 }
 const b32 = (hex: string) => zeroPadValue(getBytes(hex), 32)
 
-export function omnioneConfigured() {
+export function omnioneConfigured(target?: OmnioneTargetSnapshot, readOnly = false) {
   if (hkConfig().isolatedMock) return false
   const c = hkConfig().omnione
-  return Boolean(c.rpcUrl && c.privateKey && c.registryAddress)
+  try {
+    storedOmnioneTarget(target)
+    if (!c.rpcUrl || !approvedOmnioneRpc(c.rpcUrl)) return false
+    if (readOnly) return true // Historical receipts never depend on the current signing key/target.
+    const configured = configuredOmnioneTarget(c)
+    return Boolean(c.privateKey && (target === undefined || sameOmnioneTarget(target, configured)))
+  } catch { return false }
 }
 
 /** Persist the signed transaction's identity BEFORE broadcasting. No raw signature is exposed. */
-export async function submitRedemption(opts: { eventKeyHex: string; payloadCommitmentHex: string; onPrepared?: (txHash: string) => Promise<void> }) {
+export async function submitRedemption(opts: { eventKeyHex: string; payloadCommitmentHex: string; target?: OmnioneTargetSnapshot; onPrepared?: (txHash: string) => Promise<void> }) {
   // Preserve the isolation contract; a disabled lane is not a retryable RPC failure.
   assertExternalServicesEnabled("OmniOne Chain submission")
   let broadcastStarted = false
   try {
     const c = hkConfig().omnione
-    const target = checkedOmnioneSigningTarget({ rpcUrl: c.rpcUrl, chainId: c.chainId, registryAddress: c.registryAddress, recorderAddress: process.env.HK_OMNIONE_RECORDER_ADDRESS })
+    const target = checkedOmnioneSigningTarget(c)
+    const snapshot = storedOmnioneTarget(opts.target)
+    if (!sameOmnioneTarget(snapshot, configuredOmnioneTarget(c))) evidenceFail("target_configuration_changed")
     if (!nonzeroHex32(opts.eventKeyHex) || !nonzeroHex32(opts.payloadCommitmentHex)) evidenceFail("evidence_configuration_invalid")
-    const existing = await getRedemption(opts.eventKeyHex)
+    const existing = await getRedemption(opts.eventKeyHex, snapshot)
     if (existing.exists) return { txHash: null as string | null, alreadyRecorded: true, matches: existing.payloadCommitment.toLowerCase() === opts.payloadCommitmentHex.toLowerCase() }
-    const wallet = signer()
+    const wallet = signer(snapshot)
     await verifyOmnioneSigningAuthority(target, wallet.address, omnioneRpcReader(c.rpcUrl, { maxCalls: 3, deadline: Date.now() + 15000 }))
-    const request = await registry(false).recordRedemption.populateTransaction(b32(opts.eventKeyHex), b32(opts.payloadCommitmentHex), { type: 0, gasPrice: 0n, gasLimit: c.gasLimit })
+    const request = await registry(false, snapshot).recordRedemption.populateTransaction(b32(opts.eventKeyHex), b32(opts.payloadCommitmentHex), { type: 0, gasPrice: 0n, gasLimit: c.gasLimit })
     const signed = await wallet.signTransaction(await wallet.populateTransaction(request))
     const txHash = keccak256(signed)
     await opts.onPrepared?.(txHash)
     broadcastStarted = true
-    const tx = await provider().broadcastTransaction(signed)
+    const tx = await provider(snapshot).broadcastTransaction(signed)
     if (tx.hash.toLowerCase() !== txHash.toLowerCase()) throw new HkError("omnione_transaction_mismatch", "Broadcast result does not match the prepared transaction", 502)
     return { txHash, alreadyRecorded: false, matches: true }
   } catch (error) {
@@ -76,19 +92,17 @@ export async function submitRedemption(opts: { eventKeyHex: string; payloadCommi
   }
 }
 
-export async function getRedemption(eventKeyHex: string) {
-  const r = await registry(false).getRedemption(b32(eventKeyHex))
+export async function getRedemption(eventKeyHex: string, target?: OmnioneTargetSnapshot) {
+  const r = await registry(false, target).getRedemption(b32(eventKeyHex))
   return { exists: Boolean(r[0]), payloadCommitment: hexlify(r[1]) as string, recordedAt: Number(r[2]), recorder: String(r[3]) }
 }
 
-export async function receiptStatus(txHash: string, binding: { eventKey: string; payloadCommitment: string }): Promise<OmnioneReceiptResult> {
+export async function receiptStatus(txHash: string, binding: { eventKey: string; payloadCommitment: string; target?: OmnioneTargetSnapshot }): Promise<OmnioneReceiptResult> {
   assertExternalServicesEnabled("OmniOne Chain evidence")
   const c = hkConfig().omnione
-  // Public recorder identity; deriving it by constructing a Wallet would make
-  // read-only recovery depend on a private key. Preserve the deployed stage default.
-  const recorder = process.env.HK_OMNIONE_RECORDER_ADDRESS || (c.chainId === OMNIONE_STAGE.chainId && sameHex(c.registryAddress, OMNIONE_STAGE.registry) ? OMNIONE_STAGE.recorder : "")
-  const expected = { ...binding, txHash, registry: c.registryAddress, recorder, chainId: c.chainId }
   try {
+    const target = storedOmnioneTarget(binding.target)
+    const expected = { ...binding, txHash, registry: target.registry, recorder: target.recorder, chainId: target.chainId }
     validateOmnioneExpectation(expected)
     if (!c.rpcUrl) throw new Error("configuration")
     const url = new URL(c.rpcUrl)

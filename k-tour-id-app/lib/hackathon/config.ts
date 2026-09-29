@@ -10,6 +10,8 @@ import { isGuideProductionProfile } from "./guide-production-profile"
 import { GUIDE_SAVE_V2 } from "./guide-contract"
 import { requiresIntegrationPreviewAccess } from "./integration-preview-access"
 import { assertIntegrationSuiAuthorized } from "./store"
+import { configuredOmnioneTarget } from "./omnione-targets"
+import { approvedOmnioneRpc } from "./omnione-readonly"
 
 export type CxMode = "mock" | "cx"
 export type OpenDidMode = "mock" | "opendid"
@@ -102,10 +104,12 @@ export function hkConfig() {
       explorer: env("HK_SUI_EXPLORER", "https://suiscan.xyz/testnet"),
     },
     omnione: {
+      targetId: env("HK_OMNIONE_TARGET_ID", "stage-legacy-20260914"),
       rpcUrl: env("HK_OMNIONE_RPC_URL"),
       chainId: Number(env("HK_OMNIONE_CHAIN_ID", "201210")),
       privateKey: env("HK_OMNIONE_PRIVATE_KEY"),
       registryAddress: env("HK_OMNIONE_REGISTRY_ADDRESS"),
+      recorderAddress: env("HK_OMNIONE_RECORDER_ADDRESS"),
       gasLimit: BigInt(env("HK_OMNIONE_GAS_LIMIT", "300000")),
     },
     dataDir: env("HK_DATA_DIR", isolatedMock ? ".data/hackathon-isolated" : ".data/hackathon"),
@@ -113,6 +117,12 @@ export function hkConfig() {
 }
 
 export type HkConfig = ReturnType<typeof hkConfig>
+
+/** Configuration only, never proof of live permission or a completed chain write. */
+export function omnioneConfigurationReady(c: HkConfig): boolean {
+  if (c.isolatedMock || c.cxPreview || !c.omnione.privateKey || !approvedOmnioneRpc(c.omnione.rpcUrl)) return false
+  try { configuredOmnioneTarget(c.omnione); return true } catch { return false }
+}
 
 /** Isolation is an execution boundary, not a simulated chain confirmation. */
 export function assertExternalServicesEnabled(service: string) {
@@ -147,12 +157,12 @@ export function hkPublicConfig() {
       opendid: c.cxPreview ? "disabled-cx-preview" : c.opendid.mode,
       ai: c.cxPreview ? "disabled-cx-preview" : c.ai.mode,
       sui: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : c.sui.packageId && c.sui.issuerSecretKey && c.sui.agentSecretKey ? "testnet" : "unconfigured",
-      omnione: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : c.omnione.rpcUrl && c.omnione.privateKey && c.omnione.registryAddress ? "stage" : "unconfigured",
+      omnione: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : omnioneConfigurationReady(c) ? "stage" : "unconfigured",
       zklogin: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : !isHostedSuiProfile() && c.sui.googleClientId && c.sui.zkSaltSeed && selectZkLoginProvider(process.env) ? "google" : "demo-signer",
     },
     capabilities: { opendidProviderReady: false, chainExecutionEnabled: !c.isolatedMock && !c.cxPreview && !requiresIntegrationSuiLimits(), redemptionEnabled: !isHostedSuiProfile() && !requiresIntegrationSuiLimits() },
     sui: { network: c.sui.network, packageId: c.isolatedMock || c.cxPreview ? "" : c.sui.packageId, campaignId: c.isolatedMock || c.cxPreview ? "" : c.sui.campaignId, explorer: c.isolatedMock || c.cxPreview ? "" : c.sui.explorer, googleClientId: c.sui.googleClientId },
-    omnione: { chainId: c.omnione.chainId, registryAddress: c.isolatedMock || c.cxPreview ? "" : c.omnione.registryAddress },
+    omnione: { chainId: c.omnione.chainId, targetId: omnioneConfigurationReady(c) ? c.omnione.targetId : "", registryAddress: omnioneConfigurationReady(c) ? c.omnione.registryAddress : "" },
     ttl: HK_TTL,
     consentVersion: guide ? GUIDE_SAVE_V2.consentVersion : HK_CONSENT_VERSION,
     schemaVersion: HK_SCHEMA_VERSION,

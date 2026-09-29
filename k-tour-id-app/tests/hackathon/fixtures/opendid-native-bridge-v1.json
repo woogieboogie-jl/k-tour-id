@@ -1,0 +1,41 @@
+{
+  "provenance": {
+    "source": "opendid-workflow/contracts/bridge-v1/*.json",
+    "nativeHead": "3a39e169929c1eb5a342e569ebcb7d601c708db4",
+    "capturedAt": "2026-09-30",
+    "classification": "Synthetic published contract examples; never live identity or E2E evidence"
+  },
+  "issuance-start.request": {
+    "operationId": "op_0f3c9a1b2d4e5f60", "idempotencyKey": "idem_7a8b9c0d1e2f",
+    "subject": { "kind": "synthetic", "evidenceRef": "ev_synthetic_lane", "personVerified": true, "adultVerified": null, "kycRef": "0000000000000000000000000000000000000000000000000000000000000000" }
+  },
+  "issuance.offered.response": {
+    "issuanceId": "iss_AAAAAAAAAAAAAAAA", "operationId": "op_0f3c9a1b2d4e5f60", "state": "offered", "revision": 2,
+    "offer": { "qrPayload": "{\"payloadType\":\"ISSUE_VC\",\"payload\":\"m<base64 of sorted IssueOfferPayload>\"}" },
+    "credential": null, "error": null, "expiresAt": "2026-09-29T01:10:00.000Z"
+  },
+  "issuance.issued.response": {
+    "issuanceId": "iss_AAAAAAAAAAAAAAAA", "operationId": "op_0f3c9a1b2d4e5f60", "state": "issued", "revision": 3, "offer": null,
+    "credential": { "vcId": "00000000-0000-0000-0000-000000000000", "issuerDid": "did:omn:issuer",
+      "schemaId": "http://127.0.0.1:19301/issuer/api/v1/vc/vcschema?name=vc.schema.ktour.pass",
+      "validFrom": "2026-09-28T16:00:00Z", "validUntil": "2027-09-28T16:00:00Z",
+      "holderBinding": "0x0000000000000000000000000000000000000000000000000000000000000000" },
+    "error": null, "expiresAt": "2026-09-29T01:10:00.000Z"
+  },
+  "issuance.failed.response": {
+    "issuanceId": "iss_AAAAAAAAAAAAAAAA", "operationId": "op_0f3c9a1b2d4e5f60", "state": "failed", "revision": 3, "offer": null, "credential": null,
+    "error": "kyc_binding_mismatch", "expiresAt": "2026-09-29T01:10:00.000Z"
+  },
+  "presentation-start.request": { "issuanceId": "iss_AAAAAAAAAAAAAAAA", "kind": "vp" },
+  "presentation.allowed.response": {
+    "presentationId": "pres_BBBBBBBBBBBBBBBB", "operationId": "op_0f3c9a1b2d4e5f60", "state": "allowed", "revision": 3, "offer": null,
+    "decision": { "decisionRef": "dec_CCCCCCCCCCCCCCCC", "decisionExpiresAt": "2026-09-28T16:25:00.000Z" },
+    "denyReason": null, "expiresAt": "2026-09-28T16:25:00.000Z"
+  },
+  "presentation.denied.response": {
+    "presentationId": "pres_BBBBBBBBBBBBBBBB", "operationId": "op_0f3c9a1b2d4e5f60", "state": "denied", "revision": 3, "offer": null,
+    "decision": null, "denyReason": "status_suspended", "expiresAt": "2026-09-28T16:25:00.000Z"
+  },
+  "status.response": { "issuanceId": "iss_AAAAAAAAAAAAAAAA", "active": false, "reason": "status_suspended", "checkedAt": "2026-09-28T16:20:00.000Z" },
+  "error.response": { "error": { "code": "issuance_in_progress", "message": "another issuance request owns this operation" } }
+}

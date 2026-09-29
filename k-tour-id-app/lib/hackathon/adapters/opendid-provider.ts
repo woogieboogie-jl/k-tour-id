@@ -4,6 +4,7 @@
  */
 import { createHmac } from "node:crypto"
 import { HkError } from "../util"
+import { validateOpenDidNativeBridgeConfig } from "../opendid-native-config"
 
 export type OpenDidBinding = { sessionId: string; operationId: string }
 export type OpenDidCxSubject = { kind: "cx_evidence_ref"; evidenceRef: string; personVerified: true; adultVerified: boolean | null; kycRef: string }
@@ -98,14 +99,8 @@ function parseStatus(value: unknown, issuanceId: string): OpenDidStatus {
 
 export function createOpenDidBridgeClient(config: OpenDidBridgeConfig, fetcher: typeof fetch = fetch): OpenDidBridgeClient {
   if (typeof window !== "undefined") throw new Error("OpenDID bridge client is server-only")
-  const cfg = { ...config }
-  let base: URL, trusted: URL
-  try { base = new URL(cfg.baseUrl); trusted = new URL(cfg.trustedOrigin) } catch { throw new HkError("opendid_provider_configuration", "OpenDID bridge configuration is invalid", 503) }
-  const loopback = ["127.0.0.1", "[::1]", "localhost"].includes(base.hostname)
-  if (base.origin !== trusted.origin || trusted.href !== `${trusted.origin}/` || base.pathname !== "/" || base.search || base.hash || base.username || base.password || (base.protocol !== "https:" && !(cfg.allowLoopback && loopback && base.protocol === "http:"))) throw new HkError("opendid_provider_configuration", "OpenDID bridge origin is not trusted", 503)
-  if (!/^[\x21-\x7e]{32,4096}$/.test(cfg.serviceToken) || typeof cfg.ownerBindingSecret !== "string" || cfg.ownerBindingSecret.length < 32 || !cfg.issuerDid || !cfg.schemaId) throw new HkError("opendid_provider_configuration", "OpenDID bridge trust configuration is incomplete", 503)
-  const timeoutMs = cfg.timeoutMs ?? 5000, maxBytes = cfg.maxResponseBytes ?? 32768
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 50 || timeoutMs > 10000 || !Number.isSafeInteger(maxBytes) || maxBytes < 256 || maxBytes > 131072) throw new HkError("opendid_provider_configuration", "OpenDID transport limits are invalid", 503)
+  const cfg = validateOpenDidNativeBridgeConfig(config), base = new URL(cfg.baseUrl)
+  const timeoutMs = cfg.timeoutMs, maxBytes = cfg.maxResponseBytes
   const ownerBinding = (b: OpenDidBinding) => {
     if (!ID.test(b.operationId) || typeof b.sessionId !== "string" || b.sessionId.length < 8 || b.sessionId.length > 512) throw new HkError("opendid_binding", "OpenDID operation binding is invalid", 400)
     return createHmac("sha256", cfg.ownerBindingSecret).update(JSON.stringify(["ktour-opendid-owner/v1", b.sessionId, b.operationId])).digest("hex")
@@ -130,7 +125,7 @@ export function createOpenDidBridgeClient(config: OpenDidBridgeConfig, fetcher: 
       try { parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) } catch { throw bad() }
       if (!res.ok) {
         // Validate the envelope, but do not propagate provider strings, correlators or URLs.
-        const e = record(record(parsed, ["error"]).error, ["code", "message"]); code(e.code); text(e.message, 1024)
+        const e = record(record(parsed, ["error"]).error, ["code", "message"]); if (code(e.code) === null) throw bad(); text(e.message, 1024)
         throw new HkError("opendid_provider_rejected", "OpenDID could not complete this request", res.status === 404 ? 404 : res.status === 409 ? 409 : 502, res.status >= 500 || res.status === 429)
       }
       return parsed
@@ -164,11 +159,23 @@ export type OpenDidCxEvidence = { source: "cx_mobile_id"; mode: "cx"; evidenceRe
 export type VerifiedCxKycBinding = { evidenceRef: string; kycRef: string; mappingVersion: "cx-cas-v1" }
 /** The resolver must independently verify a real holder/CAS binding. Hashing an arbitrary
  * evidence ID is NOT a mapping. No resolver is provided until the native/CAS contract exists. */
-export async function resolveOpenDidCxSubject(evidence: OpenDidCxEvidence, resolver?: (e: OpenDidCxEvidence) => Promise<VerifiedCxKycBinding | null>, now = Date.now()): Promise<OpenDidCxSubject> {
-  if (evidence.source !== "cx_mobile_id" || evidence.mode !== "cx" || evidence.personVerified !== true || openDidUtcTime(evidence.expiresAt) <= now) throw new HkError("opendid_identity_required", "Current verified CX identity is required", 409)
-  id(evidence.evidenceRef)
+export async function resolveOpenDidCxSubject(evidence: OpenDidCxEvidence, resolver?: (e: OpenDidCxEvidence) => Promise<VerifiedCxKycBinding | null>, now = Date.now(), timeoutMs = 5000): Promise<OpenDidCxSubject> {
+  if (!Number.isFinite(now) || evidence.source !== "cx_mobile_id" || evidence.mode !== "cx" || evidence.personVerified !== true
+    || !(evidence.adultVerified === null || typeof evidence.adultVerified === "boolean") || openDidUtcTime(evidence.expiresAt) <= now) throw new HkError("opendid_identity_required", "Current verified CX identity is required", 409)
+  const snapshot = Object.freeze({ source: evidence.source, mode: evidence.mode, evidenceRef: id(evidence.evidenceRef), personVerified: evidence.personVerified, adultVerified: evidence.adultVerified, expiresAt: evidence.expiresAt })
   if (!resolver) throw new HkError("opendid_cx_mapping_unavailable", "CX-to-OpenDID holder mapping is not connected", 503)
-  const mapped = await resolver({ ...evidence })
-  if (!mapped || mapped.mappingVersion !== "cx-cas-v1" || mapped.evidenceRef !== evidence.evidenceRef || !/^[0-9a-f]{64}$/.test(mapped.kycRef)) throw new HkError("opendid_cx_mapping_unavailable", "CX-to-OpenDID holder mapping could not be verified", 503)
-  return { kind: "cx_evidence_ref", evidenceRef: evidence.evidenceRef, personVerified: true, adultVerified: evidence.adultVerified, kycRef: mapped.kycRef }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 50 || timeoutMs > 10000) throw new HkError("opendid_provider_configuration", "OpenDID mapping timeout is invalid", 503)
+  const started = performance.now()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("mapping deadline")), timeoutMs) })
+    const mapped = record(await Promise.race([Promise.resolve().then(() => resolver(snapshot)), deadline]), ["evidenceRef", "kycRef", "mappingVersion"])
+    if (mapped.mappingVersion !== "cx-cas-v1" || mapped.evidenceRef !== snapshot.evidenceRef || typeof mapped.kycRef !== "string" || !/^[0-9a-f]{64}$/.test(mapped.kycRef)) throw bad()
+    if (openDidUtcTime(snapshot.expiresAt) <= now + performance.now() - started) throw new HkError("opendid_identity_required", "Current verified CX identity is required", 409)
+    return { kind: "cx_evidence_ref", evidenceRef: snapshot.evidenceRef, personVerified: true, adultVerified: snapshot.adultVerified, kycRef: mapped.kycRef }
+  } catch (error) {
+    if (error instanceof HkError && error.code === "opendid_identity_required") throw new HkError("opendid_identity_required", "Current verified CX identity is required", 409)
+    // The private resolver must not leak provider payloads, hostnames, or identity data.
+    throw new HkError("opendid_cx_mapping_unavailable", "CX-to-OpenDID holder mapping could not be verified", 503)
+  } finally { if (timer) clearTimeout(timer) }
 }

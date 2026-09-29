@@ -15,6 +15,7 @@ import { issueCredential, presentationPayload, verifyHolderSignature, verifyIssu
 import { proposePerk } from "./adapters/ai"
 import { agentConsume, buildDelegationPtb, executeDelegation, issueEntitlement, readGrant, verifyReadExecution, verifyReadDelegation, transactionDigest, suiClient, suiKeys, suiTargets, explorerTx, explorerObject } from "./adapters/sui"
 import { getRedemption, omnioneConfigured, receiptStatus, submitRedemption } from "./adapters/omnione"
+import { configuredOmnioneTarget, storedOmnioneTarget, sameOmnioneTarget } from "./omnione-targets"
 import { credentialEligibility, presentationEligibility, redemptionEligibility, delegationExpectation, executionExpectation, executionManifest } from "./operation-evidence"
 import { verifyGrantEvidence } from "./sui-evidence"
 import { prepareDelegationOnce } from "./delegation-preparation"
@@ -85,7 +86,7 @@ function zkLoginGraphqlUrl(): string | null {
 
 // ── result projection ─────────────────────────────────────────────────
 export function toResult(op: OperationRecord): OperationResult {
-  const { secrets: _s, audit: _a, sessionId: _id, ...rest } = op
+  const { secrets: _s, audit: _a, sessionId: _id, omnioneTarget: _target, ...rest } = op
   const { allowedActions, safeNextAction } = allowed(op)
   // Older ledgers can contain SDK error strings saved before redaction. Project
   // fixed public copy without modifying history or transaction recovery state.
@@ -216,6 +217,8 @@ export async function createOperation(input: { sessionId: string; venueId: strin
     const now = nowIso()
     const consentDigest = digestOf({ version: input.consentVersion, campaignId: c.campaignId, venueId: input.venueId, purpose: c.purpose, policyVersion: c.policyVersion })
     const op: OperationRecord = {
+      // Disabled lanes ignore inherited provider settings and never acquire a live target.
+      omnioneTarget: hkConfig().isolatedMock || hkConfig().cxPreview ? storedOmnioneTarget(undefined) : configuredOmnioneTarget(hkConfig().omnione, true),
       ...(guide ? { journey: guideJourney() } : {}),
       operationId: randomId("op"), kind: "demo_entitlement", venueId: input.venueId, campaignId: c.campaignId, policyVersion: c.policyVersion,
       status: "pending", phase: "identity", revision: 1, createdAt: now, updatedAt: now, expiresAt: plusMs(HK_TTL.operationMs),
@@ -742,10 +745,11 @@ export async function redeem(sessionId: string, operationId: string, input: { id
     f.status = "redeemed"; f.reason = null; f.redemptionRef = redemptionRef; f.redeemedAt = db.redemptions[key].redeemedAt
     const eventKey = randomHex32()
     const payload = { kind: "DemoEntitlementRedeemed", schemaVersion: HK_SCHEMA_VERSION, campaignRef: o.campaignId, policyVersion: o.policyVersion, salt: randomHex32(), suiDigestCommitment: sha256Hex(o.agent!.txDigest!), manifestCommitment: o.agent!.manifestCommitment }
-    const outbox: OutboxRecord = { outboxId: randomId("obx"), operationId, eventKey, payloadCommitment: digestOf(payload), payload, status: "pending", txHash: null, blockNumber: null, attempts: 0, lastError: null, createdAt: nowIso(), updatedAt: nowIso(), confirmedAt: null }
+    const target = storedOmnioneTarget(o.omnioneTarget)
+    const outbox: OutboxRecord = { target, outboxId: randomId("obx"), operationId, eventKey, payloadCommitment: digestOf(payload), payload, status: "pending", txHash: null, blockNumber: null, attempts: 0, lastError: null, createdAt: nowIso(), updatedAt: nowIso(), confirmedAt: null }
     db.outbox[outbox.outboxId] = outbox
     if (isGuideJourney(o)) commitGuideCollection(db, o, outbox)
-    o.chain = { outboxId: outbox.outboxId, eventKey, payloadCommitment: outbox.payloadCommitment, status: "pending", txHash: null, blockNumber: null, attempts: 0, lastError: null, confirmedAt: null }
+    o.chain = { target, outboxId: outbox.outboxId, eventKey, payloadCommitment: outbox.payloadCommitment, status: "pending", txHash: null, blockNumber: null, attempts: 0, lastError: null, confirmedAt: null }
     o.status = "succeeded"; o.phase = "done"
     db.idempotency[`${operationId}:redeem:${input.idempotencyKey}`] = { key: input.idempotencyKey, bodyDigest: input.bodyDigest, responseDigest: digestOf({ redemptionRef }), createdAt: nowIso() }
     touch(o, "fulfillment.redeemed", { redemptionRef, outboxId: outbox.outboxId })
@@ -771,7 +775,7 @@ export async function processOutbox(outboxId: string) {
     row = await readStore((db) => db.outbox[outboxId])
   }
   if (!row || row.status === "confirmed" || row.status === "failed") return row
-  if (!omnioneConfigured()) {
+  if (!omnioneConfigured(storedOmnioneTarget(row.target), !!row.txHash || row.status !== "pending" || row.attempts > 0)) {
     await withStore((db) => {
       const r = db.outbox[outboxId]
       if (!r || r.processingClaim || r.status === "confirmed" || r.status === "failed") return
@@ -794,6 +798,7 @@ export async function processOutbox(outboxId: string) {
     const r = db.outbox[outboxId]
     if (!r || r.processingClaim?.id !== claimId || !(Date.parse(r.processingClaim.expiresAt) > Date.now()) ||
       r.operationId !== claimed.operationId || r.eventKey !== claimed.eventKey || r.payloadCommitment !== claimed.payloadCommitment ||
+      !sameOmnioneTarget(r.target, claimed.target) ||
       (claimed.txHash && r.txHash !== claimed.txHash)) return null
     fn(r); r.updatedAt = nowIso(); mirror(db, r)
     return r
@@ -801,7 +806,7 @@ export async function processOutbox(outboxId: string) {
   try {
     if (!claimed.txHash) {
       // Registry presence is useful recovery evidence, but not a tx receipt.
-      const existing = await getRedemption(claimed.eventKey)
+      const existing = await getRedemption(claimed.eventKey, storedOmnioneTarget(claimed.target))
       if (existing.exists) {
         const matches = existing.payloadCommitment.toLowerCase() === claimed.payloadCommitment.toLowerCase()
         await update((r) => {
@@ -820,18 +825,20 @@ export async function processOutbox(outboxId: string) {
       const dispatch = await withStore((db) => {
         const r = db.outbox[outboxId]
         if (!r || r.processingClaim?.id !== claimId || !(Date.parse(r.processingClaim.expiresAt) > Date.now()) || r.status !== "pending" || r.txHash || r.attempts > 0) return null
+        if (!sameOmnioneTarget(r.target, claimed.target)) return null
         // Persist before calling the signer: a crash/lease takeover cannot resend.
         r.status = "unknown"; r.attempts += 1; r.lastError = "submission_in_progress"; r.updatedAt = nowIso(); mirror(db, r)
         return r
       })
       if (!dispatch) return await readStore((db) => db.outbox[outboxId])
       const submitted = await submitRedemption({
-        eventKeyHex: dispatch.eventKey, payloadCommitmentHex: dispatch.payloadCommitment,
+        eventKeyHex: dispatch.eventKey, payloadCommitmentHex: dispatch.payloadCommitment, target: storedOmnioneTarget(dispatch.target),
         onPrepared: async (txHash) => {
           const saved = await withStore((db) => {
             const r = db.outbox[outboxId]
             if (!r || r.processingClaim?.id !== claimId || !(Date.parse(r.processingClaim.expiresAt) > Date.now()) || r.status !== "unknown" || r.txHash) return false
             if (r.eventKey !== dispatch.eventKey || r.payloadCommitment !== dispatch.payloadCommitment) return false
+            if (!sameOmnioneTarget(r.target, dispatch.target)) return false
             r.txHash = txHash; r.status = "submitted"; r.lastError = null; r.updatedAt = nowIso(); mirror(db, r)
             return true
           })
@@ -846,7 +853,7 @@ export async function processOutbox(outboxId: string) {
     }
     const after = await readStore((db) => db.outbox[outboxId])
     if (after?.processingClaim?.id === claimId && after.txHash && after.status !== "failed") {
-      const rc = await receiptStatus(after.txHash, { eventKey: after.eventKey, payloadCommitment: after.payloadCommitment })
+      const rc = await receiptStatus(after.txHash, { eventKey: after.eventKey, payloadCommitment: after.payloadCommitment, target: storedOmnioneTarget(after.target) })
       if (rc.status === "confirmed") {
         await update((r) => {
           // The adapter has bound tx/target/recorder/event/block AND registry.
@@ -887,7 +894,8 @@ function mirror(db: Parameters<Parameters<typeof withStore>[0]>[0], r: OutboxRec
   mirrorGuideCollection(db, r)
   const o = db.operations[r.operationId]
   if (!o?.chain || o.chain.outboxId !== r.outboxId || o.chain.eventKey !== r.eventKey || o.chain.payloadCommitment !== r.payloadCommitment) return
-  o.chain = { outboxId: r.outboxId, eventKey: r.eventKey, payloadCommitment: r.payloadCommitment, status: r.status, txHash: r.txHash, blockNumber: r.blockNumber, attempts: r.attempts, lastError: r.lastError, confirmedAt: r.confirmedAt }
+  if (!sameOmnioneTarget(o.omnioneTarget, r.target) || !sameOmnioneTarget(o.chain.target, r.target)) return
+  o.chain = { target: storedOmnioneTarget(r.target), outboxId: r.outboxId, eventKey: r.eventKey, payloadCommitment: r.payloadCommitment, status: r.status, txHash: r.txHash, blockNumber: r.blockNumber, attempts: r.attempts, lastError: r.lastError, confirmedAt: r.confirmedAt }
   touch(o, "chain." + r.status)
 }
 
@@ -956,7 +964,7 @@ export function evidence(op: OperationRecord) {
       agent: op.agent ? { status: op.agent.status, tx: op.agent.txDigest, txUrl: op.agent.txDigest ? explorerTx(op.agent.txDigest) : null, recordId: op.agent.recordId, recordUrl: op.agent.recordId ? explorerObject(op.agent.recordId) : null, decisionCommitment: op.agent.decisionCommitment, manifestCommitment: op.agent.manifestCommitment, manifest: op.agent.manifest, verified: op.agent.verified } : null,
     } : null,
     fulfillment: op.fulfillment,
-    omnione: op.chain ? { chainId: cfg.omnione.chainId, registry: cfg.omnione.registryAddress, eventKey: op.chain.eventKey, payloadCommitment: op.chain.payloadCommitment, status: op.chain.status, txHash: op.chain.txHash, blockNumber: op.chain.blockNumber, confirmedAt: op.chain.confirmedAt, lastError: safeChainError(op.chain.lastError) } : null,
+    omnione: op.chain ? { ...storedOmnioneTarget(op.chain.target), eventKey: op.chain.eventKey, payloadCommitment: op.chain.payloadCommitment, status: op.chain.status, txHash: op.chain.txHash, blockNumber: op.chain.blockNumber, confirmedAt: op.chain.confirmedAt, lastError: safeChainError(op.chain.lastError) } : null,
     provenanceCheck: op.agent?.manifest ? { recomputedManifestCommitment: digestOf(op.agent.manifest), storedManifestCommitment: op.agent.manifestCommitment, matches: digestOf(op.agent.manifest) === op.agent.manifestCommitment } : null,
     boundaries: {
       note: "Sui consume ≠ benefit used. DB redemption is the ledger; OmniOne is the audit anchor; neither chain carries PII.",

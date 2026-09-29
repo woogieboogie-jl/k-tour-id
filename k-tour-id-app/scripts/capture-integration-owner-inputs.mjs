@@ -37,7 +37,10 @@ export function validateOwnerInput(kind, raw) {
     return value
   }
   if (kind === 'google' && !/^\d{6,30}-[a-zA-Z0-9_-]{8,160}\.apps\.googleusercontent\.com$/.test(raw)) fail('invalid_client_id')
-  if (kind === 'gemini' && !/^AIza[a-zA-Z0-9_-]{30,100}$/.test(raw)) fail('invalid_api_key')
+  // Google now also issues authorization keys; an AIza prefix is not required.
+  // Accept only a bounded, header-safe opaque token. This is syntax validation,
+  // NOT evidence that Google accepts the key or that it has model permissions.
+  if (kind === 'gemini' && !/^[A-Za-z0-9][A-Za-z0-9._~+/-]{31,511}={0,2}$/.test(raw)) fail('invalid_api_key')
   return raw
 }
 function checkedDocument(raw) {

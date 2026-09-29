@@ -1,0 +1,18 @@
+{
+  "targetId": "stage-20260930",
+  "chainId": 201210,
+  "rpcOrigin": "https://stage-chainapi.omnione.net",
+  "DemoEntitlementRegistry": {
+    "address": "0x07b35e14b1bf59be938fd72a6f9d9f9e04f0a687",
+    "deployTx": "0x834982d407a7967328f88dd27d2ae03406e7994eb282aff429f7c011e12c8580",
+    "block": "0x1965f5a",
+    "runtimeCodeHash": "0x249fb5a53fc48841e3b03f9b82a30b9aeaf498239fbe554b77c5935ede1802bd"
+  },
+  "owner": "0x315694f531f7b25c4cec3660f9cd66eab9f2c39a",
+  "recorder": "0x315694f531f7b25c4cec3660f9cd66eab9f2c39a",
+  "receiptStatus": "0x1",
+  "gasUsed": "0x5da7f",
+  "effectiveGasPrice": "0x0",
+  "verification": "Operator verified deployment receipt, runtime code hash, owner and recorder permission on 2026-09-30; this is not a user-flow audit record or production activation.",
+  "legacyPreserved": "deploy-info.stage.json remains the historical deployment; no history was moved or replayed."
+}

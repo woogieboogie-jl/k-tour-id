@@ -10,6 +10,7 @@ import { refreshJitImportedIdentity } from "./jit-identity-import"
 import type { CredentialSummary, PresentationSummary } from "./types"
 import { digestOf, HkError } from "./util"
 import { createOpenDidBridgeClient, openDidUtcTime, resolveOpenDidCxSubject, type OpenDidBridgeClient, type OpenDidCxEvidence, type OpenDidOffer, type VerifiedCxKycBinding } from "./adapters/opendid-provider"
+import { resolveOpenDidNativeBridgeConfig } from "./opendid-native-config"
 import { assertOpenDidPermissionSnapshot, createOpenDidProviderLifecycle, type OpenDidProviderContext, type OpenDidProviderPhase, type OpenDidProviderState, type OpenDidProviderStore } from "./opendid-provider-lifecycle"
 
 export type ProviderOperationAction = "issuance/start" | "issuance/refresh" | "presentation/start" | "presentation/refresh" | "cancel"
@@ -228,10 +229,7 @@ function configuredService() {
   assertExternalServicesEnabled("OpenDID")
   if (hkConfig().opendid.mode !== "opendid") throw fail("opendid_mode_required", "Provider credential mode is not enabled", 503)
   const env = process.env
-  const bridge = createOpenDidBridgeClient({ baseUrl: env.HK_OPENDID_BRIDGE_URL ?? "", trustedOrigin: env.HK_OPENDID_TRUSTED_ORIGIN ?? "",
-    serviceToken: env.HK_OPENDID_BRIDGE_TOKEN ?? "", ownerBindingSecret: env.HK_OPENDID_OWNER_BINDING_SECRET ?? "",
-    issuerDid: env.HK_OPENDID_ISSUER_DID ?? "", schemaId: env.HK_OPENDID_SCHEMA_ID ?? "",
-    allowLoopback: env.HK_OPENDID_BRIDGE_ALLOW_LOOPBACK === "1" && !env.VERCEL })
+  const bridge = createOpenDidBridgeClient(resolveOpenDidNativeBridgeConfig(env))
   // No resolver is wired until Claude/vendor provides the authenticated CX→holder/CAS contract.
   return createProviderOperationService({ atomic: withStore, bridge })
 }

@@ -125,6 +125,7 @@ export type FulfillmentSummary = {
 }
 
 export type ChainRecord = {
+  target?: import("./omnione-targets").OmnioneTargetSnapshot
   outboxId: string
   eventKey: string
   payloadCommitment: string

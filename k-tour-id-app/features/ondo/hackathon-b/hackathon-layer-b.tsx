@@ -397,6 +397,9 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
   const isolated = !guide && config?.isolatedMock !== false
   const hostedSui = !guide && process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1"
   const sampleIdentity = isolated || modes.cx === "mock"
+  // Provider configuration must never fall back to browser-generated mock VC/VP
+  // if the operation is inconsistent. The shared step rejects mismatched DTOs.
+  const providerStep = guide || (!isolated && !hostedSui && modes.opendid === "opendid")
   const steps: readonly string[] = hostedSui ? [...c.steps.slice(0, 7), tr("실행 완료", "Execution complete", "実行完了")] : c.steps
   const stateOf = (i: number) => (op?.status === "cancelled" || op?.status === "failed" || op?.status === "expired" ? (i < stepIndex ? "done" : i === stepIndex ? "blocked" : "todo") : i < stepIndex ? "done" : i === stepIndex ? "current" : "todo")
   const title = useMemo(() => info?.campaign?.title?.[locale] ?? c.title, [info, locale, c.title])
@@ -491,15 +494,15 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
             </section>
           ) : null}
 
-          {guide && op && (activePhase === "issuance" || activePhase === "presentation") ? <GuideProviderStepB key={`${op.operationId}:${activePhase}`} operation={op} locale={locale} onOperation={setOp} onAccessRequired={onAccessRequired} /> : null}
-          {activePhase === "issuance" && op && !guide ? <section className={styles.card}>
+          {providerStep && op && (activePhase === "issuance" || activePhase === "presentation") ? <GuideProviderStepB key={`${op.operationId}:${activePhase}`} operation={op} locale={locale} onOperation={setOp} onAccessRequired={onAccessRequired} /> : null}
+          {activePhase === "issuance" && op && !providerStep ? <section className={styles.card}>
             <h3>{c.steps[2]}</h3>
             {hostedSui ? <p>{tr("앱 내 체험 패스입니다. OpenDID 신분증은 발급하지 않습니다.", "An in-app sample pass, not an OpenDID identity credential.", "アプリ内の体験パスです。OpenDIDの身分証は発行しません。")}</p> : null}
             <p>{busy === "issue" ? c.issuing : tr("이 체험에서 사용할 패스를 받아 보관합니다.", "Receive and keep a pass for this experience.", "この体験で使うパスを受け取り、保存します。")}</p>
             <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={issueAndAck} data-testid="hackathon-issue">{busy === "issue" ? <span className={styles.spinner} /> : null}{tr("패스 받기", "Get pass", "パスを受け取る")}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
           </section> : null}
 
-          {activePhase === "presentation" && op && !guide ? (
+          {activePhase === "presentation" && op && !providerStep ? (
             <section className={styles.card}>
               <h3>{c.steps[3]}</h3>
               <p>{c.presentBody}</p>

@@ -4,6 +4,7 @@ import type { Db, OutboxRecord, OperationRecord } from "../../lib/hackathon/stor
 import { OMNIONE_STAGE, omnioneReadAbi as abi } from "../../lib/hackathon/omnione-evidence"
 import { recoverOmnioneOutbox, type RecoveryRepository } from "../../lib/hackathon/omnione-recovery"
 import { recoveryArguments, recoveryConfiguration, redisRecoveryRepository, runOmnioneRecovery } from "../../scripts/hackathon-omnione-recover"
+import { omnioneTargetSnapshot } from "../../lib/hackathon/omnione-targets"
 
 const hash = "0x" + "a".repeat(64), eventKey = "0x" + "b".repeat(64), commitment = "0x" + "c".repeat(64)
 const key = "ktour:integration-preview:fixture:journey"
@@ -62,6 +63,39 @@ test("unknown/no-hash and malformed bindings cannot be counted as successful rec
   const legacy = row("legacy", "confirmed"); delete legacy.receiptEvidenceVersion
   const legacyResult = await recoverOmnioneOutbox({ repository: memory([legacy]).repository, rpc: reader })
   assert.equal(legacyResult.ok, false); assert.equal(legacyResult.legacyUnverified, 1); assert.equal(reader.calls.length, 0)
+})
+
+test("unregistered or corrupt persisted targets fail closed before any RPC", async () => {
+  for (const target of [{ ...omnioneTargetSnapshot(), targetId: "stage-unapproved" }, { ...omnioneTargetSnapshot(), registry: omnioneTargetSnapshot("stage-20260930").registry }]) {
+    const original = { ...row(), target }, m = memory([original]), reader = rpc()
+    const result = await recoverOmnioneOutbox({ repository: m.repository, rpc: reader })
+    assert.equal(result.ok, false); assert.equal(result.confirmed, 0); assert.equal(reader.calls.length, 0)
+    assert.deepEqual(m.read().outbox[original.outboxId], original)
+  }
+})
+test("mixed historical/new recovery uses each stored tuple and no signing capability", async () => {
+  const current = omnioneTargetSnapshot("stage-20260930"), m = memory([{ ...row(), target: current }])
+  const calls: string[] = []
+  const result = await recoverOmnioneOutbox({ repository: m.repository, rpc: { async call(method, params) {
+    calls.push(method)
+    if (method === "eth_chainId") return "0x311fa"
+    if (method === "eth_getTransactionReceipt") return { transactionHash: hash, to: current.registry, from: current.recorder, status: "0x1", blockHash: "0x" + "d".repeat(64), blockNumber: "0x7b",
+      logs: [{ address: current.registry, ...abi.encodeEventLog(abi.getEvent("DemoEntitlementRedeemed")!, [eventKey, commitment, 10n, current.recorder]) }] }
+    assert.equal(method, "eth_call")
+    const call = params[0] as { to: string; data: string }; assert.equal(call.to, current.registry)
+    return call.data.startsWith(abi.getFunction("recorders")!.selector) ? abi.encodeFunctionResult("recorders", [true]) : abi.encodeFunctionResult("getRedemption", [true, commitment, 10n, current.recorder])
+  } } })
+  assert.equal(result.ok, true); assert.equal(result.confirmed, 1); assert.equal(calls.length, 4)
+  assert.deepEqual(m.read().outbox["outbox-1"].target, current)
+  assert.equal(result.signatures, 0); assert.equal(result.broadcasts, 0)
+})
+test("late recovery cannot confirm a row rebound to another reviewed target", async () => {
+  const m = memory([row()])
+  const result = await recoverOmnioneOutbox({ repository: m.repository, rpc: rpc(async method => {
+    if (method === "eth_getTransactionReceipt") await m.repository.mutate(db => { db.outbox["outbox-1"].target = omnioneTargetSnapshot("stage-20260930") })
+  }) })
+  assert.equal(result.confirmed, 0); assert.equal(result.skipped, 1)
+  assert.equal(m.read().outbox["outbox-1"].status, "submitted")
 })
 
 test("live/invalid claims, count caps, pending and absent receipt do not claim completion", async () => {

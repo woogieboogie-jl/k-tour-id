@@ -1,6 +1,7 @@
 import type { Db, OperationRecord, OutboxRecord } from "./store"
 import { GUIDE_SAVE_V2, isGuideJourney, type GuideCollectionEntry } from "./guide-contract"
 import { digestOf, HkError } from "./util"
+import { storedOmnioneTarget, sameOmnioneTarget } from "./omnione-targets"
 
 export type GuideCollectionRecord = GuideCollectionEntry & { subjectRef: string; redemptionRef: string; outboxId: string }
 export const guideCollectionKey = (subject: string) => digestOf({ subject, campaign: GUIDE_SAVE_V2.campaignId })
@@ -34,7 +35,7 @@ export function commitGuideCollection(db: Db, op: OperationRecord, outbox: Outbo
   }
   return db.guideCollection[key] = { guideId: GUIDE_SAVE_V2.guideId, venueId: op.venueId, campaignId: op.campaignId, operationId: op.operationId,
     savedAt: f.redeemedAt, subjectRef: subject, redemptionRef: f.redemptionRef, outboxId: outbox.outboxId,
-    chain: { status: outbox.status, txHash: outbox.txHash, confirmedAt: outbox.confirmedAt } }
+    chain: { target: storedOmnioneTarget(outbox.target), status: outbox.status, txHash: outbox.txHash, confirmedAt: outbox.confirmedAt } }
 }
 
 export function guideCollectionForSession(db: Db, sessionId: string): GuideCollectionEntry[] {
@@ -44,15 +45,16 @@ export function guideCollectionForSession(db: Db, sessionId: string): GuideColle
   if (!row) return []
   if (row.subjectRef !== subject) throw invalid()
   return [{ guideId: row.guideId, venueId: row.venueId, campaignId: row.campaignId, operationId: row.operationId,
-    savedAt: row.savedAt, chain: { status: row.chain.status, txHash: row.chain.txHash, confirmedAt: row.chain.confirmedAt } }]
+    savedAt: row.savedAt, chain: { target: storedOmnioneTarget(row.chain.target), status: row.chain.status, txHash: row.chain.txHash, confirmedAt: row.chain.confirmedAt } }]
 }
 
 /** Chain delay never removes a saved guide, and confirmation requires receipt evidence. */
 export function mirrorGuideCollection(db: Db, outbox: OutboxRecord) {
   for (const row of Object.values(db.guideCollection ?? {})) {
     if (row.outboxId !== outbox.outboxId || row.operationId !== outbox.operationId) continue
+    if (!sameOmnioneTarget(row.chain.target, outbox.target)) throw invalid()
     const confirmed = outbox.status === "confirmed" && outbox.receiptEvidenceVersion === 1 && !!outbox.txHash && !!outbox.confirmedAt
-    row.chain = { status: outbox.status === "confirmed" && !confirmed ? "unknown" : outbox.status, txHash: outbox.txHash, confirmedAt: confirmed ? outbox.confirmedAt : null }
+    row.chain = { target: storedOmnioneTarget(outbox.target), status: outbox.status === "confirmed" && !confirmed ? "unknown" : outbox.status, txHash: outbox.txHash, confirmedAt: confirmed ? outbox.confirmedAt : null }
   }
 }
 
@@ -64,11 +66,12 @@ export function assertGuideCollectionStore(value: unknown): asserts value is Rec
     if (Object.keys(raw).some(k => !["guideId", "venueId", "campaignId", "operationId", "savedAt", "chain", "subjectRef", "redemptionRef", "outboxId"].includes(k)) ||
       typeof r.subjectRef !== "string" || !r.subjectRef || r.subjectRef.length > 256 || key !== guideCollectionKey(r.subjectRef) || r.guideId !== GUIDE_SAVE_V2.guideId || r.venueId !== GUIDE_SAVE_V2.venueId || r.campaignId !== GUIDE_SAVE_V2.campaignId ||
       !/^op_[A-Za-z0-9_-]+$/.test(r.operationId) || !/^rdm_[A-Za-z0-9_-]+$/.test(r.redemptionRef) || !/^obx_[A-Za-z0-9_-]+$/.test(r.outboxId) || !Number.isFinite(Date.parse(r.savedAt)) ||
-      !r.chain || Object.keys(r.chain).some(k => !["status", "txHash", "confirmedAt"].includes(k)) || !["pending", "submitted", "confirmed", "failed", "unknown"].includes(r.chain.status) ||
+      !r.chain || Object.keys(r.chain).some(k => !["status", "txHash", "confirmedAt", "target"].includes(k)) || !["pending", "submitted", "confirmed", "failed", "unknown"].includes(r.chain.status) ||
       (r.chain.txHash !== null && !/^0x[0-9a-fA-F]{64}$/.test(r.chain.txHash)) ||
       (r.chain.confirmedAt !== null && (typeof r.chain.confirmedAt !== "string" || !Number.isFinite(Date.parse(r.chain.confirmedAt)))) ||
       (r.chain.status !== "confirmed" && r.chain.confirmedAt !== null) ||
       (r.chain.status === "confirmed" && (!r.chain.txHash || !r.chain.confirmedAt))) throw invalid()
+    try { storedOmnioneTarget(r.chain.target) } catch { throw invalid() }
   }
 }
 
@@ -79,5 +82,6 @@ export function assertGuideCollectionMonotonic(previous: Record<string, GuideCol
     const next = db.guideCollection?.[key]
     if (!next || ["guideId", "venueId", "campaignId", "operationId", "savedAt", "subjectRef", "redemptionRef", "outboxId"].some(k =>
       next[k as keyof GuideCollectionRecord] !== row[k as keyof GuideCollectionRecord])) throw invalid()
+    if (!sameOmnioneTarget(next.chain.target, row.chain.target)) throw invalid()
   }
 }

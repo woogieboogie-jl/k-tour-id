@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { test } from "node:test"
 import { Interface } from "ethers"
 import { OMNIONE_STAGE, READINESS_ABI, runOmnioneReadiness } from "../../scripts/hackathon-omnione-readiness"
+import { omnioneTarget } from "../../lib/hackathon/omnione-targets"
 
 const abi = new Interface(READINESS_ABI)
 const token = "query-token-sentinel-do-not-print"
@@ -73,6 +74,25 @@ test("default offline reads neither secrets nor the network and prints only safe
   assert.equal(JSON.stringify(result).includes(token), false)
   assert.equal(readKeys.some(key => key.includes("PRIVATE")), false)
   assert.equal((await runOmnioneReadiness({ env: {} })).ok, false)
+})
+
+test("new registered target checks its deployment and runtime without replacing legacy pins", async () => {
+  const target = omnioneTarget("stage-20260930")
+  const runtime = JSON.parse(await readFile(new URL("../../../chain/omnione/runtime.stage-20260930.json", import.meta.url), "utf8")).runtime
+  const selected = { ...env, HK_OMNIONE_TARGET_ID: target.targetId, HK_OMNIONE_REGISTRY_ADDRESS: target.registry, HK_OMNIONE_RECORDER_ADDRESS: target.recorder }
+  const fixtureNew = fixture(body => {
+    if (body.method === "eth_getCode") { assert.equal(body.params[0], target.registry); return runtime }
+    if (body.method === "eth_getTransactionReceipt") { assert.equal(body.params[0], target.deployTx); return { ...deployment, from: target.recorder, contractAddress: target.registry, transactionHash: target.deployTx, blockNumber: target.deployBlock } }
+    if (body.method === "eth_call") { assert.equal((body.params[0] as { to: string }).to, target.registry); return abi.encodeFunctionResult("recorders", [true]) }
+  })
+  const result = await runOmnioneReadiness({ mode: "read-only", env: selected, fetchImpl: fixtureNew.fetchImpl })
+  assert.equal(result.ok, true); assert.equal(result.target?.targetId, target.targetId); assert.equal(result.rpcRequests, 4)
+  for (const change of [{ HK_OMNIONE_TARGET_ID: "unregistered" }, { HK_OMNIONE_REGISTRY_ADDRESS: OMNIONE_STAGE.registry }, { HK_OMNIONE_RECORDER_ADDRESS: OMNIONE_STAGE.recorder }]) {
+    const rejected = await runOmnioneReadiness({ mode: "read-only", env: { ...selected, ...change }, fetchImpl: async () => { assert.fail("invalid target must not contact RPC") } })
+    assert.equal(rejected.ok, false); assert.equal(rejected.rpcRequests, 0)
+  }
+  const wrongCode = await runOmnioneReadiness({ mode: "read-only", env: selected, fetchImpl: fixture().fetchImpl })
+  assert.equal(wrongCode.ok, false); assert.ok(wrongCode.issues.includes("registry_code_mismatch"))
 })
 
 test("query token is supported, while alternate hosts, credentials, redirects and query injection fail closed", async () => {

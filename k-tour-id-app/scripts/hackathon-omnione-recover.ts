@@ -2,7 +2,8 @@
 // status updates. No dotenv, app config/service, private-key reads, or signing.
 import { randomUUID } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import { OMNIONE_STAGE, sameHex } from "../lib/hackathon/omnione-evidence"
+import { configuredOmnioneTarget } from "../lib/hackathon/omnione-targets"
+import { omnioneTargetBindings, assertOmnioneTargetMonotonic } from "../lib/hackathon/omnione-target-integrity"
 import { approvedOmnioneRpc, omnioneRpcReader } from "../lib/hackathon/omnione-readonly"
 import { recoverOmnioneOutbox, type RecoveryRepository } from "../lib/hackathon/omnione-recovery"
 import { parseStoredJourney } from "../lib/hackathon/store-integrity"
@@ -30,8 +31,9 @@ export function recoveryConfiguration(env: Env, key: string) {
   } catch { throw invalid() }
   if (!token || token !== token.trim() || /[\x00-\x1f\x7f]/.test(token)) throw invalid()
   const rpc = env.HK_OMNIONE_RPC_URL ?? ""
-  if (!approvedOmnioneRpc(rpc) || (env.HK_OMNIONE_CHAIN_ID || "201210") !== "201210" || !sameHex(env.HK_OMNIONE_REGISTRY_ADDRESS, OMNIONE_STAGE.registry) ||
-    env.HK_OMNIONE_RECORDER_ADDRESS && !sameHex(env.HK_OMNIONE_RECORDER_ADDRESS, OMNIONE_STAGE.recorder)) throw invalid()
+  if (!approvedOmnioneRpc(rpc)) throw invalid()
+  try { configuredOmnioneTarget({ targetId: env.HK_OMNIONE_TARGET_ID, chainId: Number(env.HK_OMNIONE_CHAIN_ID || "201210"),
+    registryAddress: env.HK_OMNIONE_REGISTRY_ADDRESS || "", recorderAddress: env.HK_OMNIONE_RECORDER_ADDRESS }) } catch { throw invalid() }
   return { redis: { url: url.replace(/\/+$/, ""), token }, key, rpc, until }
 }
 
@@ -56,7 +58,9 @@ export function redisRecoveryRepository(connection: RedisConnection, key: string
         if (result !== "OK") throw new Error("recovery_store_busy")
         locked = true
         const raw = await command<string | null>(["GET", key], cleanup)
-        const db = parseStoredJourney(raw), resultValue = work(db), next = JSON.stringify(db)
+        const db = parseStoredJourney(raw), targets = omnioneTargetBindings(db), resultValue = work(db)
+        assertOmnioneTargetMonotonic(targets, db)
+        const next = JSON.stringify(db)
         if (next !== raw) {
           const saved = await command<number>(["EVAL", "-- ktour-omnione-recovery-cas\nlocal t=redis.call('TIME'); local ms=t[1]*1000+math.floor(t[2]/1000); if ms >= tonumber(ARGV[4]) then return 0 end; if redis.call('GET',KEYS[1]) == ARGV[1] and redis.call('GET',KEYS[2]) == ARGV[2] then redis.call('SET',KEYS[2],ARGV[3],'KEEPTTL'); return 1 end return 0", 2, lock, key, token, raw!, next, options.deadline + (cleanup ? 5000 : 0)], cleanup)
           if (saved !== 1) throw new Error("recovery_store_lease_lost")

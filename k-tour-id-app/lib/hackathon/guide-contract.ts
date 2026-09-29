@@ -34,7 +34,7 @@ export type GuideCollectionEntry = {
   campaignId: string
   operationId: string
   savedAt: string
-  chain: { status: ChainStatus; txHash: string | null; confirmedAt: string | null }
+  chain: { status: ChainStatus; txHash: string | null; confirmedAt: string | null; target?: import("./omnione-targets").OmnioneTargetSnapshot }
 }
 export type GuideCollection = { items: GuideCollectionEntry[]; pendingOperation: OperationResult | null }
 

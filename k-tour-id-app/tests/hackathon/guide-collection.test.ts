@@ -5,6 +5,7 @@ import { assertGuideCollectionMonotonic, assertGuideCollectionStore, commitGuide
 import { hostedSuiRouteAllowed } from "../../lib/hackathon/hosted-sui-profile"
 import { assertIntegrationPreviewBody, integrationPreviewRouteAllowed } from "../../lib/hackathon/integration-preview-access"
 import type { Db, OperationRecord, OutboxRecord } from "../../lib/hackathon/store"
+import { omnioneTargetSnapshot } from "../../lib/hackathon/omnione-targets"
 
 function fixture() {
   const now = new Date().toISOString(), operationId = "op_fixture_12345678", subject = "subject-private"
@@ -66,6 +67,18 @@ test("collection is retained when the operation expires or is pruned", () => {
   commitGuideCollection(db, op, outbox)
   delete db.operations[op.operationId]
   assert.equal(guideCollectionForSession(db, "session-a")[0].operationId, op.operationId)
+})
+test("saved guide retains its versioned audit target after operation pruning and refuses rebind", () => {
+  const { db, op, outbox } = fixture(), target = omnioneTargetSnapshot("stage-20260930")
+  op.omnioneTarget = target; outbox.target = target
+  commitGuideCollection(db, op, outbox)
+  const before = structuredClone(db.guideCollection)
+  delete db.operations[op.operationId]
+  assert.deepEqual(guideCollectionForSession(db, "session-a")[0].chain.target, target)
+  outbox.target = omnioneTargetSnapshot()
+  assert.throws(() => mirrorGuideCollection(db, outbox))
+  db.guideCollection![guideCollectionKey("subject-private")].chain.target = omnioneTargetSnapshot()
+  assert.throws(() => assertGuideCollectionMonotonic(before, db))
 })
 
 test("projection excludes secrets and unknown persisted fields", () => {

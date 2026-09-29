@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { readFileSync } from "node:fs"
 import { OMNIONE_STAGE, OmnioneEvidenceError, omnioneReadAbi } from "../../lib/hackathon/omnione-evidence"
 import { checkedOmnioneSigningTarget, verifyOmnioneSigningAuthority, type OmnioneSigningTarget } from "../../lib/hackathon/omnione-signing-preflight"
 import { omnioneRpcReader, type OmnioneRpcReader } from "../../lib/hackathon/omnione-readonly"
+import { omnioneTarget } from "../../lib/hackathon/omnione-targets"
 
 const target: OmnioneSigningTarget = { rpcUrl: `${OMNIONE_STAGE.rpcOrigin}/?token=fixture-only`, chainId: OMNIONE_STAGE.chainId, registryAddress: OMNIONE_STAGE.registry }
 const denied = (code: string) => (error: unknown) => error instanceof OmnioneEvidenceError && error.code === code
@@ -86,4 +88,18 @@ test("bounded production reader never exposes a failing provider URL or token", 
   } })
   await assert.rejects(verifyOmnioneSigningAuthority(target, OMNIONE_STAGE.recorder, rpc), denied("rpc_transport_failed"))
   assert.equal(calls, 1)
+})
+
+test("new approved deployment requires exact bytecode hash, signer, registry and permission", async () => {
+  const current = omnioneTarget("stage-20260930")
+  const compiled = JSON.parse(readFileSync(new URL("../../../chain/omnione/runtime.stage-20260930.json", import.meta.url), "utf8"))
+  const selected = { ...target, targetId: current.targetId, registryAddress: current.registry, recorderAddress: current.recorder }
+  const f = fixture({ code: compiled.runtime })
+  await verifyOmnioneSigningAuthority(selected, current.recorder, f.rpc)
+  assert.equal(f.calls.length, 3)
+  assert.equal((f.calls[2].params[0] as { to: string }).to, current.registry)
+  const changed = fixture()
+  await assert.rejects(verifyOmnioneSigningAuthority(selected, current.recorder, changed.rpc), denied("registry_code_mismatch"))
+  assert.equal(changed.calls.length, 2)
+  await assert.rejects(verifyOmnioneSigningAuthority({ ...selected, targetId: "stage-unapproved" }, current.recorder, fixture().rpc), denied("target_not_registered"))
 })

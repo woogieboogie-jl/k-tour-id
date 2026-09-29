@@ -2,7 +2,7 @@
 // No authentication, real keys, signing, RPC or transaction submission occurs.
 import assert from "node:assert/strict"
 import { after, before, beforeEach, mock, test } from "node:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import http from "node:http"
@@ -10,11 +10,14 @@ import https from "node:https"
 import { Interface, Transaction, getBytes, hexlify, keccak256, zeroPadValue } from "ethers"
 import { HkError } from "../../lib/hackathon/util"
 import { omnioneReadAbi, OMNIONE_STAGE } from "../../lib/hackathon/omnione-evidence"
+import { omnioneTargetSnapshot, type OmnioneTargetSnapshot } from "../../lib/hackathon/omnione-targets"
 
 const directory = mkdtempSync(join(tmpdir(), "omnione-preflight-review-"))
 const commitment = "0x" + "2".repeat(64), eventKey = "0x" + "4".repeat(64)
 const registryAddress = OMNIONE_STAGE.registry
 const recorderAddress = OMNIONE_STAGE.recorder
+const newTarget = omnioneTargetSnapshot("stage-20260930")
+const newRuntime = JSON.parse(readFileSync(new URL("../../../chain/omnione/runtime.stage-20260930.json", import.meta.url), "utf8")).runtime as string
 const rpcUrl = `${OMNIONE_STAGE.rpcOrigin}/?token=offline-fixture-not-a-real-token`
 const abi = new Interface(["function recordRedemption(bytes32 eventKey, bytes32 payloadCommitment)"])
 const env = {
@@ -22,6 +25,7 @@ const env = {
   HK_OMNIONE_RPC_URL: rpcUrl, HK_OMNIONE_PRIVATE_KEY: "fixture-never-used",
   HK_OMNIONE_REGISTRY_ADDRESS: registryAddress, HK_OMNIONE_CHAIN_ID: "201210", HK_OMNIONE_GAS_LIMIT: "300000",
   HK_OMNIONE_RECORDER_ADDRESS: recorderAddress,
+  HK_OMNIONE_TARGET_ID: "stage-legacy-20260914",
   UPSTASH_REDIS_REST_URL: "", UPSTASH_REDIS_REST_TOKEN: "", KV_REST_API_URL: "", KV_REST_API_TOKEN: "",
 }
 const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]))
@@ -34,6 +38,7 @@ let afterSign: (() => Promise<void>) | null = null
 let onBroadcast: (() => Promise<void>) | null = null
 let signerAddress: string = recorderAddress, chainId: number = OMNIONE_STAGE.chainId, recorderAllowed = true, registryCode = "0x6000"
 let authorityReads = 0, signingAttempts = 0
+let receiptTarget = omnioneTargetSnapshot()
 
 mock.module("ethers", { namedExports: {
   getBytes, hexlify, keccak256, zeroPadValue, Interface,
@@ -66,6 +71,7 @@ mock.module("ethers", { namedExports: {
     }
   },
   Contract: class {
+    constructor(readonly address: string) {}
     async getRedemption() {
       registryReads++
       if (registryReads === failedRegistryRead) throw new Error("fixture: registry read failed before signing")
@@ -73,7 +79,7 @@ mock.module("ethers", { namedExports: {
     }
     recordRedemption = { populateTransaction: async (key: string, payload: string, overrides: Record<string, unknown>) => {
       assert.equal(key, eventKey); assert.equal(payload, commitment)
-      return { to: registryAddress, data: abi.encodeFunctionData("recordRedemption", [key, payload]), ...overrides }
+      return { to: this.address, data: abi.encodeFunctionData("recordRedemption", [key, payload]), ...overrides }
     } }
   },
 } })
@@ -91,13 +97,16 @@ before(() => {
       assert.equal(body.params[0], keccak256(signedFixture))
       result = receipt ? {
         status: "0x" + receipt.status.toString(16), blockNumber: "0x" + receipt.blockNumber.toString(16), blockHash: "0x" + "6".repeat(64),
-        transactionHash: keccak256(signedFixture), to: registryAddress, from: recorderAddress,
-        logs: [{ address: registryAddress, ...omnioneReadAbi.encodeEventLog(omnioneReadAbi.getEvent("DemoEntitlementRedeemed")!, [eventKey, commitment, 1n, recorderAddress]) }],
+        transactionHash: keccak256(signedFixture), to: receiptTarget.registry, from: receiptTarget.recorder,
+        logs: [{ address: receiptTarget.registry, ...omnioneReadAbi.encodeEventLog(omnioneReadAbi.getEvent("DemoEntitlementRedeemed")!, [eventKey, commitment, 1n, receiptTarget.recorder]) }],
       } : null
     } else if (body.method === "eth_call") {
       const data = (body.params[0] as { data: string }).data
       if (data.startsWith(omnioneReadAbi.getFunction("recorders")!.selector)) result = omnioneReadAbi.encodeFunctionResult("recorders", [recorderAllowed])
-      else if (data.startsWith(omnioneReadAbi.getFunction("getRedemption")!.selector)) result = omnioneReadAbi.encodeFunctionResult("getRedemption", [registryExists, commitment, 1n, recorderAddress])
+      else if (data.startsWith(omnioneReadAbi.getFunction("getRedemption")!.selector)) {
+        assert.equal((body.params[0] as { to: string }).to, receiptTarget.registry)
+        result = omnioneReadAbi.encodeFunctionResult("getRedemption", [registryExists, commitment, 1n, receiptTarget.recorder])
+      }
       else return forbidden()
     } else return forbidden()
     return Response.json({ jsonrpc: "2.0", id: body.id, result })
@@ -105,6 +114,7 @@ before(() => {
   mock.method(http, "request", forbidden); mock.method(https, "request", forbidden)
 })
 beforeEach(() => {
+  Object.assign(process.env, env); receiptTarget = omnioneTargetSnapshot()
   registryReads = 0; signerConstructions = 0; broadcasts = 0; failedRegistryRead = 0
   populateFailure = false; signFailure = false; broadcastFailure = false; wrongBroadcastHash = false
   registryExists = false; receipt = null; populated = null; signedFixture = ""; afterSign = null; onBroadcast = null
@@ -122,12 +132,13 @@ after(() => {
   assert.equal(networkAttempts, 0)
 })
 
-async function seed() {
+async function seed(target?: OmnioneTargetSnapshot) {
   const { withStore } = await import("../../lib/hackathon/store")
   const id = `fixture-outbox-${++sequence}`
   const now = new Date().toISOString()
   await withStore(db => {
     db.outbox[id] = {
+      ...(target ? { target } : {}),
       outboxId: id, operationId: "fixture-operation", eventKey,
       payloadCommitment: commitment, payload: {}, status: "pending", txHash: null, blockNumber: null,
       attempts: 0, lastError: null, createdAt: now, updatedAt: now, confirmedAt: null,
@@ -135,6 +146,50 @@ async function seed() {
   })
   return id
 }
+
+function selectNewTarget() {
+  Object.assign(process.env, { HK_OMNIONE_TARGET_ID: newTarget.targetId, HK_OMNIONE_REGISTRY_ADDRESS: newTarget.registry, HK_OMNIONE_RECORDER_ADDRESS: newTarget.recorder })
+  signerAddress = newTarget.recorder; registryCode = newRuntime
+}
+test("new snapshotted outbox signs only the new target and passes bytecode attestation", async () => {
+  selectNewTarget(); receiptTarget = newTarget
+  const { processOutbox } = await import("../../lib/hackathon/service")
+  const id = await seed(newTarget)
+  const result = await processOutbox(id)
+  assert.equal(result?.status, "submitted"); assert.equal(broadcasts, 1)
+  assert.equal(populated!.to, newTarget.registry)
+  assert.deepEqual(result?.target, newTarget)
+})
+test("legacy pending outbox cannot be automatically moved to the new signer/registry", async () => {
+  selectNewTarget()
+  const { processOutbox } = await import("../../lib/hackathon/service")
+  const id = await seed()
+  const result = await processOutbox(id)
+  assert.equal(result?.status, "pending"); assert.equal(result?.attempts, 0)
+  assert.equal(registryReads, 0); assert.equal(signingAttempts, 0); assert.equal(broadcasts, 0)
+})
+test("saved legacy receipt recovers after target switch and removal of signer without rebroadcast", async () => {
+  const { processOutbox } = await import("../../lib/hackathon/service")
+  const id = await seed()
+  const first = await processOutbox(id)
+  assert.equal(first?.status, "submitted")
+  selectNewTarget(); process.env.HK_OMNIONE_PRIVATE_KEY = ""
+  receipt = { status: 1, blockNumber: 10 }; registryExists = true
+  const recovered = await processOutbox(id)
+  assert.equal(recovered?.status, "confirmed"); assert.equal(broadcasts, 1)
+  assert.equal(recovered?.attempts, 1); assert.equal(signingAttempts, 1)
+})
+test("new receipt remains readable on its own target after current configuration rolls back", async () => {
+  selectNewTarget(); receiptTarget = newTarget
+  const { processOutbox } = await import("../../lib/hackathon/service")
+  const id = await seed(newTarget)
+  await processOutbox(id)
+  Object.assign(process.env, env); process.env.HK_OMNIONE_PRIVATE_KEY = ""
+  receipt = { status: 1, blockNumber: 11 }; registryExists = true
+  const recovered = await processOutbox(id)
+  assert.equal(recovered?.status, "confirmed"); assert.deepEqual(recovered?.target, newTarget)
+  assert.equal(broadcasts, 1); assert.equal(signingAttempts, 1)
+})
 
 test("failure in the adapter's read-only preflight does not strand a never-broadcast audit", async () => {
   const { processOutbox } = await import("../../lib/hackathon/service")

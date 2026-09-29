@@ -3,6 +3,7 @@
 // ambient process environment. Callers must pass an explicit environment map.
 import { assessZkLoginReadiness, ZKLOGIN_READINESS_NAMES } from "./zklogin-readiness"
 import { integrationSuiRolesMatch, resolveIntegrationSuiTarget } from "./integration-sui-targets"
+import { omnioneTarget } from "./omnione-targets"
 
 export type ExplicitEnv = Record<string, string | undefined>
 
@@ -14,7 +15,7 @@ export const READINESS_ENV_NAMES = [
   "HK_SUI_ISSUER_SECRET_KEY", "HK_SUI_AGENT_SECRET_KEY", "HK_SUI_SPONSOR_SECRET_KEY",
   "NEXT_PUBLIC_GOOGLE_CLIENT_ID", "HK_ZKLOGIN_SALT_SEED", "ENOKI_API_KEY", "ENOKI_API_URL", "HK_ZKLOGIN_PROVER_URL",
   "NEXT_PUBLIC_HK_HOSTED_SUI", "HK_HOSTED_SUI_ENABLED", "VERCEL_GIT_COMMIT_REF",
-  "HK_OMNIONE_RPC_URL", "HK_OMNIONE_CHAIN_ID", "HK_OMNIONE_PRIVATE_KEY", "HK_OMNIONE_REGISTRY_ADDRESS",
+  "HK_OMNIONE_RPC_URL", "HK_OMNIONE_CHAIN_ID", "HK_OMNIONE_PRIVATE_KEY", "HK_OMNIONE_REGISTRY_ADDRESS", "HK_OMNIONE_TARGET_ID", "HK_OMNIONE_RECORDER_ADDRESS",
   "HK_AI_MODE", "GEMINI_API_KEY", "GEMINI_MODEL",
 ] as const
 
@@ -141,12 +142,16 @@ export function runIntegrationReadiness(options: IntegrationReadinessOptions = {
     try { suiTarget = resolveIntegrationSuiTarget(value(env, "HK_INTEGRATION_SUI_TARGET")) }
     catch { internalConfigWork.push(issue("sui_target_selection_invalid", "HK_INTEGRATION_SUI_TARGET")) }
   }
+  let omniTarget: ReturnType<typeof omnioneTarget> | null = null
+  try { omniTarget = omnioneTarget(env.HK_OMNIONE_TARGET_ID) }
+  catch { internalConfigWork.push(issue("omnione_target_selection_invalid", "HK_OMNIONE_TARGET_ID")) }
+  if (omniTarget && present(env, "HK_OMNIONE_RECORDER_ADDRESS") && value(env, "HK_OMNIONE_RECORDER_ADDRESS").toLowerCase() !== omniTarget.recorder) internalConfigWork.push(issue("omnione_recorder_configuration_invalid", "HK_OMNIONE_RECORDER_ADDRESS"))
   const deployed: Partial<Record<Name, string>> = {
     ...(suiTarget ? {
       HK_SUI_PACKAGE_ID: suiTarget.packageId, HK_SUI_CAMPAIGN_ID: suiTarget.campaignId,
       HK_SUI_CAMPAIGN_INITIAL_VERSION: suiTarget.campaignInitialVersion,
     } : {}),
-    HK_OMNIONE_REGISTRY_ADDRESS: "0x696bc4e29c8f8079b6d3cd49d310a09577550e4c",
+    ...(omniTarget ? { HK_OMNIONE_REGISTRY_ADDRESS: omniTarget.registry } : {}),
   }
   for (const [name, expected] of Object.entries(deployed)) {
     if (!present(env, name as Name)) internalConfigWork.push(issue("known_public_value_not_configured", name))
