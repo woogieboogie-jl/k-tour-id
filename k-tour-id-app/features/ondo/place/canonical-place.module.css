@@ -259,6 +259,13 @@
   .peek { right: 16px; bottom: 16px; left: auto; width: min(460px, calc(100% - 32px)); max-height: min(520px, calc(100% - 32px)); transform: none; }
 }
 
+/* The overlay is a canvas grid child, not a map descendant. Use the map's
+   grid area so the navigation rail does not bias its horizontal center.
+   Short landscape windows retain their separate header/card lanes above. */
+@media (min-width: 1024px) and (min-height: 501px) {
+  .peek { grid-column: 2; grid-row: 1; right: 16px; left: 16px; margin-inline: auto; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .peek { animation: none; }
 }
@@ -1588,6 +1595,10 @@
   .peek[data-place-presence="closing"] {
     animation-name: canonicalPlaceExitRight;
   }
+}
+
+@media (min-width: 1024px) and (min-height: 501px) {
+  .peek[data-place-presence="closing"] { animation-name: canonicalPlacePeekExit; }
 }
 
 @media (min-width: 900px) and (min-height: 501px) {

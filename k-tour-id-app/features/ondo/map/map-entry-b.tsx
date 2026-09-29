@@ -45,6 +45,7 @@ import { PLACE_SERVICE_RETURN_EVENT_B, SHOW_BALANCE_PLACES_EVENT_B, resolveComme
 import { B_DISCOVERY_FOCUS_EVENT, readBDiscoveryFocusRequest, type BDiscoveryFocusRequest } from "./b-discovery-focus"
 import { classifyBDiscoveryPreferencePresentation, orderBCanonicalDiscoveryPlaces } from "./b-discovery-personalization"
 import { CanonicalVenueCapsuleB } from "./canonical-venue-capsule-b"
+import { observeCenteredCanonicalPeek } from "./canonical-peek-camera-b"
 import {
   PLACE_RETURN_UI_RESTORE_EVENT,
   readPlaceReturnUiRestoreEvent,
@@ -3027,6 +3028,12 @@ export function MapEntryB() {
     const frame = window.requestAnimationFrame(() => mapRef.current?.resize())
     return () => window.cancelAnimationFrame(frame)
   }, [effectiveView])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || mapState !== "ready" || effectiveView !== "map" || !selectedVenue) return
+    return observeCenteredCanonicalPeek(map, { ...selectedVenue, label: venueDisplayName(selectedVenue.name.ko, locale) })
+  }, [effectiveView, locale, mapState, selectedVenue])
 
   useEffect(() => {
     const map = mapRef.current
