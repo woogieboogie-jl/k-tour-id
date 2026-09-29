@@ -35,11 +35,20 @@ store_unavailable sui_consume sui_delegate sui_delegate_verify sui_evidence_mism
 sui_evidence_missing sui_execute sui_execute_failed sui_gas_budget sui_issue_verify
 sui_read sui_unconfigured tx_mismatch venue_unsupported wallet_proof
 zklogin_aud zklogin_enoki zklogin_exp zklogin_iss zklogin_jwt zklogin_prover zklogin_unconfigured
+zklogin_attempt_inactive zklogin_attempt_used zklogin_attempt_limit zklogin_attempt_unknown zklogin_epoch zklogin_origin
+ai_generation_already_requested
 `.trim().split(/\s+/))
 const STATUSES = new Set([400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500, 502, 503, 504])
 type PublicFailure = { status: number; error: { code: string; message: string; retryable: boolean } }
 
 const FIXED: Record<string, string> = {
+  ai_generation_already_requested: "The assistant request was already sent. Check its current result; it will not be sent again.",
+  zklogin_attempt_inactive: "This sign-in expired or its approval context changed. Return to the same operation.",
+  zklogin_attempt_used: "Check or cancel the current sign-in before starting another.",
+  zklogin_attempt_limit: "This operation has reached its sign-in attempt limit.",
+  zklogin_attempt_unknown: "The sign-in result is uncertain. Check its status; do not resubmit.",
+  zklogin_epoch: "The sign-in epoch changed. Refresh the operation before starting again.",
+  zklogin_origin: "Open the main app to sign in with Google.",
   jit_identity_unavailable: "Identity checking is not available in this session.",
   jit_identity_scope: "This identity approval belongs to a different action.",
   jit_identity_inactive: "This identity request is no longer active.",

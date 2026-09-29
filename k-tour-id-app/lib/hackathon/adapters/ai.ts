@@ -4,7 +4,8 @@
 // Inputs are de-identified (no VC, JWT, salt, keys, names). Output is
 // schema-validated; anything outside the allowlist is rejected and recorded.
 import { geminiGenerate } from "@/lib/gemini"
-import { hkConfig } from "../config"
+import { hkConfig, assertExternalServicesEnabled } from "../config"
+import { isHostedSuiProfile } from "../hosted-sui-profile"
 import { digestOf, nowIso, randomId } from "../util"
 import type { ProposalOutput, ProposalSummary } from "../types"
 
@@ -54,6 +55,7 @@ export async function proposePerk(input: ProposalInput): Promise<ProposalSummary
   let model = c.mode === "gemini" ? c.model : "rule-v1"
   let injectionSuspected = false, schemaValid = true
   if (c.mode === "gemini" && process.env.GEMINI_API_KEY) {
+    if (isHostedSuiProfile()) assertExternalServicesEnabled("Gemini proposal")
     const guide = input.action === "save-neighborhood-guide-to-pass"
     const message = JSON.stringify({ venue: { id: input.venueId, name: input.venueName, category: input.category, district: input.district }, campaign: { id: input.campaignId, kind: guide ? "save_free_public_guide_to_travel_pass" : "non_financial_experience_perk", usesLeft: 1 }, context: { timeOfDay: input.timeOfDay, language: input.language } })
     const system = guide ? SYSTEM.replaceAll("redeem_demo_entitlement", input.action!) + " This only saves an already freely readable neighborhood guide to the travel pass. Do not promise admission, payment, age permission, reservations, or a financial benefit." : SYSTEM
@@ -69,7 +71,7 @@ export async function proposePerk(input: ProposalInput): Promise<ProposalSummary
         language: { type: "string", enum: [input.language] },
       },
     }
-    const res = await geminiGenerate({ key: process.env.GEMINI_API_KEY, model: c.model, system, message, maxOutputTokens: 1024, temperature: 0.3, responseJsonSchema })
+    const res = await geminiGenerate({ key: process.env.GEMINI_API_KEY, model: c.model, system, message, maxOutputTokens: 1024, temperature: 0.3, responseJsonSchema, ...(isHostedSuiProfile() ? { allowModelFallback: false } : {}) })
     let parsed: unknown = null
     if (res.reply) { try { parsed = JSON.parse(res.reply) } catch { parsed = null } }
     const v = validate(parsed, input)

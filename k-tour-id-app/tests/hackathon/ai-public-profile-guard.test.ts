@@ -9,10 +9,13 @@ const guideSignals = [
   { NEXT_PUBLIC_HK_GUIDE_PRODUCTION: "1" },
   { HK_GUIDE_PRODUCTION_ENABLED: "1" },
   { VERCEL_GIT_COMMIT_REF: GUIDE_PRODUCTION.branch },
+  { NEXT_PUBLIC_HK_HOSTED_SUI: "1", NEXT_PUBLIC_HK_HOSTED_PROVIDERS: "connected-20260930-v1", HK_HOSTED_PROVIDERS: "connected-20260930-v1", HK_HOSTED_AI_ENABLED: "1" },
+  { HK_HOSTED_SUI_ENABLED: "1" },
+  { VERCEL_GIT_COMMIT_REF: "deploy/sui-main-20260928" },
 ]
 
 for (const [name, post] of [["chat", chatPost], ["ask", askPost]] as const) {
-  test(`${name} denies every guide profile signal before body parsing or provider access`, async () => {
+  test(`${name} denies every guide/hosted/connected profile signal before body parsing or provider access`, async () => {
     const oldEnv = process.env, oldFetch = globalThis.fetch
     try {
       let calls = 0

@@ -42,7 +42,7 @@ export class HarveyFixture {
     omnione: { chainId: 0, registryAddress: "" }, consentVersion: "browser-fixture-consent-v1",
   }
 
-  constructor(readonly page: Page, readonly origin: string) {}
+  constructor(readonly page: Page, readonly origin: string, readonly assetOrigin = origin) {}
 
   count(path: string) { return this.calls.filter(call => call.path === path).length }
   failNext(action: string, message = "Fixture temporary failure: retry the same step") {
@@ -83,7 +83,8 @@ export class HarveyFixture {
         await route.abort("blockedbyclient")
         return
       }
-      await route.continue()
+      if (this.assetOrigin !== this.origin) await route.fulfill({ response: await route.fetch({ url: this.assetOrigin + url.pathname + url.search, maxRedirects: 0 }) })
+      else await route.continue()
     })
   }
 

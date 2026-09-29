@@ -166,18 +166,20 @@ test("bounded bodies and strict fields reject sample evidence before session or 
   await denied(await call(["sessions"], { method: "POST", cookie, headers: { "content-type": "text/plain" } }), 400, "bad_request")
 })
 
-test("zklogin/prove consumes the checked large JSON once and reaches existing verification without network", async () => {
+test("bound zklogin/prove consumes checked large JSON once but refuses unregistered Preview callback origin before network", async () => {
   process.env.HK_ZKLOGIN_SALT_SEED = "synthetic-route-salt-seed"
   process.env.HK_ZKLOGIN_PROVER_URL = "https://fixture-prover.invalid/v1"
   const cookie = await accessCookie()
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url")
   const jwt = `${encode({ alg: "RS256", kid: "fixture" })}.${encode({ iss: "https://accounts.google.com", aud: "wrong-audience", sub: "synthetic-subject", exp: now / 1000 + 600, padding: "x".repeat(4000) })}.fixture`
   assert.ok(jwt.length > 4096 && jwt.length < 8192)
-  await denied(await call(["zklogin", "prove"], { method: "POST", cookie, body: JSON.stringify({ jwt, extendedEphemeralPublicKey: "fixture", maxEpoch: 3, jwtRandomness: "1" }) }), 400, "zklogin_aud")
+  const req = request(["zklogin", "prove"], { method: "POST", cookie, body: JSON.stringify({ jwt, operationId: op, attemptId: `zkl_${"a".repeat(24)}` }) })
+  await denied(await route.POST(req, ctx(["zklogin", "prove"])), 403, "zklogin_origin")
+  assert.equal(req.bodyUsed, true)
 })
 
-test("zklogin/prove missing explicit provider configuration refuses before network or session work", async () => {
+test("legacy unbound zklogin/prove body is rejected before network or session work", async () => {
   const cookie = await accessCookie()
   process.env.HK_ZKLOGIN_SALT_SEED = "synthetic-route-salt-seed"
-  await denied(await call(["zklogin", "prove"], { method: "POST", cookie, body: JSON.stringify({ jwt: "synthetic-token", extendedEphemeralPublicKey: "fixture", maxEpoch: 3, jwtRandomness: "1" }) }), 503, "zklogin_unconfigured")
+  await denied(await call(["zklogin", "prove"], { method: "POST", cookie, body: JSON.stringify({ jwt: "synthetic-token", extendedEphemeralPublicKey: "fixture", maxEpoch: 3, jwtRandomness: "1" }) }), 400, "bad_request")
 })

@@ -138,6 +138,9 @@ export type ChainRecord = {
 }
 
 export type OperationResult = {
+  /** Server-derived new target lane; not permission. Preserve pending recovery
+   * even if provider activation is later disabled. Check allowedActions to act. */
+  hostedTestRedemption?: boolean
   journey?: import("./guide-contract").GuideJourney
   operationId: string
   kind: "demo_entitlement" | "identity_check"

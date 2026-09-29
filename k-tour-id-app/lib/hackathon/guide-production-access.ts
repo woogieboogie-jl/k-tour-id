@@ -5,6 +5,7 @@ import { assertIntegrationPreviewBody } from "./integration-preview-access"
 import { GUIDE_SAVE_V2 } from "./guide-contract"
 import { HkError } from "./util"
 import { jitIdentityRouteAllowed } from "./jit-identity-routes"
+import { zkLoginRouteAllowed } from "./zklogin-route-policy"
 
 export const GUIDE_PRODUCTION_COOKIE = "__Host-ktour_guide_access"
 const ACCESS_MS = 2 * 60 * 60_000
@@ -61,6 +62,7 @@ const actions = new Set(["identity/start", "identity/complete", "provider/issuan
 export function guideProductionRouteAllowed(method: string, path: string[]): boolean {
   if (!Array.isArray(path) || path.some(p => typeof p !== "string" || !p || p.includes("/"))) return false
   if (jitIdentityRouteAllowed(method, path)) return true
+  if (path[0] === "zklogin") return zkLoginRouteAllowed(method, path)
   if (method === "GET") return (path.length === 1 && ["config", "me"].includes(path[0])) ||
     (path.length === 2 && ((path[0] === "guide" && path[1] === "collection") || (path[0] === "zklogin" && path[1] === "params"))) ||
     (path[0] === "operations" && operation.test(path[1] ?? "") && (path.length === 2 || (path.length === 3 && path[2] === "evidence")))

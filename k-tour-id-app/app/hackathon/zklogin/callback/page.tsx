@@ -5,8 +5,9 @@
 // for the pending operation and return to the map, where the journey resumes.
 import { useEffect, useRef, useState } from "react"
 import { readPendingHackathon } from "@/features/ondo/hackathon-b/hackathon-campaign"
-import { clearZkLoginOAuthAttempt, readSigner, writeSigner } from "@/features/ondo/hackathon-b/hackathon-client"
+import { api, canBeginGoogleHere, clearZkLoginOAuthAttempt, readSigner, writeSigner } from "@/features/ondo/hackathon-b/hackathon-client"
 import { readOAuthReturn } from "@/features/ondo/hackathon-b/hackathon-oauth-return"
+import { validZkLoginAttemptView } from "@/lib/hackathon/zklogin-attempt-contract"
 import { isCxPreview, isReadinessPreview } from "@/lib/hackathon/preview-readiness"
 import styles from "./return.module.css"
 
@@ -21,8 +22,10 @@ export default function ZkLoginCallbackPage() {
   const [failed, setFailed] = useState(false)
   const [returnTo, setReturnTo] = useState("/")
   const handled = useRef(false)
+  const alive = useRef(false)
   useEffect(() => {
-    if (handled.current) return
+    alive.current = true
+    if (handled.current) return () => { alive.current = false }
     handled.current = true
     const fragment = window.location.hash, query = window.location.search
     // Scrub after parent effects initialize, while validating the captured
@@ -33,7 +36,7 @@ export default function ZkLoginCallbackPage() {
         window.history.replaceState(null, "", window.location.pathname)
         // Even a stalled return navigation must leave no token in this URL.
         // Persist/consume an accepted return only after scrubbing succeeds.
-        afterScrub?.()
+        if (alive.current) afterScrub?.()
       } catch {
         setFailed(true)
       }
@@ -41,6 +44,7 @@ export default function ZkLoginCallbackPage() {
     // This preview must not accept or store even a well-formed OAuth return.
     if (isReadinessPreview()) { setFailed(true); scheduleScrub(); return }
     if (isCxPreview()) { setFailed(true); scheduleScrub(); return }
+    if (!canBeginGoogleHere()) { setFailed(true); scheduleScrub(); return }
     try {
       const pending = readPendingHackathon()
       if (pending) setLocale(pending.locale)
@@ -55,19 +59,26 @@ export default function ZkLoginCallbackPage() {
       const target = id && pending ? `/?venueId=${encodeURIComponent(pending.venueId)}&detail=1&hk=${encodeURIComponent(id)}` : "/"
       setReturnTo(target)
       const result = readOAuthReturn(fragment, query, signer?.kind === "zklogin" && signer.jwtPending ? signer.oauthState : undefined)
-      if (!id || !signer || signer.kind !== "zklogin" || result.status !== "accepted") {
+      if (!id || !signer || signer.kind !== "zklogin" || !signer.attemptId || !signer.attemptExpiresAt || Date.parse(signer.attemptExpiresAt) <= Date.now() || signer.proofRequestSent || result.status !== "accepted") {
         if (id) clearZkLoginOAuthAttempt(id)
         setFailed(true); scheduleScrub()
         return
       }
-      scheduleScrub(() => {
+      const attemptId = signer.attemptId
+      // Scrub first; a GET verifies the original HttpOnly session/operation is
+      // still current. No proof POST, signing or execution occurs on return.
+      scheduleScrub(() => { void api.zkStatus(id, attemptId).then(status => {
+        const current = readSigner(id), currentPending = readPendingHackathon()
+        if (!alive.current || currentPending?.resumeOperationId !== id || current?.kind !== "zklogin" || current.attemptId !== attemptId || current.oauthState !== signer.oauthState || !current.jwtPending || current.proofRequestSent ||
+          !validZkLoginAttemptView(status, id, attemptId) || status.status !== "pending" || status.maxEpoch !== signer.maxEpoch || status.expiresAt !== signer.attemptExpiresAt || Date.parse(status.expiresAt) <= Date.now()) { if (alive.current) setFailed(true); return }
         window.sessionStorage.setItem(`ondo-b.hackathon.jwt:${id}`, result.token)
-        writeSigner(id, { ...signer, oauthState: undefined }) // one return per login attempt
+        writeSigner(id, { ...current, oauthState: undefined })
         window.location.replace(target)
-      })
+      }).catch(() => { if (alive.current) setFailed(true) }) })
     } catch {
       setFailed(true); scheduleScrub()
     }
+    return () => { alive.current = false }
   }, [])
   const copy = COPY[locale]
   return <main className={styles.page} lang={locale} data-testid="hackathon-login-callback" data-state={failed ? "failed" : "checking"}>

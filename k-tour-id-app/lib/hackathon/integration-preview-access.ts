@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { hostedIntegrationRedisConfig } from "./hosted-store-config"
 import { HkError } from "./util"
 import { jitIdentityRouteAllowed, assertJitIdentityBody } from "./jit-identity-routes"
+import { zkLoginRouteAllowed, assertZkLoginRequestBody } from "./zklogin-route-policy"
 
 export const INTEGRATION_PREVIEW_BRANCH = "integration/autonomous-finish-20260927"
 export const INTEGRATION_PREVIEW_MAX_END = Date.parse("2026-09-30T14:59:59Z")
@@ -103,6 +104,7 @@ const actions: Record<string, readonly string[]> = {
 /** Exact path lengths and verbs; HEAD and all unknown/query routes stay shut. */
 export function integrationPreviewRouteAllowed(method: string, path: string[]) {
   if (jitIdentityRouteAllowed(method, path)) return true
+  if (path[0] === "zklogin") return zkLoginRouteAllowed(method, path)
   if (method === "GET") return (path.length === 1 && ["config", "me"].includes(path[0])) ||
     (path.length === 2 && path[0] === "guide" && path[1] === "collection") ||
     (path.length === 3 && path[0] === "places" && /^[A-Za-z0-9_-]{1,120}$/.test(path[1]) && path[2] === "demo-entitlements") ||
@@ -117,11 +119,11 @@ export function integrationPreviewRouteAllowed(method: string, path: string[]) {
 
 export function assertIntegrationPreviewBody(path: string[], body: Record<string, unknown>) {
   if (path[0] === "identity") { assertJitIdentityBody(path, body); return }
+  if (path[0] === "zklogin") { assertZkLoginRequestBody(path, body); return }
   const fields = path.length === 1 ? (path[0] === "operations" ? ["venueId", "consentVersion", "locale", "identityAuthorizationRef", "identityContextDigest"] : [])
     : path[0] === "guide" && path[1] === "operations" ? ["venueId", "consentVersion", "locale"]
       : path[0] === "integration" ? ["accessCode"]
-      : path[0] === "zklogin" ? ["jwt", "extendedEphemeralPublicKey", "maxEpoch", "jwtRandomness"]
-        : actions[path.slice(2).join("/")] ?? []
+      : actions[path.slice(2).join("/")] ?? []
   if (Object.keys(body).some(key => !fields.includes(key))) throw badBody()
   if (path.length === 1 && path[0] === "operations" && (Object.hasOwn(body, "identityAuthorizationRef") || Object.hasOwn(body, "identityContextDigest")) &&
     (typeof body.identityAuthorizationRef !== "string" || !/^ida_[A-Za-z0-9_-]{16,32}$/.test(body.identityAuthorizationRef) ||

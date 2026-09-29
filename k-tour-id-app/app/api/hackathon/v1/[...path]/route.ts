@@ -10,14 +10,16 @@ import { safeHkError } from "@/lib/hackathon/public-error"
 import { readStore } from "@/lib/hackathon/store"
 import * as svc from "@/lib/hackathon/service"
 import { currentEpoch } from "@/lib/hackathon/adapters/sui"
-import { proveZkLogin, zkLoginConfigured } from "@/lib/hackathon/adapters/zklogin"
+import { zkLoginConfigured } from "@/lib/hackathon/adapters/zklogin"
+import { zkLoginAttempts } from "@/lib/hackathon/zklogin-attempt"
+import { ZKLOGIN_CALLBACK } from "@/lib/hackathon/zklogin-attempt-contract"
 import { canonicalMapVenueById } from "@/lib/ondo/venues/map-data"
 import { isCxPreview, isReadinessPreview, previewReadOnlyResponse } from "@/lib/hackathon/preview-readiness"
 import { cxReadinessResponse } from "@/lib/hackathon/cx-readiness"
 import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewBody, cxPreviewRouteAllowed, grantCxPreviewAccess, requireCxPreviewAccess } from "@/lib/hackathon/cx-preview-access"
 import { assertIntegrationPreviewBody, assertIntegrationPreviewOrigin, assertIntegrationPreviewTarget, grantIntegrationPreviewAccess, integrationPreviewBody, integrationPreviewRouteAllowed, requireIntegrationPreviewAccess, requiresIntegrationPreviewAccess } from "@/lib/hackathon/integration-preview-access"
 import { isHostedSuiProfile, hostedSuiRouteAllowed, assertHostedSuiBody } from "@/lib/hackathon/hosted-sui-profile"
-import { assertHostedSuiTarget, assertHostedSuiOrigin, requireHostedSuiAccess, grantHostedSuiAccess } from "@/lib/hackathon/hosted-sui-access"
+import { assertHostedSuiTarget, assertHostedSuiOrigin, hostedSuiOrigin, requireHostedSuiAccess, grantHostedSuiAccess } from "@/lib/hackathon/hosted-sui-access"
 import { isGuideProductionProfile } from "@/lib/hackathon/guide-production-profile"
 import { assertGuideProductionTarget, assertGuideProductionOrigin, requireGuideProductionAccess, grantGuideProductionAccess, guideProductionRouteAllowed, assertGuideProductionBody } from "@/lib/hackathon/guide-production-access"
 import { isGuideJourney } from "@/lib/hackathon/guide-contract"
@@ -154,9 +156,14 @@ export async function GET(req: Request, ctx: Ctx) {
       if (path[2] === "evidence") return json(svc.evidence(op))
       return json(svc.toResult(op))
     }
-    if (path[0] === "zklogin" && path[1] === "params") {
+    if (path.length === 4 && path[0] === "zklogin" && path[1] === "status") {
+      const s = await requireSession()
+      return json(await zkLoginAttempts.status(s.sessionId, path[2], path[3]))
+    }
+    if (path.length === 2 && path[0] === "zklogin" && path[1] === "params") {
+      await requireSession()
       const epoch = zkLoginConfigured() ? await currentEpoch() : 0
-      return json({ configured: zkLoginConfigured(), googleClientId: hkPublicConfig().sui.googleClientId, maxEpoch: epoch + 2, epoch })
+      return json({ configured: zkLoginConfigured(), googleClientId: hkPublicConfig().sui.googleClientId, redirectUri: ZKLOGIN_CALLBACK, maxEpoch: epoch + 2, epoch })
     }
     return json({ error: { code: "not_found" } }, 404)
   } catch (e) { return err(e) }
@@ -253,10 +260,17 @@ export async function POST(req: Request, ctx: Ctx) {
       return json(await jitIdentity.cancel(s.sessionId, path[2]))
     }
     if (path[0] === "sessions") { const s = await ensureSession(); return json({ ok: true, sessionId: s.sessionId.slice(0, 8) + "…" }) }
-    if (path[0] === "zklogin" && path[1] === "prove") {
-      const b = checkedBody ?? await body(req)
-      const out = await proveZkLogin({ jwt: str(b.jwt, 8192), extendedEphemeralPublicKey: str(b.extendedEphemeralPublicKey, 512), maxEpoch: Number(b.maxEpoch), jwtRandomness: str(b.jwtRandomness, 128) })
-      return json({ address: out.address, inputs: out.inputs, maxEpoch: Number(b.maxEpoch) })
+    if (path.length === 2 && path[0] === "zklogin" && ["start", "prove", "cancel"].includes(path[1])) {
+      // The registered callback is main-only; never create a Preview session
+      // whose OAuth response would land at another origin and lose its binding.
+      const origin = new URL(ZKLOGIN_CALLBACK).origin
+      // Hosted access already validated the exact proxy headers/profile above.
+      // An internal Next URL is not the public origin; never trust forwarded
+      // headers in the unprofiled path.
+      const requestOrigin = hostedSui ? hostedSuiOrigin(req) : new URL(req.url).origin
+      if (requestOrigin !== origin || req.headers.get("origin") !== origin) throw new HkError("zklogin_origin", "Open the main app to sign in with Google", 403)
+      const s = await requireSession(), b = checkedBody ?? await integrationPreviewBody(req)
+      return json(path[1] === "start" ? await zkLoginAttempts.start(s.sessionId, b) : path[1] === "prove" ? await zkLoginAttempts.prove(s.sessionId, b) : await zkLoginAttempts.cancel(s.sessionId, b))
     }
     const s = await ensureSession()
     if (path.length === 2 && path[0] === "guide" && path[1] === "operations") {

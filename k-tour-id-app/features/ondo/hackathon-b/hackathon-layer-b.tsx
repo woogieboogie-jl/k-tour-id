@@ -20,9 +20,10 @@ import { useOndoB } from "../shared/state/ondo-b-provider"
 import { ONDO_MODAL_PRIORITY } from "../shared/ui/modal-layer-priority"
 import { useDocumentScrollLock, useModalIsolation } from "../shared/ui/use-modal-isolation"
 import { HACKATHON_ENABLED, HACKATHON_DEMO_ENTRY, HACKATHON_GUIDE_PRODUCTION, HACKATHON_OPEN_EVENT_B, manualHackathonDetail, openHackathonVenueB, readPendingHackathon, writePendingHackathon, type HackathonOpenDetail } from "./hackathon-campaign"
-import { ApiError, api, beginZkLogin, canonicalJson, clearJourneySecrets, clearZkLoginReturn, createDemoSigner, ensureHolderKey, finishZkLogin, holderSign, isTerminalZkLoginError, readSigner, sha256Hex, signPersonalMessage, signTransactionBytes, fromBase64, type EntitlementInfo, type PublicConfig, type StoredSigner } from "./hackathon-client"
+import { ApiError, api, beginZkLogin, canBeginGoogleHere, cancelZkLogin, canonicalJson, clearJourneySecrets, clearZkLoginReturn, createDemoSigner, ensureHolderKey, finishZkLogin, holderSign, isTerminalZkLoginError, readSigner, sha256Hex, signPersonalMessage, signTransactionBytes, fromBase64, type EntitlementInfo, type PublicConfig, type StoredSigner } from "./hackathon-client"
 import styles from "./hackathon-b.module.css"
 import { journeyStepIndex } from "./hackathon-navigation"
+import { clearJourneyOnCloseB } from "./hackathon-recovery-b"
 import { isCxPreview, isReadinessPreview } from "@/lib/hackathon/preview-readiness"
 import { HackathonReadinessB } from "./hackathon-readiness-b"
 import { HackathonCxPreviewB } from "./hackathon-cx-preview-b"
@@ -234,7 +235,7 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
 
   const close = useCallback((returnToPlace: boolean) => {
     closedRef.current = true
-    if (op && (op.status !== "pending" || (!guide && process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1" && op.phase === "fulfillment" && op.agent?.status === "executed"))) { writePendingHackathon(null); clearJourneySecrets(op.operationId); try { sessionStorage.removeItem(`ondo-b.hackathon.vc:${op.operationId}`) } catch { /* ignore */ } }
+    if (op && clearJourneyOnCloseB(op, guide, process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1")) { writePendingHackathon(null); clearJourneySecrets(op.operationId); try { sessionStorage.removeItem(`ondo-b.hackathon.vc:${op.operationId}`) } catch { /* ignore */ } }
     onClose(returnToPlace)
     if (returnToPlace && !guide) window.setTimeout(() => requestPlaceServiceReturnB(detail.venueId, "offer"), 30)
   }, [onClose, op, detail.venueId, guide])
@@ -325,30 +326,37 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
   })
   const deny = () => run("present", async () => { if (op) setOp(await api.presentationDeny(op.operationId)) })
   const propose = () => run("propose", async () => { if (op) setOp(await api.proposal(op.operationId, locale)) })
+  const checkProposal = () => run("propose", async () => { if (op) setOp(await api.get(op.operationId)) })
   const chooseSigner = (kind: "zklogin" | "demo") => run("signer", async () => {
     if (!op) return
     if (guide && kind !== "zklogin") throw new Error("guide_signer_required")
     if (kind === "demo") { setSigner(createDemoSigner(op.operationId)); return }
     if (config?.isolatedMock !== false) throw new Error(tr("이 체험에서는 Google 연결을 사용하지 않아요.", "Google sign-in is disabled for this isolated experience.", "この体験ではGoogle連携を使用しません。"))
     const jwt = sessionStorage.getItem(`ondo-b.hackathon.jwt:${op.operationId}`)
-    if (jwt) {
+    const currentSigner = readSigner(op.operationId)
+    const current = () => !closedRef.current && operationIdRef.current === op.operationId
+    if (jwt || currentSigner?.kind === "zklogin") {
       try {
-        setSigner(await finishZkLogin(op.operationId, jwt))
+        const finished = await finishZkLogin(op.operationId, jwt ?? undefined, current)
+        if (current()) setSigner(finished)
         sessionStorage.removeItem(`ondo-b.hackathon.jwt:${op.operationId}`)
         return
       } catch (error) {
         // A known token rejection cannot succeed on retry. Clear only this
         // callback token/state; the next explicit click starts fresh OAuth.
-        // Transport/provider failures retain the token for a bounded retry.
+        // A sent proof is GET-only on every later click, including unknown transport.
         if (isTerminalZkLoginError(error)) clearZkLoginReturn(op.operationId)
+        if (current()) setSigner(readSigner(op.operationId))
         throw error
       }
     }
     const params = await api.zkParams()
-    if (!params.configured) throw new Error(tr("Google 연결이 준비되지 않았어요.", "Google sign-in is not configured.", "Google連携の準備ができていません。"))
+    if (!params.configured || !current()) throw new Error(tr("Google 연결이 준비되지 않았어요.", "Google sign-in is not configured.", "Google連携の準備ができていません。"))
     writePendingHackathon({ ...detail, resumeOperationId: op.operationId })
-    window.location.assign(await beginZkLogin(op.operationId, params.googleClientId, params.maxEpoch))
+    try { const url = await beginZkLogin(op.operationId, params.googleClientId, params.maxEpoch, current); if (current()) window.location.assign(url) }
+    finally { if (current()) setSigner(readSigner(op.operationId)) }
   })
+  const cancelLogin = () => run("signer", async () => { if (!op) return; await cancelZkLogin(op.operationId); if (!closedRef.current) setSigner(readSigner(op.operationId)) })
   const delegate = () => run("delegate", async () => {
     if (!approve || !op || !signer || !op.proposal || !op.presentation?.decisionRef) return
     if (guide && signer.kind !== "zklogin") throw new Error("guide_signer_required")
@@ -396,11 +404,14 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
   const modes = info?.modes ?? config?.modes ?? {}
   const isolated = !guide && config?.isolatedMock !== false
   const hostedSui = !guide && process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1"
+  const hostedTestOperation = hostedSui && op?.hostedTestRedemption === true
+  const hostedTestRedemption = hostedTestOperation && config?.capabilities?.hostedTestRedemptionEnabled === true && op?.allowedActions.includes("redeem") === true
+  const hostedTestRecorded = hostedSui && op?.fulfillment?.status === "redeemed" && op.chain?.target?.targetId === "stage-20260930"
   const sampleIdentity = isolated || modes.cx === "mock"
   // Provider configuration must never fall back to browser-generated mock VC/VP
   // if the operation is inconsistent. The shared step rejects mismatched DTOs.
   const providerStep = guide || (!isolated && !hostedSui && modes.opendid === "opendid")
-  const steps: readonly string[] = hostedSui ? [...c.steps.slice(0, 7), tr("실행 완료", "Execution complete", "実行完了")] : c.steps
+  const steps: readonly string[] = hostedSui && !hostedTestOperation && !hostedTestRecorded ? [...c.steps.slice(0, 7), tr("실행 완료", "Execution complete", "実行完了")] : c.steps
   const stateOf = (i: number) => (op?.status === "cancelled" || op?.status === "failed" || op?.status === "expired" ? (i < stepIndex ? "done" : i === stepIndex ? "blocked" : "todo") : i < stepIndex ? "done" : i === stepIndex ? "current" : "todo")
   const title = useMemo(() => info?.campaign?.title?.[locale] ?? c.title, [info, locale, c.title])
 
@@ -512,7 +523,9 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
             </section>
           ) : null}
 
-          {activePhase === "proposal" && op ? <section className={styles.card}><h3>{c.steps[4]}</h3><p>{guide ? tr("패스에 담을 가이드와 한 번의 저장 범위를 확인해 주세요. 읽기에는 승인이 필요하지 않아요.", "Review the guide and the scope of one saving action. Reading does not require approval.", "保存するガイドと1回の保存範囲を確認してください。読むだけなら承認は不要です。") : tr("이 장소에서 체험할 수 있는 혜택 하나를 확인합니다. 내용을 보고 진행 여부를 직접 선택해 주세요.", "Review the one available experience perk, then choose whether to continue.", "この場所で体験できる特典を1つ確認し、進めるかどうか選んでください。")}</p><div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={propose} data-testid="hackathon-propose">{busy === "propose" ? <span className={styles.spinner} /> : null}{c.propose}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div></section> : null}
+          {activePhase === "proposal" && op ? <section className={styles.card}><h3>{c.steps[4]}</h3><p>{guide ? tr("패스에 담을 가이드와 한 번의 저장 범위를 확인해 주세요. 읽기에는 승인이 필요하지 않아요.", "Review the guide and the scope of one saving action. Reading does not require approval.", "保存するガイドと1回の保存範囲を確認してください。読むだけなら承認は不要です。") : tr("이 장소에서 체험할 수 있는 혜택 하나를 확인합니다. 내용을 보고 진행 여부를 직접 선택해 주세요.", "Review the one available experience perk, then choose whether to continue.", "この場所で体験できる特典を1つ確認し、進めるかどうか選んでください。")}</p>
+            {!op.allowedActions.includes("propose") ? <p data-testid="hackathon-proposal-unknown">{tr("요청은 이미 전송됐어요. 결과를 확인하며, 같은 요청을 다시 보내지 않습니다.", "The request was already sent. Check its result; it will not be sent again.", "リクエストは送信済みです。結果を確認し、同じリクエストは再送信しません。")}</p> : null}
+            <div className={styles.actions}>{op.allowedActions.includes("propose") ? <button type="button" className={styles.primary} disabled={!!busy} onClick={propose} data-testid="hackathon-propose">{busy === "propose" ? <span className={styles.spinner} /> : null}{c.propose}</button> : <button type="button" className={styles.primary} disabled={!!busy} onClick={checkProposal} data-testid="hackathon-proposal-check">{c.fetchResult}</button>}<button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div></section> : null}
 
           {activePhase === "delegation" && op && op.proposal ? (
             <section className={styles.card}>
@@ -531,7 +544,12 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
                 <div className={styles.notice}>{tr("이전 요청의 결과를 확인하고 있어요. 확인 전에는 새로 승인하거나 실행하지 않습니다.", "Checking the previous request. No new approval or execution is sent while its result is uncertain.", "前のリクエストの結果を確認しています。確認前に新たな承認や実行は行いません。")}</div>
                 <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button>{delegationMayStop ? <button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button> : null}</div>
               </> : !signer || (signer.kind === "zklogin" && signer.jwtPending) ? <div className={styles.actions}>
-                {!isolated && modes.zklogin === "google" ? <button type="button" className={styles.primary} disabled={!!busy} onClick={() => chooseSigner("zklogin")} data-testid="hackathon-signer-google">{c.signerZk}</button> : null}
+                {!isolated && modes.zklogin === "google" ? <>
+                  <p data-testid="hackathon-google-disclosure">{tr("로그인하면 Google ID 토큰을 K-Tour ID 서버와 Mysten의 공개 Testnet 증명 서버에 보내 증명을 만듭니다. 임시 개인키는 이 기기에 남습니다. 모바일 신분증·OpenDID 인증이나 실행 동의가 아닙니다.", "Signing in sends your Google ID token to K-Tour ID and Mysten’s public Testnet prover to create a proof. Your temporary private key stays on this device. This is not mobile ID, OpenDID verification, or approval to execute.", "ログインするとGoogle IDトークンをK-Tour IDとMystenの公開Testnet証明サーバーに送り、証明を作成します。一時秘密鍵はこの端末に残ります。モバイル身分証・OpenDID認証や実行への同意ではありません。")}</p>
+                  <button type="button" className={styles.primary} disabled={!!busy || !canBeginGoogleHere()} onClick={() => chooseSigner("zklogin")} data-testid="hackathon-signer-google">{signer?.kind === "zklogin" ? tr("로그인 결과 확인", "Check sign-in result", "ログイン結果を確認") : c.signerZk}</button>
+                  {!canBeginGoogleHere() ? <p data-testid="hackathon-google-browser-required">{tr("Safari 또는 Chrome에서 ktour-id.vercel.app을 직접 열어 진행해 주세요. 앱 내 브라우저의 로그인은 아직 지원하지 않습니다.", "Open ktour-id.vercel.app directly in Safari or Chrome. Sign-in inside the native app is not supported yet.", "SafariまたはChromeでktour-id.vercel.appを直接開いてください。アプリ内ブラウザでのログインはまだ対応していません。")}</p> : null}
+                  {signer?.kind === "zklogin" ? <button type="button" className={styles.ghost} disabled={!!busy} onClick={cancelLogin} data-testid="hackathon-login-cancel">{tr("이 로그인 취소", "Cancel this sign-in", "このログインを中止")}</button> : null}
+                </> : null}
                 {!guide && (isolated || modes.zklogin !== "google") ? <button type="button" className={styles.secondary} disabled={!!busy} onClick={() => chooseSigner("demo")} data-testid="hackathon-signer-demo">{c.signerDemo}</button> : null}
               </div> : <>
                 <div className={styles.notice}>{signer.kind === "zklogin" ? tr("Google 계정 연결됨", "Google account connected", "Googleアカウント接続済み") : tr("샘플 계정이 준비됐어요", "Sample account ready", "サンプルアカウントの準備ができました")}</div>
@@ -551,7 +569,13 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
             </div>
           </section> : null}
 
-          {activePhase === "fulfillment" && op && hostedSui ? <section className={styles.card} data-testid="hackathon-sui-complete">
+          {activePhase === "fulfillment" && op && hostedTestOperation ? <section className={styles.card} data-testid="hackathon-hosted-test-confirm">
+            <h3>{tr("테스트 체험을 확정할까요?", "Confirm this test experience?", "テスト体験を確定しますか？")}</h3>
+            <p>{tr("확인된 Sui 실행과 현재 이용 조건을 다시 검사해 앱 안의 테스트 체험 1회를 확정하고 OmniOne Chain에 검증용 기록을 남깁니다. 실제 매장 혜택·결제·예약은 아니며 OpenDID 자격은 mock입니다.", "Re-check the confirmed Sui execution and current eligibility, confirm one in-app test experience, and record its audit on OmniOne Chain. This is not a real merchant benefit, payment or reservation; the OpenDID credential is mock.", "確認済みのSui実行と現在の利用条件を再検証し、アプリ内のテスト体験を1回確定してOmniOne Chainに検証用の記録を残します。実際の店舗特典・決済・予約ではなく、OpenDID資格はmockです。")}</p>
+            {!hostedTestRedemption ? <p className={styles.notice} data-testid="hackathon-test-confirm-unavailable">{tr("현재 이 체험을 확정할 수 없어요. 기존 실행 결과만 다시 확인할 수 있습니다.", "This test experience cannot be confirmed now. You can check the existing execution result.", "現在、このテスト体験は確定できません。既存の実行結果を再確認できます。")}</p> : null}
+            <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy || !hostedTestRedemption} onClick={redeem} data-testid="hackathon-redeem">{busy === "redeem" ? <span className={styles.spinner} /> : null}{tr("테스트 체험 확정", "Confirm test experience", "テスト体験を確定")}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div>
+          </section> : null}
+          {activePhase === "fulfillment" && op && hostedSui && !hostedTestOperation ? <section className={styles.card} data-testid="hackathon-sui-complete">
             <h3>{tr("승인한 실행이 완료됐어요", "Your approved action is complete", "承認した実行が完了しました")}</h3>
             <p>{tr("Sui Testnet에서 발급·위임·실행을 확인했어요. 실제 혜택 사용과 OmniOne 기록은 아직 진행하지 않았어요.", "Issuance, delegation and execution are confirmed on Sui Testnet. No real perk was redeemed and no OmniOne record was created.", "Sui Testnetで発行・委任・実行を確認しました。実際の特典利用とOmniOneへの記録はまだ行っていません。")}</p>
             {op.agent?.txDigest ? <a className={styles.link} href={`https://suiscan.xyz/testnet/tx/${op.agent.txDigest}`} target="_blank" rel="noreferrer">{tr("실행 기록 보기", "View execution receipt", "実行記録を見る")}</a> : null}
@@ -561,7 +585,8 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
 
           {op && (op.phase === "done" || op.status !== "pending") ? (
             <section className={styles.card}>
-              <h3>{op.fulfillment?.status === "redeemed" ? isolated ? tr("샘플 체험을 마쳤어요", "Sample experience complete", "サンプル体験が完了しました") : c.done : op.status === "cancelled" ? tr("그만두었어요", "Stopped", "中止しました") : op.status === "expired" ? tr("만료됐어요", "Expired", "期限切れです") : c.blocked}</h3>
+              <h3>{hostedTestRecorded ? tr("테스트 체험을 확정했어요", "Test experience confirmed", "テスト体験を確定しました") : op.fulfillment?.status === "redeemed" ? isolated ? tr("샘플 체험을 마쳤어요", "Sample experience complete", "サンプル体験が完了しました") : c.done : op.status === "cancelled" ? tr("그만두었어요", "Stopped", "中止しました") : op.status === "expired" ? tr("만료됐어요", "Expired", "期限切れです") : c.blocked}</h3>
+              {hostedTestRecorded ? <p data-testid="hackathon-hosted-test-disclosure">{tr("앱 안의 테스트 체험 기록입니다. 실제 매장 혜택·결제·예약이나 실제 OpenDID 발급 완료를 뜻하지 않습니다. 감사 기록이 늦어져도 체험 실행은 반복하지 않습니다.", "This is an in-app test experience, not a real merchant benefit, payment, reservation or real OpenDID issuance. A delayed audit never repeats the experience.", "アプリ内のテスト体験の記録です。実際の店舗特典・決済・予約やOpenDID発行の完了ではありません。監査記録が遅れても体験の実行は繰り返しません。")}</p> : null}
               {op.fulfillment?.redemptionRef ? <dl className={styles.kv}><dt>{tr("체험 번호", "Experience ref", "体験番号")}</dt><dd>{op.fulfillment.redemptionRef}</dd><dt>{tr("시각", "At", "時刻")}</dt><dd>{op.fulfillment.redeemedAt}</dd></dl> : null}
               {op.chain ? <div className={styles.notice} data-tone={op.chain.status === "confirmed" ? "ok" : op.chain.status === "failed" ? "error" : undefined}>{isolated ? tr("샘플 기록입니다. 실제 외부 기록은 생성하지 않았습니다.", "This is a sample record. No real external record was created.", "サンプル記録です。実際の外部記録は作成していません。") : op.chain.status === "confirmed" ? c.chainConfirmed : op.chain.status === "failed" ? c.chainFailed : c.chainPending}</div> : null}
               <div className={styles.actions}>

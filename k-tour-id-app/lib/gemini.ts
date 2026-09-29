@@ -102,6 +102,8 @@ export async function geminiGenerate(opts: {
   /** Explicit preference takes precedence over the shared caller default/cache. */
   model?: string
   system: string
+  /** Bounded paid lanes can prohibit even missing-model fallback requests. */
+  allowModelFallback?: boolean
   message: string
   history?: GeminiTurn[]
   maxOutputTokens?: number
@@ -115,7 +117,7 @@ export async function geminiGenerate(opts: {
   if (preferredModel !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(preferredModel)) {
     return { error: "gemini_provider_model_invalid" }
   }
-  const models = [preferredModel, cachedModel, ...CANDIDATES].filter((m): m is string => !!m)
+  const models = (opts.allowModelFallback === false ? [preferredModel ?? CANDIDATES[0]] : [preferredModel, cachedModel, ...CANDIDATES]).filter((m): m is string => !!m)
   const seen = new Set<string>()
   const contents = [
     ...(opts.history ?? []).map((t) => ({ role: t.role, parts: [{ text: t.text }] })),

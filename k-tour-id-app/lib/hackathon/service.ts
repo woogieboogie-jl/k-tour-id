@@ -13,6 +13,7 @@ import type { AllowedAction, NextAction, OperationResult, ProposalOutput } from 
 import { cxComplete, cxStart } from "./adapters/cx"
 import { issueCredential, presentationPayload, verifyHolderSignature, verifyIssuerSignature, type KPassVc } from "./adapters/opendid"
 import { proposePerk } from "./adapters/ai"
+import { generateProposalOnce, assertAiGenerationUnclaimed } from "./ai-generation"
 import { agentConsume, buildDelegationPtb, executeDelegation, issueEntitlement, readGrant, verifyReadExecution, verifyReadDelegation, transactionDigest, suiClient, suiKeys, suiTargets, explorerTx, explorerObject } from "./adapters/sui"
 import { getRedemption, omnioneConfigured, receiptStatus, submitRedemption } from "./adapters/omnione"
 import { configuredOmnioneTarget, storedOmnioneTarget, sameOmnioneTarget } from "./omnione-targets"
@@ -21,6 +22,7 @@ import { verifyGrantEvidence } from "./sui-evidence"
 import { prepareDelegationOnce } from "./delegation-preparation"
 import { safeHkError } from "./public-error"
 import { isHostedSuiProfile, PIN as HOSTED_SUI_PIN } from "./hosted-sui-profile"
+import { hostedOmnioneOperationBound, hostedOmnioneOperationAllowed, assertHostedOmnioneAdmission, assertHostedOmnioneOperation, assertHostedOmnioneOutbox } from "./hosted-omnione-policy"
 import { assertCurrentIdentityPolicy, identityPolicyChanged } from "./identity-policy"
 import { GUIDE_SAVE_V2, guideJourney, isGuideJourney, type GuideCollection } from "./guide-contract"
 import { assertGuideReady, operationAction, operationCampaign } from "./guide-policy"
@@ -28,6 +30,7 @@ import { commitGuideCollection, guideCollectionForSession, mirrorGuideCollection
 import { refreshProviderPermission, assertProviderPermissionForOperation } from "./provider-operation"
 import { requiresIntegrationSuiLimits, assertIntegrationSuiLimits, assertIntegrationSuiOperation, claimIntegrationSuiOperation, INTEGRATION_SUI_LIMITS } from "./integration-sui-limits"
 import { refreshJitImportedIdentity, assertJitImportedIdentity, importJitIdentity } from "./jit-identity-import"
+import { assertZkLoginSigningAttempt } from "./zklogin-signing-policy"
 
 /** Public role pin for evidence/read-only UI. Private signing keys are loaded
  * only by consequential adapters inside a fresh, owned budget capability. */
@@ -91,6 +94,7 @@ export function toResult(op: OperationRecord): OperationResult {
   // Older ledgers can contain SDK error strings saved before redaction. Project
   // fixed public copy without modifying history or transaction recovery state.
   return { ...rest, allowedActions, safeNextAction,
+    hostedTestRedemption: hostedOmnioneOperationBound(op),
     identity: isGuideJourney(op) && op.identity ? { ...op.identity, subjectRef: "", providerTransactionRef: "" } : op.identity,
     error: op.error ? safeHkError(new HkError(op.error.code, "", op.error.retryable ? 503 : 409, op.error.retryable)).error : null,
     delegation: op.delegation ? { ...op.delegation, error: op.delegation.error === null ? null : safeHkError(new HkError("sui_delegate", "", 502, true)).error.message } : null,
@@ -105,13 +109,13 @@ function allowed(op: OperationRecord): { allowedActions: AllowedAction[]; safeNe
       (!op.delegation?.userTxDigest || op.delegation.status === "failed")
     return { allowedActions: ["check_status", "reconcile", ...(canCancel ? ["cancel" as const] : []), "return"], safeNextAction: "return" }
   }
-  if (isHostedSuiProfile() && op.phase === "fulfillment") return { allowedActions: ["check_status", "return"], safeNextAction: "return" }
+  if (isHostedSuiProfile() && op.phase === "fulfillment" && !hostedOmnioneOperationAllowed(op)) return { allowedActions: ["check_status", "return"], safeNextAction: "return" }
   if (op.status === "cancelled" || op.status === "expired" || op.status === "failed" || op.phase === "done") return { allowedActions: ["return"], safeNextAction: "return" }
   switch (op.phase) {
     case "identity": return op.identity?.handoff ? { allowedActions: ["complete_handoff", "cancel", "check_status"], safeNextAction: "check_status" } : { allowedActions: ["open_handoff", "cancel"], safeNextAction: "wait" }
     case "issuance": return op.credential ? { allowedActions: ["ack_holder", "cancel"], safeNextAction: "wait" } : { allowedActions: ["issue", "cancel"], safeNextAction: "wait" }
     case "presentation": return { allowedActions: ["present", "cancel", "check_status"], safeNextAction: "wait" }
-    case "proposal": return { allowedActions: ["propose", "cancel"], safeNextAction: "wait" }
+    case "proposal": return op.secrets.aiGeneration ? { allowedActions: ["check_status", "cancel", "return"], safeNextAction: "check_status" } : { allowedActions: ["propose", "cancel"], safeNextAction: "wait" }
     case "delegation": {
       const d = op.delegation
       if (!d) return { allowedActions: ["approve", "cancel"], safeNextAction: "wait" }
@@ -485,23 +489,49 @@ export async function presentationDeny(sessionId: string, operationId: string) {
 export async function proposalCreate(sessionId: string, operationId: string, ctx: { locale: "ko" | "en" | "ja"; venueName: string; category: string; district: string }) {
   const op = await loadWithFreshProviderPermission(sessionId, operationId)
   assertCurrentIdentityPolicy(op.identity)
+  if (op.proposal && op.status === "pending" && op.phase === "delegation") return toResult(op)
   assert(op.status === "pending" && op.phase === "proposal" && op.presentation?.decision === "allow", "phase", "allow decision required", 409)
   assert(!isPast(op.presentation.decisionExpiresAt), "decision_expired", "decision expired; present again", 409)
   assert(credentialEligibility(op) === null && presentationEligibility(op) === null, "eligibility", "current credential and presentation required", 409)
   if (op.proposal) return toResult(op)
   const hour = new Date().getUTCHours() + 9
   const timeOfDay = hour % 24 < 11 ? "morning" : hour % 24 < 17 ? "afternoon" : "evening"
-  const proposal = await proposePerk({ venueId: op.venueId, campaignId: op.campaignId, venueName: ctx.venueName, category: ctx.category, district: ctx.district, language: ctx.locale, timeOfDay, policyVersion: op.policyVersion, ...(isGuideJourney(op) ? { action: GUIDE_SAVE_V2.action } : {}) })
-  if (isGuideJourney(op)) assert(proposal.mode === "gemini", "guide_ai_unavailable", "The guide assistant is unavailable. No execution was approved.", 503)
-  return mutate(sessionId, operationId, (o) => {
-    assertSnapshot(o, op)
+  const input = { venueId: op.venueId, campaignId: op.campaignId, venueName: ctx.venueName, category: ctx.category, district: ctx.district, language: ctx.locale, timeOfDay, policyVersion: op.policyVersion, ...(isGuideJourney(op) ? { action: GUIDE_SAVE_V2.action } : {}) }
+  const commit = (snapshot: OperationRecord, proposal: Awaited<ReturnType<typeof proposePerk>>) => mutate(sessionId, operationId, (o) => {
+    assertSnapshot(o, snapshot)
+    assertCurrentIdentityPolicy(o.identity)
     assert(o.status === "pending" && o.phase === "proposal" && o.presentation?.decision === "allow", "phase", "allow decision required", 409)
     assert(!isPast(o.expiresAt) && !isPast(o.presentation.decisionExpiresAt), "decision_expired", "decision expired; present again", 409)
     assert(credentialEligibility(o) === null && presentationEligibility(o) === null, "eligibility", "current credential and presentation required", 409)
+    if (isGuideJourney(o)) assert(proposal.mode === "gemini", "guide_ai_unavailable", "The guide assistant is unavailable. No execution was approved.", 503)
+    if (snapshot.secrets.aiGeneration) {
+      assert(o.secrets.aiGeneration?.claimId === snapshot.secrets.aiGeneration.claimId && o.secrets.aiGeneration.stage === "claimed", "ai_generation_already_requested", "The assistant result is no longer current.", 409)
+      o.secrets.aiGeneration.stage = "completed"
+    }
     o.proposal = proposal
     o.phase = "delegation"
     touch(o, "proposal.created", { mode: proposal.mode, model: proposal.model, guard: proposal.guard })
     return toResult(o)
+  })
+  if (hkConfig().ai.mode !== "gemini") return commit(op, await proposePerk(input))
+  return generateProposalOnce({
+    reserve: () => mutate(sessionId, operationId, o => {
+      assertSnapshot(o, op)
+      assertAiGenerationUnclaimed(o.secrets.aiGeneration)
+      assert(o.status === "pending" && o.phase === "proposal" && !isPast(o.expiresAt) && !isPast(o.presentation?.decisionExpiresAt), "phase", "Assistant approval is no longer current.", 409)
+      assertCurrentIdentityPolicy(o.identity)
+      assert(credentialEligibility(o) === null && presentationEligibility(o) === null, "eligibility", "Current credential and presentation required.", 409)
+      o.secrets.aiGeneration = { claimId: randomId("aigen"), requestDigest: digestOf({ input, decisionRef: o.presentation?.decisionRef, model: hkConfig().ai.model }), stage: "claimed", createdAt: nowIso() }
+      touch(o, "proposal.generation_claimed")
+      return structuredClone(o)
+    }),
+    generate: () => proposePerk(input),
+    commit,
+    unknown: snapshot => mutate(sessionId, operationId, o => {
+      if (o.secrets.aiGeneration?.claimId === snapshot.secrets.aiGeneration?.claimId && o.secrets.aiGeneration?.stage === "claimed") {
+        o.secrets.aiGeneration.stage = "unknown"; touch(o, "proposal.generation_unknown")
+      }
+    }),
   })
 }
 
@@ -509,6 +539,7 @@ export async function proposalCreate(sessionId: string, operationId: string, ctx
 export async function delegationPrepare(sessionId: string, operationId: string, input: { userAddress: string; signer: "zklogin" | "demo"; walletProof: { message: string; signature: string }; approvedProposalDigest: string }) {
   assertExternalServicesEnabled("Sui")
   const op = await loadWithFreshProviderPermission(sessionId, operationId)
+  if (input.signer === "zklogin") assertZkLoginSigningAttempt(op, input.userAddress)
   if (isGuideJourney(op)) assert(input.signer === "zklogin", "zklogin_required", "Sign in to approve this guide save", 409)
   assertCurrentIdentityPolicy(op.identity)
   if (requiresIntegrationSuiLimits()) await readStore(db => assertIntegrationSuiOperation(db, operationId))
@@ -553,6 +584,11 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
     }
     if (!accepted) throw new HkError("wallet_proof", "Wallet ownership proof could not be verified.", 400)
   }
+  if (input.signer === "zklogin") {
+    const current = await loadOperation(sessionId, operationId)
+    assertSnapshot(current, op)
+    assertZkLoginSigningAttempt(current, input.userAddress)
+  }
   if (op.delegation?.status === "awaiting_signature" && op.secrets.lastTxBytesB64 && op.delegation.userAddress === input.userAddress) {
     assert(op.delegation.expiresAtMs > Date.now(), "grant_window_expired", "delegation window expired", 409)
     return { result: toResult(op), txBytesB64: op.secrets.lastTxBytesB64 }
@@ -565,11 +601,22 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
   const prepared = await prepareDelegationOnce({ sessionId, operationId, expectedRevision: op.revision,
     scope: { intentRef, actionCommitment, consentCommitment, userAddress: input.userAddress, signer: input.signer, recipient: input.userAddress, expiresAtMs },
   }, {
-    issue: input => authorizedSui(sessionId, operationId, () => issueEntitlement({ ...input, beforeBroadcast: async digest => {
-      await input.beforeBroadcast(digest)
+    issue: issueInput => authorizedSui(sessionId, operationId, () => issueEntitlement({ ...issueInput, beforeBroadcast: async digest => {
+      await issueInput.beforeBroadcast(digest)
       if (requiresIntegrationSuiLimits()) await refreshIntegrationSuiAuthorization()
     } })),
-    build: input => authorizedSui(sessionId, operationId, () => buildDelegationPtb(input)), authorize: assertProviderPermission,
+    build: buildInput => authorizedSui(sessionId, operationId, async () => {
+      if (input.signer === "zklogin") await readStore(db => {
+        const current = db.operations[operationId]
+        assert(current?.sessionId === sessionId, "not_found", "Operation not found", 404)
+        assertZkLoginSigningAttempt(current, input.userAddress)
+      })
+      return buildDelegationPtb(buildInput)
+    }),
+    authorize: current => {
+      assertProviderPermission(current)
+      if (input.signer === "zklogin") assertZkLoginSigningAttempt(current, input.userAddress)
+    },
   })
   return { result: toResult(prepared), txBytesB64: prepared.secrets.lastTxBytesB64! }
 }
@@ -577,6 +624,7 @@ export async function delegationPrepare(sessionId: string, operationId: string, 
 export async function delegationSubmit(sessionId: string, operationId: string, input: { txBytesDigest: string; userSignature: string }) {
   assertExternalServicesEnabled("Sui")
   const op = await loadWithFreshProviderPermission(sessionId, operationId)
+  if (op.delegation?.signer === "zklogin") assertZkLoginSigningAttempt(op, op.delegation.userAddress)
   assertCurrentIdentityPolicy(op.identity)
   if (requiresIntegrationSuiLimits()) await readStore(db => assertIntegrationSuiOperation(db, operationId))
   assert(op.status === "pending" && op.phase === "delegation" && op.delegation?.status === "awaiting_signature" && op.secrets.lastTxBytesB64, "phase", "no delegation awaiting signature", 409)
@@ -592,6 +640,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
     assertSnapshot(o, op)
     assertCurrentIdentityPolicy(o.identity)
     assert(o.delegation?.status === "awaiting_signature", "phase", "delegation already dispatched", 409)
+    if (o.delegation.signer === "zklogin") assertZkLoginSigningAttempt(o, o.delegation.userAddress)
     o.delegation.status = "prepared"
     o.delegation.userTxDigest = expectedTxDigest
     touch(o, "delegation.dispatching")
@@ -605,6 +654,7 @@ export async function delegationSubmit(sessionId: string, operationId: string, i
         assertSnapshot(o, dispatch)
         assertCurrentIdentityPolicy(o.identity)
         assertProviderPermission(o)
+        if (o.delegation?.signer === "zklogin") assertZkLoginSigningAttempt(o, o.delegation.userAddress)
         assert(digest === expectedTxDigest && o.delegation?.userTxDigest === digest, "tx_mismatch", "transaction bytes changed", 409)
         assert(o.status === "pending" && o.phase === "delegation" && o.delegation.status === "prepared", "phase", "delegation dispatch was stopped", 409)
         assert(!isPast(o.expiresAt) && o.delegation.expiresAtMs > Date.now(), "grant_window_expired", "approved delegation window expired before broadcast", 409)
@@ -706,8 +756,9 @@ export async function agentRun(sessionId: string, operationId: string) {
 
 // ── fulfillment (server redeem) + OmniOne outbox ──────────────────────
 export async function redeem(sessionId: string, operationId: string, input: { idempotencyKey: string; bodyDigest: string }) {
-  if (isHostedSuiProfile()) throw new HkError("hosted_sui_scope", "Benefit use is not enabled in this journey.", 403)
+  assertHostedOmnioneAdmission()
   let op = await loadOperation(sessionId, operationId)
+  assertHostedOmnioneOperation(op)
   // A committed retry is valid after phase=done and must not re-query/re-write a chain.
   const prior = await readStore((db) => db.idempotency[`${operationId}:redeem:${input.idempotencyKey}`])
   if (prior) {
@@ -724,6 +775,7 @@ export async function redeem(sessionId: string, operationId: string, input: { id
     if (idem) { assert(idem.bodyDigest === input.bodyDigest, "idempotency_conflict", "same key, different body", 409); return null }
     assertSnapshot(o, op)
     assert(o.status === "pending" && o.phase === "fulfillment" && o.agent?.status === "executed", "phase", "fulfillment is no longer pending", 409)
+    assertHostedOmnioneOperation(o)
     assertProviderPermission(o)
     const f = o.fulfillment!
     const recheck = {
@@ -762,6 +814,9 @@ export async function redeem(sessionId: string, operationId: string, input: { id
 /** One durable owner may dispatch. Unknown submissions are read-only until resolved. */
 export async function processOutbox(outboxId: string) {
   let row = await readStore((db) => db.outbox[outboxId])
+  // The opt-in never sweeps/relabels old operations or turns unrelated pending
+  // records into a first broadcast. Validate before even taking a worker claim.
+  if (row?.status === "pending" && !row.txHash && row.attempts === 0) await readStore(db => assertHostedOmnioneOutbox(db, row!))
   // Old workers could confirm solely from registry presence. Reconcile that
   // evidence honestly without undoing the already-completed service benefit.
   if (row?.status === "confirmed" && (!row.txHash || row.blockNumber == null || row.receiptEvidenceVersion !== 1)) {
@@ -826,6 +881,7 @@ export async function processOutbox(outboxId: string) {
         const r = db.outbox[outboxId]
         if (!r || r.processingClaim?.id !== claimId || !(Date.parse(r.processingClaim.expiresAt) > Date.now()) || r.status !== "pending" || r.txHash || r.attempts > 0) return null
         if (!sameOmnioneTarget(r.target, claimed.target)) return null
+        assertHostedOmnioneOutbox(db, r)
         // Persist before calling the signer: a crash/lease takeover cannot resend.
         r.status = "unknown"; r.attempts += 1; r.lastError = "submission_in_progress"; r.updatedAt = nowIso(); mirror(db, r)
         return r
@@ -839,6 +895,7 @@ export async function processOutbox(outboxId: string) {
             if (!r || r.processingClaim?.id !== claimId || !(Date.parse(r.processingClaim.expiresAt) > Date.now()) || r.status !== "unknown" || r.txHash) return false
             if (r.eventKey !== dispatch.eventKey || r.payloadCommitment !== dispatch.payloadCommitment) return false
             if (!sameOmnioneTarget(r.target, dispatch.target)) return false
+            assertHostedOmnioneOutbox(db, r)
             r.txHash = txHash; r.status = "submitted"; r.lastError = null; r.updatedAt = nowIso(); mirror(db, r)
             return true
           })

@@ -63,6 +63,16 @@ test("explicit configured model wins over helper defaults and reports the succes
   } finally { restore() }
 })
 
+test("bounded connected caller sends exactly one request even when pinned model returns 404", async () => {
+  const restore = setup(), calls: string[] = []
+  try {
+    globalThis.fetch = async url => { calls.push(target(url)); return new Response("not found", { status: 404 }) }
+    const result = await geminiGenerate({ key: KEY, model: "gemini-2.5-flash", system: "fixture", message: "fixture", allowModelFallback: false })
+    assert.deepEqual(calls, ["gemini-2.5-flash"])
+    assert.deepEqual(result, { error: "gemini_provider_http_404" })
+  } finally { restore() }
+})
+
 test("404 fallback and a subsequent cached success both return their actual model", async () => {
   const restore = setup()
   const calls: string[] = []

@@ -2,8 +2,17 @@
 // provider, network, key parsing, signature creation or deployment dependencies.
 import { HkError } from "./util"
 import { jitIdentityRouteAllowed, assertJitIdentityBody } from "./jit-identity-routes"
+import { parseSerializedSignature } from "@mysten/sui/cryptography"
+import { approvedOmnioneRpc } from "./omnione-readonly"
+import { zkLoginRouteAllowed, assertZkLoginRequestBody } from "./zklogin-route-policy"
 
 export type HostedSuiEnv = Record<string, string | undefined>
+export const CONNECTED_PIN = Object.freeze({
+  marker: "connected-20260930-v1", model: "gemini-2.5-flash",
+  googleClientId: "746125368961-1njodv4sh0b2sjogudsl7dvreb9ra186.apps.googleusercontent.com",
+  prover: "https://prover.mystenlabs.com/v1", targetId: "stage-20260930", chainId: "201210",
+  registry: "0x07B35E14b1BF59be938Fd72a6f9d9f9E04f0A687", recorder: "0x315694F531f7b25c4CEC3660f9Cd66eab9F2C39a", gasLimit: "300000",
+})
 export const PIN = Object.freeze({
   branch: "deploy/sui-main-20260928", publicHost: "ktour-id.vercel.app", publicOrigin: "https://ktour-id.vercel.app",
   projectId: "prj_w5rckTz9B1DO55fvVRXjQRy9L5RM", orgId: "team_6kJAloQ9WlswvMtbbCmGI7Er",
@@ -23,6 +32,19 @@ function scope(): never { throw new HkError("hosted_sui_scope", "This action is 
 const remote = (env: HostedSuiEnv) => Object.keys(env).some(k => k === "VERCEL" || k.startsWith("VERCEL_"))
 const secret = (v: string | undefined, min = 32) => typeof v === "string" && v.length >= min && v.length <= 1024 && v === v.trim() && !/[\x00-\x20\x7f]/.test(v) && !/sample|change[\s_-]*me|placeholder|sentinel/i.test(v)
 const absent = (env: HostedSuiEnv, prefixes: readonly string[]) => !Object.keys(env).some(key => prefixes.some(prefix => key.startsWith(prefix)) && Boolean(env[key]))
+const only = (env: HostedSuiEnv, prefixes: readonly string[], keys: readonly string[]) => !Object.keys(env).some(key => prefixes.some(prefix => key.startsWith(prefix)) && Boolean(env[key]) && !keys.includes(key))
+
+/** Opt-in selection only. Callers must also run the unchanged full lifetime,
+ * store, role and deployment preflight before consequential work. */
+export function hostedConnectedProvidersEnabled(env: HostedSuiEnv = process.env): boolean {
+  return env.NEXT_PUBLIC_HK_HOSTED_PROVIDERS === CONNECTED_PIN.marker && env.HK_HOSTED_PROVIDERS === CONNECTED_PIN.marker &&
+    (env !== process.env || process.env.NEXT_PUBLIC_HK_HOSTED_PROVIDERS === CONNECTED_PIN.marker)
+}
+export const hostedAiEnabled = (env: HostedSuiEnv = process.env) => hostedConnectedProvidersEnabled(env) && env.HK_HOSTED_AI_ENABLED === "1"
+export const hostedZkLoginEnabled = (env: HostedSuiEnv = process.env) => hostedConnectedProvidersEnabled(env) && env.HK_HOSTED_ZKLOGIN_ENABLED === "1"
+export const hostedOmnioneEnabled = (env: HostedSuiEnv = process.env) => hostedConnectedProvidersEnabled(env) && env.HK_HOSTED_OMNIONE_ENABLED === "1" &&
+  env.HK_MODE_CX === "cx" && env.HK_OMNIONE_TARGET_ID === CONNECTED_PIN.targetId && env.HK_OMNIONE_CHAIN_ID === CONNECTED_PIN.chainId &&
+  env.HK_OMNIONE_REGISTRY_ADDRESS?.toLowerCase() === CONNECTED_PIN.registry.toLowerCase() && env.HK_OMNIONE_RECORDER_ADDRESS?.toLowerCase() === CONNECTED_PIN.recorder.toLowerCase() && env.HK_OMNIONE_GAS_LIMIT === CONNECTED_PIN.gasLimit
 
 /** A removed runtime flag cannot bypass a frozen build or the dedicated branch. */
 export function isHostedSuiProfile(env: HostedSuiEnv = process.env): boolean {
@@ -49,6 +71,8 @@ function redisReady(env: HostedSuiEnv): boolean {
 export function hostedSuiPreflightIssues(env: HostedSuiEnv = process.env, now = Date.now()): string[] {
   const expiryText = env.HK_HOSTED_SUI_EXPIRES_AT ?? "", expiry = Date.parse(expiryText)
   const local = env.HK_HOSTED_SUI_LOCAL_TEST === "1" && !remote(env) && env.NODE_ENV !== "production"
+  const connected = hostedConnectedProvidersEnabled(env), ai = hostedAiEnabled(env), google = hostedZkLoginEnabled(env), omni = hostedOmnioneEnabled(env)
+  const hasMarker = Boolean(env.NEXT_PUBLIC_HK_HOSTED_PROVIDERS || env.HK_HOSTED_PROVIDERS)
   const checks: Record<string, boolean> = {
     hosted_build: env.NEXT_PUBLIC_HK_HOSTED_SUI === "1" && (env !== process.env || process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1"),
     runtime_enabled: env.HK_HOSTED_SUI_ENABLED === "1",
@@ -61,14 +85,19 @@ export function hostedSuiPreflightIssues(env: HostedSuiEnv = process.env, now = 
     expiry: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(expiryText) && Number.isFinite(now) && Number.isFinite(expiry) && expiry > now && expiry <= PIN.maxEnd,
     cx_mode: env.HK_MODE_CX === "mock" || env.HK_MODE_CX === "cx",
     sample_credential: env.HK_MODE_OPENDID === "mock",
-    rule_ai: env.HK_AI_MODE === "rule",
-    no_google: absent(env, ["NEXT_PUBLIC_GOOGLE_", "GOOGLE_", "HK_ZKLOGIN_"]),
-    no_gemini: absent(env, ["GEMINI_", "GOOGLE_GENERATIVE_AI_"]),
-    no_omnione: absent(env, ["HK_OMNIONE_"]),
+    connected_profile: !hasMarker || connected,
+    connected_flags: ["HK_HOSTED_AI_ENABLED", "HK_HOSTED_ZKLOGIN_ENABLED", "HK_HOSTED_OMNIONE_ENABLED"].every(key => !env[key] || env[key] === "0" || (connected && env[key] === "1")),
+    rule_ai: ai ? env.HK_AI_MODE === "gemini" : env.HK_AI_MODE === "rule",
+    no_google: google ? env.NEXT_PUBLIC_GOOGLE_CLIENT_ID === CONNECTED_PIN.googleClientId && /^[a-f0-9]{64}$/.test(env.HK_ZKLOGIN_SALT_SEED ?? "") && env.HK_ZKLOGIN_PROVER_URL === CONNECTED_PIN.prover &&
+      only(env, ["NEXT_PUBLIC_GOOGLE_", "GOOGLE_", "HK_ZKLOGIN_", "ENOKI_"], ["NEXT_PUBLIC_GOOGLE_CLIENT_ID", "HK_ZKLOGIN_SALT_SEED", "HK_ZKLOGIN_PROVER_URL"]) : absent(env, ["NEXT_PUBLIC_GOOGLE_", "GOOGLE_", "HK_ZKLOGIN_", "ENOKI_"]),
+    no_gemini: ai ? secret(env.GEMINI_API_KEY) && env.GEMINI_MODEL === CONNECTED_PIN.model && only(env, ["GEMINI_", "GOOGLE_GENERATIVE_AI_"], ["GEMINI_API_KEY", "GEMINI_MODEL"]) : absent(env, ["GEMINI_", "GOOGLE_GENERATIVE_AI_"]),
+    no_omnione: omni ? approvedOmnioneRpc(env.HK_OMNIONE_RPC_URL ?? "") && /^(?:0x)?[a-fA-F0-9]{64}$/.test(env.HK_OMNIONE_PRIVATE_KEY ?? "") && only(env, ["HK_OMNIONE_"], ["HK_OMNIONE_TARGET_ID", "HK_OMNIONE_CHAIN_ID", "HK_OMNIONE_REGISTRY_ADDRESS", "HK_OMNIONE_RECORDER_ADDRESS", "HK_OMNIONE_GAS_LIMIT", "HK_OMNIONE_RPC_URL", "HK_OMNIONE_PRIVATE_KEY"]) : absent(env, ["HK_OMNIONE_"]),
+    connected_omnione: env.HK_HOSTED_OMNIONE_ENABLED !== "1" || omni,
     no_opendid_provider: absent(env, ["HK_OPENDID_"]),
     no_cx_fallback: !env.HK_CX_SAMPLE_FALLBACK || env.HK_CX_SAMPLE_FALLBACK === "0",
     sui_network: env.HK_SUI_NETWORK === PIN.network,
     sui_rpc: env.HK_SUI_GRPC_URL === PIN.rpc,
+    sui_graphql: !env.HK_SUI_GRAPHQL_URL || env.HK_SUI_GRAPHQL_URL === "https://graphql.testnet.sui.io/graphql",
     sui_package: env.HK_SUI_PACKAGE_ID === PIN.packageId,
     sui_campaign: env.HK_SUI_CAMPAIGN_ID === PIN.campaignId,
     sui_shared_version: env.HK_SUI_CAMPAIGN_INITIAL_VERSION === PIN.campaignInitialVersion,
@@ -136,11 +165,14 @@ function parts(path: RoutePath): readonly string[] | null {
   return out.length >= 1 && out.length <= 4 && out.every(p => typeof p === "string" && /^[A-Za-z0-9_-]{1,120}$/.test(p)) ? out : null
 }
 
-/** Unknown paths, methods, encodings, tails and all provider/fulfillment routes fail closed. */
-export function hostedSuiRouteAllowed(method: string, path: RoutePath): boolean {
+/** Unknown paths, methods, encodings and tails fail closed. Provider/fulfillment
+ * exceptions require their exact connected-profile opt-in. */
+export function hostedSuiRouteAllowed(method: string, path: RoutePath, env: HostedSuiEnv = process.env): boolean {
   const p = parts(path)
   if (!p) return false
   if (jitIdentityRouteAllowed(method, p)) return true
+  if (p[0] === "zklogin") return hostedZkLoginEnabled(env) && zkLoginRouteAllowed(method, p)
+  if (p.length === 3 && p[0] === "operations" && operationId.test(p[1]) && p[2] === "redeem") return method === "POST" && hostedOmnioneEnabled(env)
   if (method === "GET") return (p.length === 1 && ["config", "me"].includes(p[0])) ||
     (p.length === 2 && p[0] === "guide" && p[1] === "collection") ||
     (p.length === 3 && p[0] === "places" && p[2] === "demo-entitlements") ||
@@ -166,6 +198,11 @@ function base64(v: unknown, max: number): Buffer | null {
   return bytes.toString("base64") === v ? bytes : null
 }
 function ed25519(v: unknown): boolean { const bytes = base64(v, 132); return !!bytes && bytes.length === 97 && bytes[0] === 0 }
+function zklogin(v: unknown): boolean {
+  const bytes = base64(v, 16384)
+  if (!bytes || bytes[0] !== 5) return false
+  try { return parseSerializedSignature(v as string).signatureScheme === "ZkLogin" } catch { return false }
+}
 // Browser WebCrypto holder signatures are raw 64-byte Ed25519/P-256 values
 // encoded as unpadded base64url, unlike serialized Sui signatures above.
 function holderSignature(v: unknown): boolean {
@@ -178,9 +215,14 @@ function holderSignature(v: unknown): boolean {
  * approval digests, object evidence, journal and durable lifetime budget. */
 export function assertHostedSuiBody(path: RoutePath, body: unknown, env: HostedSuiEnv = process.env): void {
   const p = parts(path)
-  if (!p || !hostedSuiRouteAllowed("POST", p)) scope()
+  if (!p || !hostedSuiRouteAllowed("POST", p, env)) scope()
   if (p[0] === "identity") { assertJitIdentityBody(p, body); return }
+  if (p[0] === "zklogin") {
+    try { assertZkLoginRequestBody(p, body) } catch { scope() }
+    return
+  }
   const action = p.slice(2).join("/")
+  if (action === "redeem") { fields(body, ["idempotencyKey"], ["idempotencyKey"]); if (typeof body.idempotencyKey !== "string" || !/^[A-Za-z0-9_-]{1,80}$/.test(body.idempotencyKey)) scope(); return }
   const allowed = p.length === 1 ? (p[0] === "operations" ? ["venueId", "consentVersion", "locale", "identityAuthorizationRef", "identityContextDigest"] : [])
     : p[0] === "hosted" ? ["accessCode"] : actionFields[action]
   fields(body, allowed)
@@ -212,9 +254,10 @@ export function assertHostedSuiBody(path: RoutePath, body: unknown, env: HostedS
     if (Object.hasOwn(body.disclosed, "serviceAccess") && (!Array.isArray(body.disclosed.serviceAccess) || body.disclosed.serviceAccess.length !== 1 || body.disclosed.serviceAccess[0] !== "redeem_demo_entitlement")) scope()
   }
   if (action === "delegation/prepare") {
-    if (body.signer !== "demo" || !hex32(body.userAddress) || !hex32(body.approvedProposalDigest)) scope()
+    const google = body.signer === "zklogin" && hostedZkLoginEnabled(env)
+    if ((!google && body.signer !== "demo") || !hex32(body.userAddress) || !hex32(body.approvedProposalDigest)) scope()
     fields(body.walletProof, ["message", "signature"], ["message", "signature"])
-    if (!text(body.walletProof.message, 256) || !(body.walletProof.message as string).startsWith(`ondo-hk-wallet-proof:${p[1]}:`) || !ed25519(body.walletProof.signature)) scope()
+    if (!text(body.walletProof.message, 256) || !(body.walletProof.message as string).startsWith(`ondo-hk-wallet-proof:${p[1]}:`) || !(google ? zklogin(body.walletProof.signature) : ed25519(body.walletProof.signature))) scope()
   }
-  if (action === "delegation/submit" && (!hex32(body.txBytesDigest) || !ed25519(body.userSignature))) scope()
+  if (action === "delegation/submit" && (!hex32(body.txBytesDigest) || !(ed25519(body.userSignature) || (hostedZkLoginEnabled(env) && zklogin(body.userSignature))))) scope()
 }

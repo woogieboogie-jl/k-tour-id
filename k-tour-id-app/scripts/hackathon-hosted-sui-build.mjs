@@ -3,6 +3,7 @@
 import { spawnSync } from "node:child_process"
 import { lstatSync } from "node:fs"
 import { resolve } from "node:path"
+import { createHash } from "node:crypto"
 
 export const HOSTED_SUI_BRANCH = "deploy/sui-main-20260928"
 export const PROJECT_ID = "prj_w5rckTz9B1DO55fvVRXjQRy9L5RM"
@@ -23,6 +24,8 @@ const REMOTE = Object.freeze([
   "VERCEL_GIT_COMMIT_SHA", "VERCEL_GIT_REPO_OWNER", "VERCEL_GIT_REPO_SLUG",
 ])
 const PUBLIC_ORIGINS = Object.freeze(["NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_ONDO_B_ORIGIN"])
+const CONNECTED_MARKER = "connected-20260930-v1"
+const GOOGLE_CLIENT_ID_HASH = "f20fd5c28fefa3d71e14215ec0bdda7db32865f064312429b2210282410258b8"
 const fail = code => { throw new Error(`hosted_sui_build_${code}`) }
 
 export function assertHostedSuiTarget(env) {
@@ -47,6 +50,10 @@ export function hostedSuiTargetFailures(env) {
 
 export function hostedSuiBuildEnv(env) {
   assertHostedSuiTarget(env)
+  const connected = env.NEXT_PUBLIC_HK_HOSTED_PROVIDERS === CONNECTED_MARKER && env.HK_HOSTED_PROVIDERS === CONNECTED_MARKER
+  if ((env.NEXT_PUBLIC_HK_HOSTED_PROVIDERS || env.HK_HOSTED_PROVIDERS) && !connected) fail("provider_marker")
+  const google = connected && env.HK_HOSTED_ZKLOGIN_ENABLED === "1"
+  if (google && (typeof env.NEXT_PUBLIC_GOOGLE_CLIENT_ID !== "string" || createHash("sha256").update(env.NEXT_PUBLIC_GOOGLE_CLIENT_ID).digest("hex") !== GOOGLE_CLIENT_ID_HASH)) fail("google_client")
   const out = Object.fromEntries([...TOOLING, ...REMOTE].flatMap(name => typeof env[name] === "string" ? [[name, env[name]]] : []))
   for (const name of PUBLIC_ORIGINS) {
     if (typeof env[name] !== "string") continue
@@ -61,7 +68,8 @@ export function hostedSuiBuildEnv(env) {
     NEXT_PUBLIC_HK_HOSTED_SUI: "1", NEXT_PUBLIC_HK_ENABLED: "1", NEXT_PUBLIC_HK_DEMO_ENTRY: "1",
     NEXT_PUBLIC_HK_INTEGRATION_PREVIEW: "0", NEXT_PUBLIC_HK_CX_PREVIEW: "0", NEXT_PUBLIC_HK_PREVIEW_READ_ONLY: "0",
     NEXT_PUBLIC_HK_CX_BROWSER_QR: "0", NEXT_PUBLIC_ONDO_QA_CONTROLS: "0", NEXT_PUBLIC_ONDO_SUMSUB_SANDBOX: "0",
-    NEXT_PUBLIC_GOOGLE_CLIENT_ID: "",
+    NEXT_PUBLIC_GOOGLE_CLIENT_ID: google ? env.NEXT_PUBLIC_GOOGLE_CLIENT_ID : "",
+    NEXT_PUBLIC_HK_HOSTED_PROVIDERS: connected ? CONNECTED_MARKER : "",
     HK_API_ENABLED: "1", HK_ISOLATED_MOCK: "0", HK_MODE_CX: "mock", HK_MODE_OPENDID: "mock", HK_AI_MODE: "rule",
     HK_INTEGRATION_PREVIEW_ENABLED: "0", HK_CX_PREVIEW_ENABLED: "0", HK_HOSTED_SUI_ENABLED: "0", HK_HOSTED_SUI_LOCAL_TEST: "0",
     HK_HOSTED_SUI_EXPIRES_AT: HOSTED_SUI_MAX_EXPIRES_AT,

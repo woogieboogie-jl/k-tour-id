@@ -30,6 +30,113 @@ function fixture(mode: "mock" | "cx" = "mock"): HostedSuiEnv {
   }
 }
 
+function connected() {
+  return { ...fixture("cx"), NEXT_PUBLIC_HK_HOSTED_PROVIDERS: subject.CONNECTED_PIN.marker, HK_HOSTED_PROVIDERS: subject.CONNECTED_PIN.marker }
+}
+function google() {
+  return { ...connected(), HK_HOSTED_ZKLOGIN_ENABLED: "1", NEXT_PUBLIC_GOOGLE_CLIENT_ID: subject.CONNECTED_PIN.googleClientId,
+    HK_ZKLOGIN_SALT_SEED: "7".repeat(64), HK_ZKLOGIN_PROVER_URL: subject.CONNECTED_PIN.prover }
+}
+function omni() {
+  const p = subject.CONNECTED_PIN
+  return { ...connected(), HK_HOSTED_OMNIONE_ENABLED: "1", HK_OMNIONE_TARGET_ID: p.targetId, HK_OMNIONE_CHAIN_ID: p.chainId,
+    HK_OMNIONE_REGISTRY_ADDRESS: p.registry, HK_OMNIONE_RECORDER_ADDRESS: p.recorder, HK_OMNIONE_GAS_LIMIT: p.gasLimit,
+    HK_OMNIONE_PRIVATE_KEY: "8".repeat(64), HK_OMNIONE_RPC_URL: "https://stage-chainapi.omnione.net/?token=fixture-token" }
+}
+
+test("connected capabilities require the exact dual marker and explicit independent flags", () => {
+  assert.deepEqual(subject.hostedSuiPreflightIssues(connected(), NOW), [])
+  for (const flags of [{ NEXT_PUBLIC_HK_HOSTED_PROVIDERS: undefined }, { HK_HOSTED_PROVIDERS: "other" }, { HK_HOSTED_AI_ENABLED: "true" }, { HK_HOSTED_ZKLOGIN_ENABLED: "unknown" }]) {
+    assert.ok(subject.hostedSuiPreflightIssues({ ...connected(), ...flags }, NOW).some(x => x === "connected_profile" || x === "connected_flags"))
+  }
+  for (const flag of ["HK_HOSTED_AI_ENABLED", "HK_HOSTED_ZKLOGIN_ENABLED", "HK_HOSTED_OMNIONE_ENABLED"]) {
+    assert.ok(subject.hostedSuiPreflightIssues({ ...fixture(), [flag]: "1" }, NOW).includes("connected_flags"))
+  }
+  assert.equal(subject.hostedAiEnabled(connected()), false)
+  assert.equal(subject.hostedZkLoginEnabled(connected()), false)
+  assert.equal(subject.hostedOmnioneEnabled(connected()), false)
+})
+
+test("connected AI permits only the fixed model/key and preserves every original lifetime/store budget", () => {
+  const env = { ...connected(), HK_HOSTED_AI_ENABLED: "1", HK_AI_MODE: "gemini", GEMINI_MODEL: subject.CONNECTED_PIN.model, GEMINI_API_KEY: "a".repeat(40) }
+  assert.deepEqual(subject.hostedSuiPreflightIssues(env, NOW), [])
+  for (const patch of [{ GEMINI_MODEL: "gemini-2.5-pro" }, { GEMINI_API_KEY: "short" }, { GEMINI_BASE_URL: "https://foreign.invalid" }, { GOOGLE_GENERATIVE_AI_API_KEY: "another-key" }, { HK_HOSTED_AI_ENABLED: "0" }]) {
+    assert.ok(subject.hostedSuiPreflightIssues({ ...env, ...patch }, NOW).includes("no_gemini"))
+  }
+  for (const patch of [{ HK_STORE_KEY: "fresh-ledger" }, { HK_HOSTED_SUI_MAX_OPERATIONS: "11" }, { HK_HOSTED_SUI_GAS_BUDGET_MIST: "10000001" }, { HK_HOSTED_SUI_EXPIRES_AT: "2026-10-01T00:00:00Z" }]) {
+    assert.ok(subject.hostedSuiPreflightIssues({ ...env, ...patch }, NOW).length > 0)
+  }
+  assert.ok(subject.hostedSuiPreflightIssues(env, subject.PIN.maxEnd).includes("expiry"))
+})
+
+test("connected Google pins the supplied public client, dedicated salt shape and fixed Testnet prover", () => {
+  assert.deepEqual(subject.hostedSuiPreflightIssues(google(), NOW), [])
+  for (const patch of [{ NEXT_PUBLIC_GOOGLE_CLIENT_ID: "other.apps.googleusercontent.com" }, { HK_ZKLOGIN_SALT_SEED: "short" }, { HK_ZKLOGIN_PROVER_URL: "https://prover-dev.mystenlabs.com/v1" }, { GOOGLE_CLIENT_SECRET: "forbidden" }, { ENOKI_API_KEY: "forbidden" }, { HK_ZKLOGIN_ANY: "forbidden" }, { HK_HOSTED_ZKLOGIN_ENABLED: "0" }]) {
+    assert.ok(subject.hostedSuiPreflightIssues({ ...google(), ...patch }, NOW).includes("no_google"))
+  }
+})
+
+test("connected Google exposes only the owned-attempt endpoints and rejects old unbound proof bodies", () => {
+  const env = google(), attemptId = "zkl_" + "a".repeat(24)
+  for (const [method, value] of [["GET", "/zklogin/params"], ["GET", `/zklogin/status/${op}/${attemptId}`], ["POST", "/zklogin/start"], ["POST", "/zklogin/prove"], ["POST", "/zklogin/cancel"]]) {
+    assert.equal(subject.hostedSuiRouteAllowed(method, value, env), true)
+    assert.equal(subject.hostedSuiRouteAllowed(method, value, connected()), false)
+  }
+  subject.assertHostedSuiBody("/zklogin/start", { operationId: op, attemptId, extendedEphemeralPublicKey: "fixture-key", maxEpoch: 10, jwtRandomness: "123" }, env)
+  subject.assertHostedSuiBody("/zklogin/prove", { operationId: op, attemptId, jwt: "a.b.c" }, env)
+  subject.assertHostedSuiBody("/zklogin/cancel", { operationId: op, attemptId }, env)
+  for (const body of [{ jwt: "a.b.c", extendedEphemeralPublicKey: "key", maxEpoch: 1, jwtRandomness: "123" }, { operationId: op, attemptId, jwt: "a.b.c", proof: {} }, { operationId: "other", attemptId, jwt: "a.b.c" }, { operationId: op, attemptId, jwt: "a.b.c\n" }]) {
+    assert.throws(() => subject.assertHostedSuiBody("/zklogin/prove", body, env), mismatch)
+  }
+  assert.throws(() => subject.assertHostedSuiBody(path("delegation/submit"), { txBytesDigest: hash, userSignature: signature(5) }, env), mismatch)
+  assert.equal(subject.hostedSuiRouteAllowed("POST", "/outbox/flush", env), false)
+  assert.equal(subject.hostedSuiRouteAllowed("POST", path("provider/issuance/start"), env), false)
+})
+
+test("connected wallet boundary accepts canonical zkLogin serialization but never a mislabeled demo signature", async () => {
+  const { getZkLoginSignature } = await import("@mysten/sui/zklogin")
+  const userSignature = getZkLoginSignature({ maxEpoch: 10, userSignature: signature(), inputs: {
+    proofPoints: { a: ["1", "2", "3"], b: [["1", "2"], ["3", "4"], ["5", "6"]], c: ["1", "2", "3"] },
+    issBase64Details: { value: Buffer.from('"iss":"https://accounts.google.com",').toString("base64url"), indexMod4: 0 }, headerBase64: "fixture", addressSeed: "123",
+  } })
+  // Serialization only: service must independently verify this synthetic proof.
+  const prepare = { userAddress: hash, signer: "zklogin", walletProof: { message: `ondo-hk-wallet-proof:${op}:decision_fixture`, signature: userSignature }, approvedProposalDigest: hash }
+  subject.assertHostedSuiBody(path("delegation/prepare"), prepare, google())
+  subject.assertHostedSuiBody(path("delegation/submit"), { txBytesDigest: hash, userSignature }, google())
+  assert.throws(() => subject.assertHostedSuiBody(path("delegation/prepare"), prepare, fixture()), mismatch)
+  assert.throws(() => subject.assertHostedSuiBody(path("delegation/prepare"), { ...prepare, signer: "demo" }, google()), mismatch)
+  assert.throws(() => subject.assertHostedSuiBody(path("delegation/prepare"), { ...prepare, walletProof: { ...prepare.walletProof, signature: signature() } }, google()), mismatch)
+})
+
+test("connected OmniOne exact new Stage tuple never broadens native or old registry access", () => {
+  const env = omni()
+  assert.deepEqual(subject.hostedSuiPreflightIssues(env, NOW), [])
+  assert.equal(subject.hostedOmnioneEnabled(env), true)
+  subject.assertHostedSuiBody(path("redeem"), { idempotencyKey: "idem_abcd1234" }, env)
+  for (const patch of [{ HK_OMNIONE_TARGET_ID: "stage-legacy-20260914" }, { HK_OMNIONE_RECORDER_ADDRESS: hash }, { HK_OMNIONE_RPC_URL: "https://foreign.invalid/?token=x" }, { HK_OMNIONE_PRIVATE_KEY: "bad" }, { HK_MODE_CX: "mock" }, { HK_OMNIONE_GAS_LIMIT: "300001" }, { HK_OMNIONE_UNKNOWN: "x" }]) {
+    assert.ok(subject.hostedSuiPreflightIssues({ ...env, ...patch }, NOW).some(i => i === "no_omnione" || i === "connected_omnione"))
+  }
+  for (const body of [{}, { idempotencyKey: "x", targetId: "other" }, { idempotencyKey: "x".repeat(81) }]) assert.throws(() => subject.assertHostedSuiBody(path("redeem"), body, env), mismatch)
+  assert.ok(subject.hostedSuiPreflightIssues({ ...env, HK_OPENDID_BRIDGE_URL: "https://bridge.invalid" }, NOW).includes("no_opendid_provider"))
+})
+
+test("actual connected config authorizes exact provider adapter strings, not native or arbitrary services", async () => {
+  const oldEnv = process.env, oldNow = Date.now
+  try {
+    process.env = { ...omni(), ...google(), NODE_ENV: "test", HK_HOSTED_AI_ENABLED: "1", HK_AI_MODE: "gemini", GEMINI_MODEL: subject.CONNECTED_PIN.model, GEMINI_API_KEY: "a".repeat(40) }
+    Date.now = () => NOW
+    const { assertExternalServicesEnabled, hkPublicConfig } = await import("../../lib/hackathon/config")
+    for (const name of ["Sui", "Sui signing", "Sui delegation", "Sui agent execution", "Sui grant lookup", "Gemini proposal", "zkLogin provider authentication", "OmniOne Chain", "OmniOne Chain signing", "OmniOne Chain submission", "OmniOne Chain evidence"]) assert.doesNotThrow(() => assertExternalServicesEnabled(name), name)
+    for (const name of ["OpenDID", "OmniOne signing", "Gemini chat", "other"]) assert.throws(() => assertExternalServicesEnabled(name), (e: unknown) => e instanceof HkError && e.code === "hosted_sui_scope")
+    assert.equal(hkPublicConfig().modes.zklogin, "google")
+    assert.equal(hkPublicConfig().capabilities.hostedTestRedemptionEnabled, true)
+    assert.equal(hkPublicConfig().capabilities.opendidProviderReady, false)
+    assert.equal(hkPublicConfig().modes.opendid, "mock")
+    process.env.HK_HOSTED_PROVIDERS = "wrong"
+    for (const name of ["Gemini proposal", "zkLogin provider authentication", "OmniOne Chain submission"]) assert.throws(() => assertExternalServicesEnabled(name))
+  } finally { process.env = oldEnv; Date.now = oldNow }
+})
+
 test("policy import performs no network; constants cap lifetime operations and gas", () => {
   assert.equal(subject.PIN.branch, "deploy/sui-main-20260928")
   assert.equal(subject.PIN.publicOrigin, "https://ktour-id.vercel.app")
@@ -62,6 +169,17 @@ test("runtime uses documented project metadata without requiring the CLI org var
   assert.deepEqual(subject.hostedSuiPreflightIssues(env, NOW), [])
   assert.ok(subject.hostedSuiPreflightIssues({ ...env, VERCEL_PROJECT_ID: undefined }, NOW).includes("project"))
   for (const value of ["", "foreign-team"]) assert.ok(subject.hostedSuiPreflightIssues({ ...env, VERCEL_ORG_ID: value }, NOW).includes("team"))
+})
+
+test("hosted wallet verification permits only the default or exact Testnet GraphQL endpoint", () => {
+  for (const base of [fixture(), google()]) {
+    for (const value of [undefined, "", "https://graphql.testnet.sui.io/graphql"]) {
+      assert.deepEqual(subject.hostedSuiPreflightIssues({ ...base, HK_SUI_GRAPHQL_URL: value }, NOW), [])
+    }
+    for (const value of ["https://foreign.invalid/graphql", "http://graphql.testnet.sui.io/graphql", "https://graphql.testnet.sui.io/graphql?x=1", "https://graphql.testnet.sui.io/graphql#x", "https://graphql.mainnet.sui.io/graphql"]) {
+      assert.deepEqual(subject.hostedSuiPreflightIssues({ ...base, HK_SUI_GRAPHQL_URL: value }, NOW), ["sui_graphql"])
+    }
+  }
 })
 
 test("missing or crossed build/runtime/mode/metadata/chain pins fail closed with fixed names", () => {

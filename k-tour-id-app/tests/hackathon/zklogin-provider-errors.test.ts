@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { jwtToAddress, genAddressSeed } from "@mysten/sui/zklogin"
 import { deriveSalt, proveZkLogin } from "../../lib/hackathon/adapters/zklogin"
 import { HkError } from "../../lib/hackathon/util"
 
@@ -9,7 +10,7 @@ const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("ba
 // Unsigned fixtures only: these tests do NOT verify a JWT, ZK proof or live login.
 const jwt = `${part({ alg: "RS256", typ: "JWT" })}.${part({ iss: "https://accounts.google.com", aud: "fixture-client", sub: "fixture-user", exp: 4102444800 })}.fixture`
 const opts = { jwt, extendedEphemeralPublicKey: "fixture-key", maxEpoch: 9, jwtRandomness: "123" }
-const proof = { proofPoints: { a: ["1", "2", "3"], b: [["1", "2"], ["3", "4"], ["5", "6"]], c: ["1", "2", "3"] }, issBase64Details: { value: "fixture", indexMod4: 0 }, headerBase64: "fixture", addressSeed: "123" }
+const proof = { proofPoints: { a: ["1", "2", "3"], b: [["1", "2"], ["3", "4"], ["5", "6"]], c: ["1", "2", "3"] }, issBase64Details: { value: Buffer.from('"iss":"https://accounts.google.com",').toString("base64url"), indexMod4: 0 }, headerBase64: jwt.split(".")[0], addressSeed: genAddressSeed(123n, "sub", "fixture-user", "fixture-client").toString() }
 
 function setup(enoki = true) {
   const previous = new Map<string, string | undefined>()
@@ -76,7 +77,7 @@ test("Enoki salt/address and proof success protocol remains unchanged", async ()
   const restore = setup()
   try {
     const calls: string[] = []
-    const who = { address: "0x" + "a".repeat(64), salt: "123", publicKey: "fixture" }
+    const who = { address: jwtToAddress(jwt, 123n, false), salt: "123", publicKey: "fixture" }
     globalThis.fetch = async (url, init) => {
       const path = new URL(String(url)).pathname
       calls.push(path)
@@ -103,7 +104,7 @@ test("Enoki rejects an absent data envelope and sanitizes proof-stage failures",
     await assert.rejects(proveZkLogin(opts), safeError("zklogin_enoki"))
     let calls = 0
     globalThis.fetch = async () => ++calls === 1
-      ? Response.json({ data: { salt: "123", address: "0x" + "a".repeat(64), publicKey: "fixture" } })
+      ? Response.json({ data: { salt: "123", address: jwtToAddress(jwt, 123n, false), publicKey: "fixture" } })
       : new Response(`${LEAK} ${jwt}`, { status: 500 })
     await assert.rejects(proveZkLogin(opts), safeError("zklogin_enoki"))
     assert.equal(calls, 2)
@@ -142,5 +143,15 @@ test("invalid JWTs and isolated previews cannot reach any provider", async () =>
     process.env.HK_ISOLATED_MOCK = "1"
     await assert.rejects(proveZkLogin(opts), safeError("isolated_mock_external_disabled", 503))
     assert.equal(calls, 0)
+  } finally { restore() }
+})
+test("SDK issuer/address binding rejects wrong issuer and invalid packed claim without false ready", async () => {
+  const restore = setup(false)
+  try {
+    for (const issBase64Details of [{ value: Buffer.from('"iss":"https://wrong.invalid",').toString("base64url"), indexMod4: 0 }, { value: "fixture", indexMod4: 3 }]) {
+      const { addressSeed: _seed, ...providerProof } = proof
+      globalThis.fetch = async () => Response.json({ ...providerProof, issBase64Details })
+      await assert.rejects(proveZkLogin(opts), safeError("zklogin_prover"))
+    }
   } finally { restore() }
 })

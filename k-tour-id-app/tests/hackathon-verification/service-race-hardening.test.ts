@@ -221,6 +221,73 @@ test("concurrent AI responses cannot overwrite the first committed proposal", as
   assert.equal(proposalCalls, 2)
 })
 
+test("paid AI admission persists before dispatch, allows one concurrent request, and replays saved output without another request", async () => {
+  const previousMode = process.env.HK_AI_MODE, previousKey = process.env.GEMINI_API_KEY
+  try {
+    process.env.HK_AI_MODE = "gemini"; process.env.GEMINI_API_KEY = "offline-fixture-only"
+    const f = await proposalReady(), entered = gate(), release = gate()
+    proposePause = async () => { entered.release(); await release.promise }
+    const first = service.proposalCreate(f.sessionId, f.operationId, context)
+    await entered.promise
+    const claimed = await stored(f.operationId)
+    assert.equal(claimed.secrets.aiGeneration?.stage, "claimed")
+    assert.ok(!service.toResult(claimed).allowedActions.includes("propose"))
+    assert.equal(JSON.stringify(service.toResult(claimed)).includes("aiGeneration"), false)
+    await assert.rejects(service.proposalCreate(f.sessionId, f.operationId, context), code("ai_generation_already_requested"))
+    assert.equal(proposalCalls, 1)
+    release.release()
+    const result = await first
+    assert.equal((await stored(f.operationId)).secrets.aiGeneration?.stage, "completed")
+    assert.deepEqual((await service.proposalCreate(f.sessionId, f.operationId, context)).proposal, result.proposal)
+    assert.equal(proposalCalls, 1)
+  } finally {
+    if (previousMode === undefined) delete process.env.HK_AI_MODE; else process.env.HK_AI_MODE = previousMode
+    if (previousKey === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = previousKey
+  }
+})
+
+test("unknown paid AI result is spent even after reload and never resends", async () => {
+  const previousMode = process.env.HK_AI_MODE, previousKey = process.env.GEMINI_API_KEY
+  try {
+    process.env.HK_AI_MODE = "gemini"; process.env.GEMINI_API_KEY = "offline-fixture-only"
+    const f = await proposalReady()
+    proposePause = async () => { throw new Error("fixture response lost") }
+    await assert.rejects(service.proposalCreate(f.sessionId, f.operationId, context), /fixture response lost/)
+    assert.equal((await stored(f.operationId)).secrets.aiGeneration?.stage, "unknown")
+    assert.deepEqual(service.toResult(await service.loadOperation(f.sessionId, f.operationId)).allowedActions, ["check_status", "cancel", "return"])
+    proposePause = undefined
+    await assert.rejects(service.proposalCreate(f.sessionId, f.operationId, context), code("ai_generation_already_requested"))
+    assert.equal(proposalCalls, 1)
+    assert.equal((await stored(f.operationId)).proposal, null)
+    // A worker crash before dispatch leaves the same spent claimed boundary.
+    const second = await proposalReady()
+    await withStore(db => { db.operations[second.operationId].secrets.aiGeneration = { claimId: "aigen_crashed", requestDigest: digestOf(context), stage: "claimed", createdAt: nowIso() } })
+    await assert.rejects(service.proposalCreate(second.sessionId, second.operationId, context), code("ai_generation_already_requested"))
+    assert.equal(proposalCalls, 1)
+  } finally {
+    if (previousMode === undefined) delete process.env.HK_AI_MODE; else process.env.HK_AI_MODE = previousMode
+    if (previousKey === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = previousKey
+  }
+})
+
+test("late paid AI result after cancel cannot create a proposal or reopen the one-shot reservation", async () => {
+  const previousMode = process.env.HK_AI_MODE, previousKey = process.env.GEMINI_API_KEY
+  try {
+    process.env.HK_AI_MODE = "gemini"; process.env.GEMINI_API_KEY = "offline-fixture-only"
+    const f = await proposalReady(), entered = gate(), release = gate()
+    proposePause = async () => { entered.release(); await release.promise }
+    const first = service.proposalCreate(f.sessionId, f.operationId, context)
+    const rejected = assert.rejects(first, code("operation_changed", "phase"))
+    await entered.promise; await service.cancel(f.sessionId, f.operationId); release.release(); await rejected
+    const op = await stored(f.operationId)
+    assert.equal(op.status, "cancelled"); assert.equal(op.proposal, null)
+    assert.equal(op.secrets.aiGeneration?.stage, "unknown"); assert.equal(proposalCalls, 1)
+  } finally {
+    if (previousMode === undefined) delete process.env.HK_AI_MODE; else process.env.HK_AI_MODE = previousMode
+    if (previousKey === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = previousKey
+  }
+})
+
 test("invalid current credential or decision rejects before requesting an AI proposal", async () => {
   for (const kind of ["credential", "decision"] as const) {
     const f = await proposalReady()

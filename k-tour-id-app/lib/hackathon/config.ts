@@ -3,7 +3,7 @@
 // Server-only: never import from client components.
 import { HkError } from "./util"
 import { isCxPreview, isReadinessPreview } from "./preview-readiness"
-import { isHostedSuiProfile, hostedSuiPreflightIssues } from "./hosted-sui-profile"
+import { isHostedSuiProfile, hostedSuiPreflightIssues, hostedAiEnabled, hostedZkLoginEnabled, hostedOmnioneEnabled } from "./hosted-sui-profile"
 import { requiresIntegrationSuiLimits, assertIntegrationSuiLimits } from "./integration-sui-limits"
 import { selectZkLoginProvider } from "./zklogin-provider-selection"
 import { isGuideProductionProfile } from "./guide-production-profile"
@@ -127,7 +127,10 @@ export function omnioneConfigurationReady(c: HkConfig): boolean {
 /** Isolation is an execution boundary, not a simulated chain confirmation. */
 export function assertExternalServicesEnabled(service: string) {
   if (requiresIntegrationSuiLimits() && ["Sui signing", "Sui delegation", "Sui agent execution"].includes(service)) { assertIntegrationSuiAuthorized(); assertIntegrationSuiLimits() }
-  if (isHostedSuiProfile() && (hostedSuiPreflightIssues().length || !["Sui", "Sui signing", "Sui delegation", "Sui agent execution", "Sui grant lookup"].includes(service))) {
+  const hostedServices = ["Sui", "Sui signing", "Sui delegation", "Sui agent execution", "Sui grant lookup",
+    ...(hostedAiEnabled() ? ["Gemini proposal"] : []), ...(hostedZkLoginEnabled() ? ["zkLogin provider authentication"] : []),
+    ...(hostedOmnioneEnabled() ? ["OmniOne Chain", "OmniOne Chain signing", "OmniOne Chain submission", "OmniOne Chain evidence"] : [])]
+  if (isHostedSuiProfile() && (hostedSuiPreflightIssues().length || !hostedServices.includes(service))) {
     throw new HkError("hosted_sui_scope", "Only the approved Testnet journey is available.", 503)
   }
   if (isCxPreview()) throw new HkError("cx_preview_scope", "Only Mobile ID verification is enabled in this preview.", 503)
@@ -158,9 +161,9 @@ export function hkPublicConfig() {
       ai: c.cxPreview ? "disabled-cx-preview" : c.ai.mode,
       sui: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : c.sui.packageId && c.sui.issuerSecretKey && c.sui.agentSecretKey ? "testnet" : "unconfigured",
       omnione: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : omnioneConfigurationReady(c) ? "stage" : "unconfigured",
-      zklogin: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : !isHostedSuiProfile() && c.sui.googleClientId && c.sui.zkSaltSeed && selectZkLoginProvider(process.env) ? "google" : "demo-signer",
+      zklogin: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : (!isHostedSuiProfile() || (hostedZkLoginEnabled() && !hostedSuiPreflightIssues().length)) && c.sui.googleClientId && c.sui.zkSaltSeed && selectZkLoginProvider(process.env) ? "google" : "demo-signer",
     },
-    capabilities: { opendidProviderReady: false, chainExecutionEnabled: !c.isolatedMock && !c.cxPreview && !requiresIntegrationSuiLimits(), redemptionEnabled: !isHostedSuiProfile() && !requiresIntegrationSuiLimits() },
+    capabilities: { opendidProviderReady: false, chainExecutionEnabled: !c.isolatedMock && !c.cxPreview && !requiresIntegrationSuiLimits(), redemptionEnabled: !isHostedSuiProfile() && !requiresIntegrationSuiLimits(), hostedTestRedemptionEnabled: isHostedSuiProfile() && hostedOmnioneEnabled() && !hostedSuiPreflightIssues().length },
     sui: { network: c.sui.network, packageId: c.isolatedMock || c.cxPreview ? "" : c.sui.packageId, campaignId: c.isolatedMock || c.cxPreview ? "" : c.sui.campaignId, explorer: c.isolatedMock || c.cxPreview ? "" : c.sui.explorer, googleClientId: c.sui.googleClientId },
     omnione: { chainId: c.omnione.chainId, targetId: omnioneConfigurationReady(c) ? c.omnione.targetId : "", registryAddress: omnioneConfigurationReady(c) ? c.omnione.registryAddress : "" },
     ttl: HK_TTL,

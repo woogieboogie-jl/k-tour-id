@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createJournalStorage, createReleaseOperator, readApiResponse } from "../../scripts/hackathon-hosted-sui-operator.mjs"
 import { HOSTED_SUI_BRANCH, PROJECT_ID, ORG_ID } from "../../scripts/hackathon-hosted-sui-build.mjs"
+import { PROVIDER_ADDED_KEYS, PROVIDER_SECRET_KEYS } from "../../scripts/hackathon-hosted-provider-inputs.mjs"
 
 // Pure synthetic API/state fixtures. Never invoke the operational wrapper,
 // read a real auth/run file, contact Vercel, create an env, or deploy anything.
@@ -14,6 +15,7 @@ const copy = value => structuredClone(value)
 function fixture() {
   const sourceValues = { KV_REST_API_URL: "https://fixture.upstash.io", KV_REST_API_TOKEN: "fixture-token-".repeat(4), HK_CX_PREVIEW_ACCESS_CODE: "FixtureAccessCode_".repeat(3) }
   const secrets = { credentialSeed: "c".repeat(64), issuer: "issuer-fixture-only-".repeat(4), agent: "agent-fixture-only-".repeat(4) }
+  const providerInputs = { NEXT_PUBLIC_GOOGLE_CLIENT_ID: "1-fixture.apps.googleusercontent.com", GEMINI_API_KEY: "synthetic-gemini-not-a-key", HK_ZKLOGIN_SALT_SEED: "e".repeat(64), HK_OMNIONE_RPC_URL: "https://stage-chainapi.omnione.net/?token=synthetic", HK_OMNIONE_PRIVATE_KEY: "0x" + "1".repeat(64) }
   const envs = Object.keys(sourceValues).map((key, i) => ({ id: `source_${i}`, key, target: ["preview"], gitBranch: sourceBranch }))
   const calls = [], deployments = new Map()
   let stored = null, saves = 0, counter = 0, currentSha = SHA, locked = false
@@ -39,9 +41,9 @@ function fixture() {
     }
     if (path.startsWith(`/v9/projects/${PROJECT_ID}/env/`) && method === "PATCH") {
       const item = envs.find(item => item.id === path.split("/").at(-1))
-      assert.equal(locked, true); assert.equal(item?.key, "HK_MODE_CX")
-      assert.deepEqual(body, { value: "cx" })
-      assert.ok(stored.targets[item.target[0]].cxMigration.modeIntentAt)
+      assert.equal(locked, true); assert.ok(["HK_MODE_CX", "HK_AI_MODE"].includes(item?.key))
+      assert.deepEqual(body, { value: item.key === "HK_MODE_CX" ? "cx" : "gemini" })
+      assert.ok(stored.targets[item.target[0]][item.key === "HK_MODE_CX" ? "cxMigration" : "providerMigration"].modeIntentAt)
       item.updatedAt = TIME + ++counter
       if (patchHook) await patchHook(item)
       return copy(item)
@@ -60,14 +62,87 @@ function fixture() {
     if (path.startsWith("/v13/deployments/") && method === "GET") { assert.ok(deployments.has(path.split("/").at(-1))); return copy(deployments.get(path.split("/").at(-1))) }
     assert.fail(`Unexpected fixture endpoint ${method} ${path}`)
   }
-  const run = createReleaseOperator({ api, readSecrets: () => copy(secrets), localCheck: () => currentSha, now: () => TIME, nonce: () => (++counter).toString(16).padStart(32, "0"),
+  const run = createReleaseOperator({ api, readSecrets: () => copy(secrets), readProviderInputs: () => copy(providerInputs), localCheck: () => currentSha, now: () => TIME, nonce: () => (++counter).toString(16).padStart(32, "0"),
     loadJournal: () => copy(stored), saveJournal: value => { saves++; stored = copy(value) },
     withLock: async (_action, task) => { assert.equal(locked, false); locked = true; try { return await task() } finally { locked = false } } })
-  return { run, envs, calls, deployments, secrets, sourceValues, journal: () => copy(stored), saves: () => saves,
+  return { run, envs, calls, deployments, secrets, sourceValues, providerInputs, journal: () => copy(stored), saves: () => saves,
     postCount: () => calls.filter(call => call.method === "POST").length,
     shape: value => { createdShape = value }, postHook: value => { postHook = value }, patchHook: value => { patchHook = value }, deploymentHook: value => { deploymentHook = value }, sha: value => { currentSha = value } }
 }
 const rejects = (promise, name) => assert.rejects(promise, { message: `release_${name}` })
+
+test("connected opt-in adds only reviewed provider rows, preserving shared budget/access/store/signers", async () => {
+  const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview")
+  const before = copy(f.envs), count = f.calls.filter(c => c.method !== "GET").length
+  const plan = await f.run("plan-providers-preview")
+  assert.deepEqual(plan.wouldCreate, PROVIDER_ADDED_KEYS); assert.deepEqual(plan.wouldUpdate, ["HK_AI_MODE"])
+  assert.equal(f.calls.filter(c => c.method !== "GET").length, count)
+  await f.run("enable-providers-preview")
+  for (const row of before.filter(row => row.key !== "HK_AI_MODE")) assert.deepEqual(f.envs.find(item => item.id === row.id), row)
+  for (const key of PROVIDER_SECRET_KEYS) assert.equal(f.envs.find(item => item.gitBranch === HOSTED_SUI_BRANCH && item.key === key)?.type, "sensitive")
+  const stored = f.journal(); assert.equal(stored.targets.preview.providersEnabled, true)
+  assert.equal(stored.targets.preview.providerMigration.complete, true)
+  for (const value of Object.values(f.providerInputs)) assert.equal(JSON.stringify(stored).includes(value), false)
+  assert.equal((await f.run("prepare-preview")).runtimeProfile, "cx-sui-connected")
+  const writes = f.calls.filter(c => c.method !== "GET").length
+  assert.equal((await f.run("enable-providers-preview")).alreadyEnabled, true)
+  assert.equal(f.calls.filter(c => c.method !== "GET").length, writes)
+})
+
+test("provider opt-in requires CX and a new revision, never reuses old preview proof", async () => {
+  const f = fixture(); await f.run("prepare-preview")
+  await rejects(f.run("enable-providers-preview"), "provider_requires_cx")
+  await f.run("enable-cx-preview"); await f.run("deploy-preview")
+  await rejects(f.run("enable-providers-preview"), "provider_requires_new_revision")
+})
+
+test("connected production requires same-SHA connected READY preview attestation", async () => {
+  const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview")
+  await f.run("prepare-production")
+  // First complete the pre-existing CX production migration, using its own revision.
+  const prior = await f.run("deploy-preview"); f.deployments.get(prior.id).readyState = "READY"
+  await f.run("mark-preview-passed", prior.id, REPORT); await f.run("enable-cx-production")
+  f.sha("d".repeat(40)); await f.run("prepare-preview"); await f.run("prepare-production")
+  await rejects(f.run("enable-providers-production"), "preview_tests_required")
+  await f.run("enable-providers-preview")
+  const p = await f.run("deploy-preview"); f.deployments.get(p.id).readyState = "READY"
+  await rejects(f.run("enable-providers-production"), "preview_tests_required")
+  await f.run("mark-preview-passed", p.id, REPORT)
+  await f.run("enable-providers-production")
+  assert.equal((await f.run("deploy-production")).target, "production")
+})
+
+test("connected candidate rotation or old input rotation cannot silently alter prepared fingerprint", async () => {
+  for (const rotate of [f => { f.secrets.credentialSeed = "d".repeat(64) }, f => { f.sourceValues.HK_CX_PREVIEW_ACCESS_CODE = "Rotated_".repeat(8) }]) {
+    const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview"); rotate(f)
+    const writes = f.postCount(); await rejects(f.run("enable-providers-preview"), "prepared_values_changed"); assert.equal(f.postCount(), writes)
+  }
+  const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview"); await f.run("enable-providers-preview")
+  f.providerInputs.HK_ZKLOGIN_SALT_SEED = "f".repeat(64)
+  await rejects(f.run("prepare-preview"), "prepared_values_changed")
+  await rejects(f.run("enable-providers-preview"), "prepared_values_changed")
+})
+
+test("late connected row conflict and malformed candidate fail before first mutation", async () => {
+  const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview")
+  f.envs.push({ id: "foreign", key: PROVIDER_ADDED_KEYS.at(-1), target: ["preview"] })
+  let writes = f.postCount(); await rejects(f.run("enable-providers-preview"), "existing_target_variable"); assert.equal(f.postCount(), writes)
+  f.envs.pop(); f.providerInputs.GEMINI_API_KEY = "contains newline\n"
+  writes = f.postCount(); await rejects(f.run("enable-providers-preview"), "provider_input"); assert.equal(f.postCount(), writes)
+})
+
+test("ambiguous connected secret POST or mode PATCH never retries or deploys partial config", async () => {
+  for (const kind of ["post", "patch"]) {
+    const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview")
+    f[kind + "Hook"](() => { throw new Error("secret provider outcome") })
+    await rejects(f.run("enable-providers-preview"), "provider_migration_outcome_unknown")
+    const count = f.calls.length
+    await rejects(f.run("enable-providers-preview"), "target_not_prepared")
+    await rejects(f.run("deploy-preview"), "target_not_prepared")
+    assert.equal(f.calls.slice(count).some(c => c.method !== "GET"), false)
+    assert.equal(JSON.stringify(f.journal()).includes("secret provider outcome"), false)
+  }
+})
 
 test("CX migration changes only public CX connection values, preserving all signing/access/store rows", async () => {
   const f = fixture(); await f.run("prepare-preview")

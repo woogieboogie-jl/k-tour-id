@@ -25,6 +25,8 @@ test("cancelled, malformed, expired, and other-tab returns fail closed", () => {
   assert.deepEqual(readOAuthReturn("#state=expected&id_token=header.payload.signature", "", undefined), { status: "invalid" })
   assert.deepEqual(readOAuthReturn("#state=expected&id_token=header.payload.signature", "", "expired-state"), { status: "invalid" })
   assert.deepEqual(readOAuthReturn("#state=expected&id_token=header.payload.signature", "", "expected&other"), { status: "invalid" })
+  for (const query of ["?state=expected&state=other", "?error=cancelled&error=other", "?id_token=header.payload.signature"]) assert.deepEqual(readOAuthReturn("#state=expected&id_token=header.payload.signature", query, "expected"), { status: "invalid" })
+  assert.deepEqual(readOAuthReturn(`#state=expected&id_token=h.${"a".repeat(8192)}.s`, "", "expected"), { status: "invalid" })
 })
 
 test("ending an OAuth attempt clears only its one-time state, not the ephemeral signer", () => {

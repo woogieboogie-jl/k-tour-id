@@ -34,6 +34,7 @@ export type OperationRecord = OperationResult & {
   omnioneTarget?: import("./omnione-targets").OmnioneTargetSnapshot
   sessionId: string
   secrets: {
+    zkLoginAttempt?: import("./zklogin-attempt").ZkLoginAttempt // No raw JWT, salt or private key; operation-owned one-shot prover claim.
     identityImport?: { sourceOperationId: string; evidenceId: string; authorizationRef: string; contextDigest: string; importedAt: string }
     identityImportInvalid?: boolean // Recomputed from the source row at read/mutation boundaries.
     openDidProvider?: OpenDidProviderState // Server-only; never expose KYC/owner binding or offers.
@@ -49,6 +50,7 @@ export type OperationRecord = OperationResult & {
     cxCxId?: string                 // CX-issued correlation id; required by the result call
     cxStartClaim?: { id: string; expiresAt: string }
     proposalPromptDigest?: string
+    aiGeneration?: { claimId: string; requestDigest: string; stage: "claimed" | "completed" | "unknown"; createdAt: string }
   }
   audit: Array<{ at: string; event: string; detail?: Record<string, unknown> }>
 }

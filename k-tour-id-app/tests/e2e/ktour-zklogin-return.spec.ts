@@ -1,14 +1,16 @@
-import { expect, test } from "./helpers/harvey-fixture"
+import { expect, test, MAIN } from "./helpers/google-fixture"
 
 test.describe.configure({ timeout: 45_000 })
-test.use({ serviceWorkers: "block" })
+test.use({ serviceWorkers: "block", baseURL: MAIN })
 
-const OPERATION = "browser-fixture-operation-1"
+const OPERATION = "op_browser_fixture_01"
+const ATTEMPT = `zkl_${"a".repeat(24)}`
+const EXPIRES = new Date(Date.now() + 600000).toISOString()
 const VENUE = "mois-0021cd596bc5b2a922ad"
 const signerKey = `ondo-b.hackathon.signer.v1:${OPERATION}`
 
 async function seedPending(page: import("@playwright/test").Page, savedAt = Date.now()) {
-  await page.addInitScript(({ savedAt, operation }) => {
+  await page.addInitScript(({ savedAt, operation, attempt, expires }) => {
     // Install once per tab: full-document return navigation/reload must not
     // recreate the consumed OAuth state or revive an expired pending marker.
     if (sessionStorage.getItem("test.zklogin-return.seeded")) return
@@ -16,9 +18,11 @@ async function seedPending(page: import("@playwright/test").Page, savedAt = Date
     sessionStorage.setItem("ondo-b.hackathon.pending.v1", JSON.stringify({ venueId: "mois-0021cd596bc5b2a922ad", locale: "en", resumeOperationId: operation, savedAt }))
     sessionStorage.setItem(`ondo-b.hackathon.signer.v1:${operation}`, JSON.stringify({
       kind: "zklogin", address: "", ephemeralSecretKey: "fixture-key", maxEpoch: 9,
-      randomness: "fixture-randomness", inputs: null, nonce: "fixture-nonce", jwtPending: true, oauthState: "fixture-state",
+      randomness: "fixture-randomness", inputs: null, nonce: "fixture-nonce", jwtPending: true, oauthState: "fixture-state", attemptId: attempt, attemptExpiresAt: expires, proofRequestSent: false,
     }))
-  }, { savedAt, operation: OPERATION })
+  }, { savedAt, operation: OPERATION, attempt: ATTEMPT, expires: EXPIRES })
+  await page.route(`**/api/hackathon/v1/zklogin/status/${OPERATION}/${ATTEMPT}`, route => route.fulfill({ status: 200, json: { version: 1, operationId: OPERATION, attemptId: ATTEMPT, status: "pending", expiresAt: EXPIRES, maxEpoch: 9, address: null, inputs: null } }))
+  await page.route(`**/api/hackathon/v1/operations/${OPERATION}`, route => route.fulfill({ status: 404, json: { error: { code: "not_found" } } }))
 }
 
 test("malformed or other-tab callback has no local state, stores no JWT, and offers map return", async ({ page, harvey }) => {

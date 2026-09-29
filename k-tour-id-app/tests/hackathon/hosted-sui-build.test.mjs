@@ -57,6 +57,22 @@ test("validated Vercel launch options are stripped from the child, never inherit
   assert.throws(() => subject.hostedSuiBuildPlan({ env: { ...env, VERCEL_PROJECT_ID: "foreign" }, exists: () => false }), { message: "hosted_sui_build_target" })
 })
 
+test("connected build freezes only paired public marker and exact approved Google client", () => {
+  const marker = "connected-20260930-v1", client = "746125368961-1njodv4sh0b2sjogudsl7dvreb9ra186.apps.googleusercontent.com"
+  const input = { ...metadata(), NEXT_PUBLIC_HK_HOSTED_PROVIDERS: marker, HK_HOSTED_PROVIDERS: marker,
+    HK_HOSTED_ZKLOGIN_ENABLED: "1", NEXT_PUBLIC_GOOGLE_CLIENT_ID: client, GEMINI_API_KEY: "synthetic-secret", HK_ZKLOGIN_SALT_SEED: "synthetic-secret", HK_OMNIONE_PRIVATE_KEY: "synthetic-secret", HK_OMNIONE_RPC_URL: "synthetic-secret" }
+  const env = subject.hostedSuiBuildEnv(input)
+  assert.equal(env.NEXT_PUBLIC_GOOGLE_CLIENT_ID, client); assert.equal(env.NEXT_PUBLIC_HK_HOSTED_PROVIDERS, marker)
+  assert.equal(env.HK_HOSTED_SUI_ENABLED, "0"); assert.equal(env.HK_AI_MODE, "rule")
+  for (const name of ["HK_HOSTED_PROVIDERS", "HK_HOSTED_ZKLOGIN_ENABLED", "GEMINI_API_KEY", "HK_ZKLOGIN_SALT_SEED", "HK_OMNIONE_PRIVATE_KEY", "HK_OMNIONE_RPC_URL"]) assert.equal(Object.hasOwn(env, name), false)
+  assert.equal(JSON.stringify(env).includes("synthetic-secret"), false)
+  assert.equal(subject.hostedSuiBuildEnv({ ...input, HK_HOSTED_ZKLOGIN_ENABLED: "0" }).NEXT_PUBLIC_GOOGLE_CLIENT_ID, "")
+  assert.throws(() => subject.hostedSuiBuildEnv({ ...input, NEXT_PUBLIC_GOOGLE_CLIENT_ID: "other.apps.googleusercontent.com" }), { message: "hosted_sui_build_google_client" })
+  for (const patch of [{ HK_HOSTED_PROVIDERS: "" }, { NEXT_PUBLIC_HK_HOSTED_PROVIDERS: "" }, { HK_HOSTED_PROVIDERS: "other" }]) {
+    assert.throws(() => subject.hostedSuiBuildEnv({ ...input, ...patch }), { message: "hosted_sui_build_provider_marker" })
+  }
+})
+
 test("public origin inheritance accepts only HTTPS origin values", () => {
   for (const value of ["http://ktour-id.vercel.app", "https://user:pass@ktour-id.vercel.app/", "https://ktour-id.vercel.app/path", "not-a-url"]) {
     assert.throws(() => subject.hostedSuiBuildEnv({ NEXT_PUBLIC_SITE_URL: value }), { message: "hosted_sui_build_public_origin" })
