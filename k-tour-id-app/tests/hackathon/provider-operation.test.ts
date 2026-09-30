@@ -5,6 +5,7 @@ import type { Db, OperationRecord } from "../../lib/hackathon/store"
 import type { OpenDidBridgeClient, OpenDidIssuance, OpenDidPresentation } from "../../lib/hackathon/adapters/opendid-provider"
 import { guideJourney } from "../../lib/hackathon/guide-contract"
 import { HkError } from "../../lib/hackathon/util"
+import { nativeBindingOperationDigest } from "../../lib/hackathon/native-binding-service"
 
 const T = Date.parse("2026-09-29T00:00:00.000Z"), iso = (ms = 0) => new Date(T + ms).toISOString()
 const SESSION = "session_fixture_01", OP = "op_fixture_01"
@@ -21,9 +22,13 @@ function operation(): OperationRecord {
     consent: { version: "consent-fixture", digest: "digest-fixture", acceptedAt: iso() }, identity: { evidenceId: "evidence_fixture_01", subjectRef: "cx-subject-private-fixture", source: "cx_mobile_id", mode: "cx", provider: "comdl", personVerified: true, adultVerified: true, verifiedAt: iso(), expiresAt: iso(3600000), providerTransactionRef: "cx-transaction-private-fixture", handoff: null },
     credential: null, presentation: null, proposal: null, delegation: null, agent: null, fulfillment: null, chain: null, error: null, secrets: {}, audit: [] }
 }
-function setup(options: { mapping?: boolean; bridge?: Partial<OpenDidBridgeClient> } = {}) {
+function setup(options: { mapping?: boolean; bridge?: Partial<OpenDidBridgeClient>; boundHolder?: boolean } = {}) {
   let clock = T, locked = false, identityChanged = false
   let db: Db = { version: 1, sessions: {}, operations: { [OP]: operation() }, redemptions: {}, outbox: {}, idempotency: {}, nonces: {} }
+  if (options.boundHolder) {
+    const op = db.operations[OP]
+    op.secrets.nativeHolderBinding = { version: "cx-holder-v1", bindingId: "nhb_" + "a".repeat(24), operationId: OP, sessionId: SESSION, operationBinding: nativeBindingOperationDigest(op), subjectCommitment: "fixture", configBinding: "0x" + "a".repeat(64), revision: 3, status: "verified", createdAt: iso(), expiresAt: iso(600000), authNonce: "a".repeat(64), casUserId: "a".repeat(43), kycRef: "a".repeat(64), holder: { did: "did:omn:fixture-real-holder", versionId: "1", keyId: "pin", publicKeyMultibase: "fixture", keyCommitment: "fixture" }, proofDigest: "fixture", verifiedAt: iso(), claimAt: null }
+  }
   let queue = Promise.resolve()
   const atomic = <R>(fn: (db: Db) => R | Promise<R>): Promise<R> => {
     const run = queue.then(async () => { assert(!locked); locked = true; const copy = structuredClone(db); try { const result = await fn(copy); db = copy; return structuredClone(result) } finally { locked = false } })
@@ -43,8 +48,8 @@ function setup(options: { mapping?: boolean; bridge?: Partial<OpenDidBridgeClien
     async credentialStatus() { outsideLock(); counts.status++; return { issuanceId: "issuance_fixture_01", active: true, reason: null, checkedAt: new Date(clock).toISOString() } },
     ...options.bridge,
   }
-  const service = createProviderOperationService({ atomic, bridge, now: () => clock, identityChanged: () => identityChanged,
-    resolveCxMapping: options.mapping === false ? undefined : async e => ({ evidenceRef: e.evidenceRef, kycRef: "a".repeat(64), mappingVersion: "cx-cas-v1" }) })
+  const service = createProviderOperationService({ atomic, bridge, now: () => clock, identityChanged: () => identityChanged, ...(options.boundHolder ? { nativeConfigBinding: "0x" + "a".repeat(64) } : {}),
+    resolveCxMapping: options.mapping === false ? undefined : async e => ({ evidenceRef: e.evidenceRef, kycRef: "a".repeat(64), mappingVersion: "cx-cas-v1", ...(options.boundHolder ? { expectedHolderDid: "did:omn:fixture-real-holder" } : {}) }) })
   const action = (a: Parameters<typeof service.action>[2]) => service.action(SESSION, OP, a)
   const ready = async () => { await action("issuance/start"); await action("issuance/refresh"); await action("presentation/start"); await action("presentation/refresh") }
   return { service, action, ready, counts, bridge, row: () => db.operations[OP], mutate: (fn: (op: OperationRecord) => void) => atomic(d => fn(d.operations[OP])), advance: (ms: number) => clock += ms, setIdentityChanged: () => identityChanged = true }
@@ -78,6 +83,20 @@ test("missing real CX mapping stops before durable state or network work", async
   const h = setup({ mapping: false })
   await assert.rejects(h.action("issuance/start"), code("opendid_cx_mapping_unavailable"))
   assert.equal(h.row().secrets.openDidProvider, undefined); assert.equal(h.counts.issue, 0)
+})
+test("verified native binding is enforced again during late provider result and later permission", async () => {
+  const d = deferred<OpenDidIssuance>(); let began = false
+  const h = setup({ boundHolder: true, bridge: { async issuanceStart() { began = true; return d.promise } } })
+  const pending = h.action("issuance/start"); await waitFor(() => began)
+  await h.mutate(op => { op.secrets.nativeHolderBinding!.status = "cancelled" })
+  d.resolve(issue()); const result = await pending
+  assert.equal(result.provider.offer, null); assert.equal(result.record.credential, null)
+  assert.equal(result.record.secrets.openDidProvider?.phase, "failed")
+  const f = setup({ boundHolder: true }); await f.ready(); await f.mutate(op => { op.secrets.nativeHolderBinding!.configBinding = "0x" + "b".repeat(64) })
+  await assert.rejects(f.service.refreshPermission(SESSION, OP)); assert.notEqual(f.row().secrets.openDidProvider?.phase, "allowed")
+  const valid = setup({ boundHolder: true }); await valid.ready(); await valid.service.refreshPermission(SESSION, OP)
+  assert.doesNotThrow(() => assertProviderPermissionForOperation(valid.row(), undefined, T, "0x" + "a".repeat(64)))
+  assert.throws(() => assertProviderPermissionForOperation(valid.row(), undefined, T, "0x" + "b".repeat(64)))
 })
 test("guide V2 cannot borrow native bridge V1 redemption authority", async () => {
   const h = setup(); await h.mutate(op => { op.journey = guideJourney() })

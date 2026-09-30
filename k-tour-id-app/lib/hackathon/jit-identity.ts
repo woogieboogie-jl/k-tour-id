@@ -4,6 +4,7 @@ import { assert, digestOf, HkError, randomId } from "./util"
 import { jitEvidence, jitRuntimePolicy, reserveJitIdentityOperation, validateJitContext, type JitRuntimePolicy } from "./jit-identity-policy"
 import { JIT_IDENTITY_CONSENT, JIT_IDENTITY_VERSION, type JitIdentityContext, type JitIdentityEligibility, type JitIdentityRequest, type JitIdentityReceipt } from "./jit-identity-contract"
 import type { JitIdentityRequestRecord, JitIdentityAuthorizationRecord } from "./jit-identity-records"
+import { currentCxAge19, CX_AGE19_POLICY } from "./cx-age-policy"
 
 const REQUEST_MS = 10 * 60_000, AUTH_MS = 2 * 60_000, CLAIM_MS = 45_000, MAX_POLLS = 120
 const iso = (n: number) => new Date(n).toISOString()
@@ -25,16 +26,18 @@ function active(r: JitIdentityRequestRecord, policy: JitRuntimePolicy, now: numb
   assert(Date.parse(r.expiresAt) > now, "identity_expired", "Identity request expired", 410)
   assert(!["cancelled", "expired", "denied", "unknown", "completed"].includes(r.status), "jit_identity_inactive", "Identity request is inactive", 409)
 }
-function grantEvidence(db: Db, a: JitIdentityAuthorizationRecord, policy: JitRuntimePolicy, now: number) {
+function grantEvidence(db: Db, a: JitIdentityAuthorizationRecord, policy: JitRuntimePolicy, now: number, readConsumedAfter19 = false) {
   validateJitContext(a.context, policy)
   const r = owned(db, a.sessionId, a.requestId)
   assert(["authorized", "completed"].includes(r.status) && a.policyDigest === policy.digest && r.policyDigest === policy.digest &&
     r.authorizationRef === a.authorizationRef && r.evidenceOperationId === a.evidenceOperationId && r.consentDigest === a.consentDigest &&
-    a.consentDigest === digestOf({ version: JIT_IDENTITY_CONSENT, sessionId: a.sessionId, requestId: a.requestId, context: a.context }) && same(r.context, a.context) && Date.parse(a.expiresAt) > now,
+    a.consentDigest === digestOf({ version: JIT_IDENTITY_CONSENT, sessionId: a.sessionId, requestId: a.requestId, context: a.context }) && same(r.context, a.context) &&
+    (Date.parse(a.expiresAt) > now || (readConsumedAfter19 && r.status === "completed" && a.context.action === "after19_access" && a.context.purpose === "age19" &&
+      a.receipt?.age19Verified === true && a.receipt.age19Policy === CX_AGE19_POLICY && Date.parse(a.receipt.expiresAt) > now)),
   "jit_identity_expired", "Action authorization is unavailable", 409)
   const e = jitEvidence(db, a.sessionId, db.operations[a.evidenceOperationId], policy, now)
   assert(e && e.evidenceId === a.evidenceId && e.subjectRef === a.subjectRef &&
-    (a.context.purpose !== "adult" || e.adultVerified === true) && a.context.purpose !== "age19", "jit_identity_proof", "Current identity proof required", 403)
+    (a.context.purpose !== "adult" || e.adultVerified === true) && (a.context.purpose !== "age19" || currentCxAge19(e)), "jit_identity_proof", "Current identity proof required", 403)
   return e
 }
 function projection(db: Db, r: JitIdentityRequestRecord, policy: JitRuntimePolicy, now: number): JitIdentityRequest {
@@ -54,8 +57,8 @@ function projection(db: Db, r: JitIdentityRequestRecord, policy: JitRuntimePolic
 function authorize(db: Db, r: JitIdentityRequestRecord, op: OperationRecord, policy: JitRuntimePolicy, now: number) {
   const e = jitEvidence(db, r.sessionId, op, policy, now)
   assert(e, "jit_identity_proof", "Current identity proof required", 403)
-  if (r.context.purpose === "age19" || (r.context.purpose === "adult" && e.adultVerified !== true)) {
-    r.status = "denied"; r.reason = r.context.purpose === "age19" ? "unsupported_age_policy" : "adult_claim_missing"; return
+  if ((r.context.purpose === "age19" && !currentCxAge19(e)) || (r.context.purpose === "adult" && e.adultVerified !== true)) {
+    r.status = "denied"; r.reason = r.context.purpose === "age19" ? "age19_not_verified" : "adult_claim_missing"; return
   }
   const authorizationRef = randomId("ida"), expiresAt = iso(Math.min(now + AUTH_MS, Date.parse(r.expiresAt), Date.parse(e.expiresAt), Date.parse(policy.expiresAt)))
   ledger(db).authorizations[authorizationRef] = { authorizationRef, requestId: r.requestId, sessionId: r.sessionId,
@@ -77,10 +80,12 @@ export function createJitIdentityService(ports: Ports = defaults) {
       const current = policy(), available = current.policy.enabled && current.policy.digest === snapshot.policy.digest
       const person = available ? evidence.find(e => Date.parse(e.expiresAt) > current.now) : undefined
       const adult = available ? evidence.find(e => e.adultVerified === true && Date.parse(e.expiresAt) > current.now) : undefined
+      const age19 = available ? evidence.find(e => currentCxAge19(e) && Date.parse(e.expiresAt) > current.now) : undefined
       return { version: JIT_IDENTITY_VERSION, provider: "omnione_cx", execution: available ? "provider" : "unavailable",
         person: { state: !available ? "unavailable" : person ? "verified" : "proof_required", expiresAt: person?.expiresAt ?? null },
         adult: { state: !available ? "unavailable" : adult ? "verified" : person ? "not_verified" : "proof_required", expiresAt: adult?.expiresAt ?? null },
-        age19: { state: "unsupported" }, paymentKyc: { state: "unsupported" }, canStart: available, consentVersion: JIT_IDENTITY_CONSENT }
+        age19: { state: !available ? "unavailable" : age19 ? "verified" : evidence.some(e => e.age19Verified === false && e.age19Policy === CX_AGE19_POLICY) ? "not_verified" : "proof_required", expiresAt: age19?.expiresAt ?? null },
+        paymentKyc: { state: "unsupported" }, canStart: available, consentVersion: JIT_IDENTITY_CONSENT }
     },
     async create(sessionId: string, input: unknown): Promise<JitIdentityRequest> {
       return ports.mutate(db => {
@@ -98,11 +103,10 @@ export function createJitIdentityService(ports: Ports = defaults) {
           handoff: null, started: false, polls: 0, lastPollAt: 0,
         }
         state.requests[requestId] = r
-        if (context.purpose === "age19") { r.status = "denied"; r.reason = "unsupported_age_policy" }
-        else {
+        {
           const candidates = Object.values(db.operations).filter(op => {
             const e = jitEvidence(db, sessionId, op, p.policy, p.now)
-            return e && (context.purpose !== "adult" || e.adultVerified === true)
+            return e && (context.purpose !== "adult" || e.adultVerified === true) && (context.purpose !== "age19" || currentCxAge19(e))
           }).sort((a, b) => b.identity!.verifiedAt.localeCompare(a.identity!.verifiedAt))
           if (candidates[0]) authorize(db, r, candidates[0], p.policy, p.now)
         }
@@ -129,13 +133,13 @@ export function createJitIdentityService(ports: Ports = defaults) {
           sessionId, secrets: {}, audit: [{ at: now, event: "identity.purpose.reserved" }] }
         ports.reserve(db, op)
         r.operationId = operationId; r.started = true; r.status = "preparing"; r.claim = { id: claimId, expiresAt: iso(p.now + CLAIM_MS) }
-        return { operationId, policyDigest: p.policy.digest }
+        return { operationId, policyDigest: p.policy.digest, purpose: r.context.purpose }
       })
       if (prepared.result) return prepared.result
       let started: Awaited<ReturnType<typeof cxStart>>
       try {
         const p = policy(); assert(p.policy.enabled && p.policy.digest === prepared.policyDigest, "jit_identity_unavailable", "Identity policy changed", 503)
-        started = await ports.start({ operationId: prepared.operationId!, mobile })
+        started = await ports.start({ operationId: prepared.operationId!, mobile, purpose: prepared.purpose })
         assert(started.handoff.kind !== "mock", "jit_identity_proof", "A sample is not provider verification", 403)
       } catch (error) {
         await ports.mutate(db => { const r = owned(db, sessionId, requestId); if (r.claim?.id === claimId) { clear(r); r.status = "unknown"; r.reason = "identity_start_unknown" } })
@@ -167,7 +171,7 @@ export function createJitIdentityService(ports: Ports = defaults) {
       const snapshot = prepared.snapshot!
       let result: Awaited<ReturnType<typeof cxComplete>>
       try { const p = policy(); assert(p.policy.enabled && p.policy.digest === prepared.policyDigest, "jit_identity_unavailable", "Identity policy changed", 503)
-        result = await ports.complete({ operationId: snapshot.operationId!, token: snapshot.cxToken, txId: snapshot.cxTxId, cxId: snapshot.cxCxId, mobile: snapshot.handoff?.kind === "app" })
+        result = await ports.complete({ operationId: snapshot.operationId!, token: snapshot.cxToken, txId: snapshot.cxTxId, cxId: snapshot.cxCxId, mobile: snapshot.handoff?.kind === "app", purpose: snapshot.context.purpose })
       } catch (error) {
         await ports.mutate(db => { const r = owned(db, sessionId, requestId); if (r.claim?.id === claimId) { delete r.claim; r.status = "handoff"; r.reason = "identity_check_unavailable" } })
         if (error instanceof HkError) throw error
@@ -210,8 +214,10 @@ export function createJitIdentityService(ports: Ports = defaults) {
         assert(a?.sessionId === sessionId && same(a.context, context), "jit_identity_scope", "Authorization belongs to a different action", 403)
         const e = grantEvidence(db, a, p.policy, p.now)
         if (a.receipt) return structuredClone(a.receipt)
-        a.receipt = { version: JIT_IDENTITY_VERSION, receiptId: randomId("idr"), context: { ...a.context }, authorizedAt: iso(p.now), expiresAt: a.expiresAt,
-          evidenceExpiresAt: e.expiresAt, provider: "omnione_cx", personVerified: true, adultVerified: e.adultVerified === true, paymentKycVerified: false }
+        a.receipt = { version: JIT_IDENTITY_VERSION, receiptId: randomId("idr"), context: { ...a.context }, authorizedAt: iso(p.now),
+          expiresAt: a.context.action === "after19_access" && a.context.purpose === "age19" ? iso(Math.min(Date.parse(e.expiresAt), Date.parse(p.policy.expiresAt))) : a.expiresAt,
+          evidenceExpiresAt: e.expiresAt, provider: "omnione_cx", personVerified: true, adultVerified: e.adultVerified === true,
+          age19Verified: currentCxAge19(e), ...(currentCxAge19(e) ? { age19Policy: CX_AGE19_POLICY } : {}), paymentKycVerified: false }
         owned(db, sessionId, a.requestId).status = "completed"
         return structuredClone(a.receipt)
       })
@@ -220,7 +226,7 @@ export function createJitIdentityService(ports: Ports = defaults) {
       return ports.read(db => {
         const p = policy(), r = owned(db, sessionId, requestId), a = r.authorizationRef ? db.jitIdentity?.authorizations[r.authorizationRef] : undefined
         assert(a?.receipt, "not_found", "No completed action authorization", 404)
-        grantEvidence(db, a, p.policy, p.now)
+        grantEvidence(db, a, p.policy, p.now, true)
         return structuredClone(a.receipt)
       })
     },

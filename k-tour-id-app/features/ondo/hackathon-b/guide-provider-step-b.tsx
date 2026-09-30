@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import qrcode from "qrcode-generator"
 import type { OperationResult } from "@/lib/hackathon/types"
 import { canUseNativeOfferHandoff, createNativeOfferHandoff, nativeEnvironment, nativeOfferContext, nativeOfferContextKey, providerStepPolicy } from "./native-offer-handoff-b"
+import { nativeBindingAppBridge } from "./native-app-v1-transport-b"
+import { NativeHolderBindingB } from "./native-holder-binding-b"
 import styles from "./hackathon-b.module.css"
 
-type ProviderView = { phase: "issuance" | "presentation" | "allowed" | "denied" | "failed" | "cancelled" | "expired"; offer: { qrPayload: string } | null }
+type ProviderView = { phase: "issuance" | "presentation" | "allowed" | "denied" | "failed" | "cancelled" | "expired"; offer: { qrPayload: string } | null; nativeBindingId?: string }
 type ProviderAction = "issuance/start" | "issuance/refresh" | "presentation/start" | "presentation/refresh" | "cancel"
 const COPY = {
   ko: { issuance: "패스를 받아 보관해 주세요", presentation: "필요한 확인 결과만 제시해요", start: "신분증 앱 요청 열기", instruction: "연결된 신분증 앱에서 QR을 스캔하고 요청을 확인해 주세요. 마친 뒤 이 화면에서 결과를 확인해요.", noOffer: "앱에서 요청을 확인한 뒤 결과를 새로고침해 주세요.", refresh: "결과 확인", cancel: "요청 중단", waiting: "앱의 확인 결과를 기다리고 있어요", denied: "제시가 승인되지 않았어요. 저장은 진행하지 않았어요.", failed: "요청을 완료하지 못했어요. 같은 요청의 결과를 확인해 주세요.", expired: "요청 시간이 지났어요. 저장은 진행하지 않았어요.", cancelled: "요청을 중단했어요", unavailable: "연결 상태를 확인하지 못했어요. 같은 요청의 결과를 다시 확인해 주세요.", qr: "신분증 앱 제출 요청 QR", details: "연결 안내", sameDevice: "이 화면에서 신분증 앱이 자동으로 열리지는 않아요. QR을 읽을 수 있는 연결된 신분증 앱이 필요해요." },
@@ -29,6 +31,7 @@ export function GuideProviderStepB({ operation, locale, onOperation, onAccessReq
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
   const [nativeAvailable, setNativeAvailable] = useState(false)
+  const [bindingApp, setBindingApp] = useState(false)
   const [nativeSent, setNativeSent] = useState(false)
   const [nativeFailed, setNativeFailed] = useState(false)
   const offerRef = useRef<ReturnType<typeof createNativeOfferHandoff>>(null)
@@ -41,6 +44,7 @@ export function GuideProviderStepB({ operation, locale, onOperation, onAccessReq
   const requestRef = useRef<AbortController | null>(null)
   useEffect(() => {
     setNativeAvailable(canUseNativeOfferHandoff(nativeEnvironment()))
+    setBindingApp(nativeBindingAppBridge(nativeEnvironment()) !== null)
     return () => { const active = requestRef.current; requestRef.current = null; active?.abort(); offerRef.current?.invalidate() }
   }, [])
   useEffect(() => {
@@ -75,8 +79,9 @@ export function GuideProviderStepB({ operation, locale, onOperation, onAccessReq
       if (requestRef.current !== controller || controller.signal.aborted || nativeOfferContextKey(currentContext.current) !== startedContext) throw new Error("provider_request_closed")
       if (!result.operation || !providerStepPolicy(result.operation) || providerStepPolicy(result.operation) !== providerStepPolicy(operation) || result.operation.execution !== "provider" || result.operation.identity?.mode === "mock" || result.operation.identity?.handoff?.kind === "mock" || result.operation.credential?.mode === "mock" || result.operation.operationId !== operation.operationId || result.operation.venueId !== operation.venueId || result.operation.campaignId !== operation.campaignId || result.operation.policyVersion !== operation.policyVersion || !Number.isSafeInteger(result.operation.revision) || result.operation.revision < operation.revision || !result.provider || !["issuance", "presentation", "allowed", "denied", "failed", "cancelled", "expired"].includes(result.provider.phase)) throw new Error("provider_mismatch")
       if (result.provider.offer && (typeof result.provider.offer.qrPayload !== "string" || !result.provider.offer.qrPayload.trim() || result.provider.offer.qrPayload.length > 8192 || result.provider.phase !== result.operation.phase || !["issuance", "presentation"].includes(result.provider.phase))) throw new Error("provider_offer_invalid")
+      if (result.provider.nativeBindingId !== undefined && !/^nhb_[A-Za-z0-9_-]{24}$/.test(result.provider.nativeBindingId)) throw new Error("provider_binding_invalid")
       if (requestRef.current === controller) {
-        offerRef.current = result.provider.offer ? createNativeOfferHandoff(nativeOfferContext(result.operation), result.provider.offer.qrPayload) : null
+        offerRef.current = result.provider.offer ? createNativeOfferHandoff(nativeOfferContext(result.operation), result.provider.offer.qrPayload, Date.now(), result.provider.nativeBindingId) : null
         setView(result.provider); onOperation(result.operation)
       }
     } catch { if (requestRef.current === controller) setError(true) }
@@ -91,21 +96,25 @@ export function GuideProviderStepB({ operation, locale, onOperation, onAccessReq
   const status = providerStepPolicy(operation) === "v1" && view && ["denied", "expired"].includes(view.phase)
     ? locale === "ko" ? "요청이 승인되지 않았거나 시간이 지났어요. 혜택은 실행하지 않았어요." : locale === "ja" ? "要求が承認されなかったか、期限が切れました。特典は実行していません。" : "The request was declined or expired. The perk was not executed."
     : view && ["denied", "failed", "expired", "cancelled"].includes(view.phase) ? t[view.phase as "denied" | "failed" | "expired" | "cancelled"] : t.waiting
-  const nativeOffer = nativeSupported && offerRef.current?.matches(context, Date.now())
-  const openNativeOffer = () => {
+  const nativeOffer = nativeSupported && (!bindingApp || !!view?.nativeBindingId) && offerRef.current?.matches(context, Date.now())
+  const openNativeOffer = async () => {
     if (busy || inFlight.current) return
-    const result = offerRef.current?.open(currentContext.current, nativeEnvironment())
+    const key = nativeOfferContextKey(currentContext.current)
+    setNativeSent(true)
+    const result = bindingApp ? await offerRef.current?.openApp(currentContext.current, nativeEnvironment(), { locale, theme: document.documentElement.dataset.theme === "light" ? "light" : "dark" }) : offerRef.current?.open(currentContext.current, nativeEnvironment())
+    if (nativeOfferContextKey(currentContext.current) !== key) return
     if (result === "sent" || result === "already_sent" || result === "failed") setNativeSent(true)
     if (result !== "sent" && result !== "already_sent") setNativeFailed(true)
   }
   return <section className={styles.card} data-testid="guide-provider-step" data-provider-phase={phase}>
+    {bindingApp && nativeSupported && phase === "issuance" ? <NativeHolderBindingB key={operation.operationId} operation={operation} locale={locale} /> : null}
     <h3>{t[phase]}</h3>
     {view ? <><p role="status">{status}</p>{qr ? <><img className={styles.qr} alt={t.qr} src={qr} /><p>{nativeSupported ? NATIVE_COPY[locale].instruction : t.instruction}</p></> : qrFailed ? <p role="alert" className={styles.notice}>{qrError}</p> : <p>{t.noOffer}</p>}</> : <p>{nativeSupported ? NATIVE_COPY[locale].instruction : t.sameDevice}</p>}
     {error || !validOperation ? <p role="alert" className={styles.notice}>{t.unavailable}</p> : null}
     {nativeSent && !nativeFailed ? <p role="status" data-testid="guide-provider-native-pending">{NATIVE_COPY[locale].returned}</p> : null}
     {nativeFailed ? <p role="alert">{NATIVE_COPY[locale].failed}</p> : null}
     <div className={styles.actions}>
-      {nativeOffer ? <button type="button" className={styles.primary} disabled={busy || nativeSent} onClick={openNativeOffer} data-testid="guide-provider-native-open">{NATIVE_COPY[locale].open}</button> : null}
+      {nativeOffer ? <button type="button" className={styles.primary} disabled={busy || nativeSent} onClick={() => void openNativeOffer()} data-testid="guide-provider-native-open">{NATIVE_COPY[locale].open}</button> : null}
       {!view && !error && validOperation ? <button type="button" className={styles.primary} disabled={busy} onClick={() => void request(`${phase}/start`)} data-testid="guide-provider-start">{t.start}</button> : null}
       <button type="button" className={view ? styles.primary : styles.secondary} disabled={busy || !validOperation} onClick={() => void request(`${phase}/refresh`)} data-testid="guide-provider-refresh">{t.refresh}</button>
       <button type="button" className={styles.ghost} disabled={busy || !validOperation} onClick={() => void request("cancel")} data-testid="guide-provider-cancel">{t.cancel}</button>

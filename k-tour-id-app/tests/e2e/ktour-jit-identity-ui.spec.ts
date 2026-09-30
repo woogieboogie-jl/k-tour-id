@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
-import { JIT_IDENTITY_CONSENT, JIT_IDENTITY_VERSION, type JitIdentityContext } from "../../lib/hackathon/jit-identity-contract"
+import { CX_AGE19_POLICY, JIT_IDENTITY_CONSENT, JIT_IDENTITY_VERSION, type JitIdentityContext } from "../../lib/hackathon/jit-identity-contract"
 import { HarveyFixture } from "./helpers/harvey-fixture"
 import type { OperationResult } from "../../lib/hackathon/types"
 
@@ -7,7 +7,7 @@ import type { OperationResult } from "../../lib/hackathon/types"
 const VENUE = "mois-0021cd596bc5b2a922ad"
 const REQUEST = "idn_abcdefghijklmnop", AUTH = "ida_abcdefghijklmnop"
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-type Mode = "normal" | "fresh" | "denied" | "expired" | "wrong-context" | "access" | "lost-consume" | "late-complete"
+type Mode = "normal" | "fresh" | "age19" | "denied" | "expired" | "wrong-context" | "access" | "lost-consume" | "late-complete"
 async function fixture(page: Page, mode: Mode = "normal", fallThroughFixture = false) {
   await page.addInitScript(() => {
     localStorage.setItem("ondo-b.device.v1", JSON.stringify({ locale: "ja", onboarding: "ONB-COMPLETE", persona: null, discoveryPreferences: [], savedVenueIds: [], privateNotesByVenue: {}, recentVenueIds: [], plannedTableRefs: [], localSignalPostedVenueIds: [], localPulseEvidenceByVenue: {}, localInteractionBoundarySeen: true, commerceLocalBoundarySeen: true, commerceReceipts: [] }))
@@ -16,7 +16,7 @@ async function fixture(page: Page, mode: Mode = "normal", fallThroughFixture = f
   let context: JitIdentityContext | null = null, status = "awaiting_identity", access = mode !== "access", consumed = false, completed = false
   const future = () => new Date(Date.now() + 120_000).toISOString()
   function result() { return { version: JIT_IDENTITY_VERSION, requestId: REQUEST, status, context: mode === "wrong-context" ? { ...context, contextDigest: `0x${"b".repeat(64)}` } : context, expiresAt: status === "expired" ? "2020-01-01T00:00:00.000Z" : future(), handoff: status === "handoff" ? { kind: "qr", qrBase64: PNG, cxId: "cx_fixture", expiresAt: future() } : null, authorizationRef: status === "authorized" ? AUTH : null, authorizationExpiresAt: status === "authorized" ? future() : null, reason: status === "denied" ? "identity_denied" : null } }
-  function receipt() { return { version: JIT_IDENTITY_VERSION, receiptId: "idr_abcdefghijklmnop", context, authorizedAt: new Date().toISOString(), expiresAt: future(), evidenceExpiresAt: future(), provider: "omnione_cx", personVerified: true, adultVerified: false, paymentKycVerified: false } }
+  function receipt() { return { version: JIT_IDENTITY_VERSION, receiptId: "idr_abcdefghijklmnop", context, authorizedAt: new Date().toISOString(), expiresAt: future(), evidenceExpiresAt: future(), provider: "omnione_cx", personVerified: true, adultVerified: false, ...(mode === "age19" ? { age19Verified: true, age19Policy: CX_AGE19_POLICY } : {}), paymentKycVerified: false } }
   await page.route("**/api/hackathon/v1/**", async route => {
     const request = route.request(), path = new URL(request.url()).pathname.split("/v1/")[1]
     const body = request.method() === "POST" ? request.postDataJSON() as Record<string, unknown> : {}
@@ -145,17 +145,34 @@ test("JIT-07 Local moment returns exact private draft, consumes only on Save and
   await page.screenshot({ path: info.outputPath("local-moment-confirmed.png") })
 })
 
-test("JIT-08 19+ Table fails closed before any CX request; night-map declaration is not identity", async ({ page }) => {
-  const api = await fixture(page, "fresh")
+test("JIT-08 19+ Table requests exact age purpose and missing age result stays closed", async ({ page }) => {
+  const api = await fixture(page, "denied")
   await page.goto("/?review=0", { waitUntil: "domcontentloaded" })
   await page.getByTestId("nav-tables").click()
   await page.getByTestId("table-open-table-seoul-night-bites").click()
   await page.getByTestId("table-join").click()
   const account = page.getByTestId("action-gate-confirm")
   if (await account.isVisible().catch(() => false)) await account.click()
-  await expect(page.getByTestId("jit-age-unsupported")).toBeVisible()
+  await expect(page.getByTestId("jit-identity-check")).toBeVisible()
   expect(api.writes.filter(write => write.path.startsWith("identity/"))).toHaveLength(0)
-  await expect(page.getByTestId("jit-identity-create")).toHaveCount(0)
+  await create(page); await page.getByTestId("jit-identity-qr").click(); await page.getByTestId("jit-identity-refresh").click()
+  expect(api.getContext()).toMatchObject({ action: "table_request", purpose: "age19", tableId: "table-seoul-night-bites" })
+  await expect(page.getByTestId("jit-identity-return")).toHaveCount(0)
+  expect(api.writes.some(write => write.path.includes("consume"))).toBe(false)
+})
+test("JIT-12 19+ Table uses exact age receipt at final local request boundary", async ({ page }) => {
+  const api = await fixture(page, "age19")
+  await page.goto("/?review=0", { waitUntil: "domcontentloaded" })
+  await page.getByTestId("nav-tables").click(); await page.getByTestId("table-open-table-seoul-night-bites").click(); await page.getByTestId("table-join").click()
+  const account = page.getByTestId("action-gate-confirm")
+  if (await account.isVisible().catch(() => false)) await account.click()
+  await authorize(page); await page.getByTestId("jit-identity-return").click()
+  await expect(page.getByTestId("jit-identity-check")).toBeHidden()
+  expect(api.writes.some(write => write.path.includes("consume"))).toBe(false)
+  await page.getByTestId("table-join-confirm").click()
+  await expect.poll(() => api.writes.filter(write => write.path.includes("consume")).length).toBe(1)
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("ondo-b.device.v1") ?? "{}").plannedTableRefs?.some((entry: { tableId: string }) => entry.tableId === "table-seoul-night-bites"))).toBe(true)
+  await noAuthorityStorage(page)
 })
 
 for (const mode of ["fresh", "normal"] as const) test(`JIT-09 Roba ${mode} identity preserves perk consent and never auto-executes`, async ({ page, baseURL }) => {

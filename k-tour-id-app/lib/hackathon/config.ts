@@ -3,7 +3,7 @@
 // Server-only: never import from client components.
 import { HkError } from "./util"
 import { isCxPreview, isReadinessPreview } from "./preview-readiness"
-import { isHostedSuiProfile, hostedSuiPreflightIssues, hostedAiEnabled, hostedZkLoginEnabled, hostedOmnioneEnabled } from "./hosted-sui-profile"
+import { isHostedSuiProfile, hostedSuiPreflightIssues, hostedAiEnabled, hostedZkLoginEnabled, hostedOmnioneEnabled, hostedNativeEnabled } from "./hosted-sui-profile"
 import { requiresIntegrationSuiLimits, assertIntegrationSuiLimits } from "./integration-sui-limits"
 import { selectZkLoginProvider } from "./zklogin-provider-selection"
 import { isGuideProductionProfile } from "./guide-production-profile"
@@ -12,6 +12,7 @@ import { requiresIntegrationPreviewAccess } from "./integration-preview-access"
 import { assertIntegrationSuiAuthorized } from "./store"
 import { configuredOmnioneTarget } from "./omnione-targets"
 import { approvedOmnioneRpc } from "./omnione-readonly"
+import { localNativeRequested, assertLocalNativeProfile, localNativeEnabled } from "./local-native-policy"
 
 export type CxMode = "mock" | "cx"
 export type OpenDidMode = "mock" | "opendid"
@@ -40,6 +41,7 @@ function env(name: string, fallback = ""): string {
 }
 
 export function hkConfig() {
+  if (localNativeRequested()) assertLocalNativeProfile()
   const cxPreview = isCxPreview()
   const isolatedMock = isReadinessPreview() || (!cxPreview && env("HK_ISOLATED_MOCK") === "1")
   const cxMode = (!isolatedMock && (cxPreview || env("HK_MODE_CX", "mock") === "cx") ? "cx" : "mock") as CxMode
@@ -87,7 +89,7 @@ export function hkConfig() {
     ai: {
       mode: aiMode,
       promptVersion: env("HK_AI_PROMPT_VERSION", "perk-proposal-v1"),
-      model: env("GEMINI_MODEL", "gemini-2.5-flash"),
+      model: env("GEMINI_MODEL", "gemini-3.8-flash"),
     },
     sui: {
       network: env("HK_SUI_NETWORK", "testnet"),
@@ -126,10 +128,15 @@ export function omnioneConfigurationReady(c: HkConfig): boolean {
 
 /** Isolation is an execution boundary, not a simulated chain confirmation. */
 export function assertExternalServicesEnabled(service: string) {
+  if (localNativeRequested()) {
+    assertLocalNativeProfile()
+    if (service !== "OpenDID") throw new HkError("native_binding_unavailable", "Only CX and OpenDID are enabled in the isolated local lane", 503)
+  }
   if (requiresIntegrationSuiLimits() && ["Sui signing", "Sui delegation", "Sui agent execution"].includes(service)) { assertIntegrationSuiAuthorized(); assertIntegrationSuiLimits() }
   const hostedServices = ["Sui", "Sui signing", "Sui delegation", "Sui agent execution", "Sui grant lookup",
     ...(hostedAiEnabled() ? ["Gemini proposal"] : []), ...(hostedZkLoginEnabled() ? ["zkLogin provider authentication"] : []),
-    ...(hostedOmnioneEnabled() ? ["OmniOne Chain", "OmniOne Chain signing", "OmniOne Chain submission", "OmniOne Chain evidence"] : [])]
+    ...(hostedOmnioneEnabled() ? ["OmniOne Chain", "OmniOne Chain signing", "OmniOne Chain submission", "OmniOne Chain evidence"] : []),
+    ...(hostedNativeEnabled() ? ["OpenDID"] : [])]
   if (isHostedSuiProfile() && (hostedSuiPreflightIssues().length || !hostedServices.includes(service))) {
     throw new HkError("hosted_sui_scope", "Only the approved Testnet journey is available.", 503)
   }
@@ -148,12 +155,13 @@ export function hkPublicConfig() {
     previewReadOnly: isReadinessPreview(),
     hostedSui: isHostedSuiProfile(),
     cxPreview: c.cxPreview,
-    deployment: isReadinessPreview() || c.cxPreview ? {
-      profile: c.cxPreview ? "cx-only-preview" : "readiness-preview",
+    deployment: isHostedSuiProfile() || isReadinessPreview() || c.cxPreview ? {
+      profile: isHostedSuiProfile() ? "hosted-connected" : c.cxPreview ? "cx-only-preview" : "readiness-preview",
       revision: env("VERCEL_GIT_COMMIT_SHA", "local"),
       region: env("VERCEL_REGION", "local"),
     } : undefined,
     isolatedMock: c.isolatedMock,
+    ai: { model: !c.cxPreview && c.ai.mode === "gemini" && /^gemini-[a-z0-9.-]{1,64}$/.test(c.ai.model) ? c.ai.model : null },
     campaign: guide ? { ...c.campaign, ...GUIDE_SAVE_V2, purpose: GUIDE_SAVE_V2.action } : c.campaign,
     modes: {
       cx: c.cx.mode,
@@ -163,7 +171,10 @@ export function hkPublicConfig() {
       omnione: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : omnioneConfigurationReady(c) ? "stage" : "unconfigured",
       zklogin: c.cxPreview ? "disabled-cx-preview" : c.isolatedMock ? "disabled-isolated" : (!isHostedSuiProfile() || (hostedZkLoginEnabled() && !hostedSuiPreflightIssues().length)) && c.sui.googleClientId && c.sui.zkSaltSeed && selectZkLoginProvider(process.env) ? "google" : "demo-signer",
     },
-    capabilities: { opendidProviderReady: false, chainExecutionEnabled: !c.isolatedMock && !c.cxPreview && !requiresIntegrationSuiLimits(), redemptionEnabled: !isHostedSuiProfile() && !requiresIntegrationSuiLimits(), hostedTestRedemptionEnabled: isHostedSuiProfile() && hostedOmnioneEnabled() && !hostedSuiPreflightIssues().length },
+    capabilities: { opendidProviderReady: false,
+      // Enables only the native connection UI; never proof of VC/VP success.
+      nativeBindingConfigured: localNativeEnabled() || isHostedSuiProfile() && hostedNativeEnabled() && c.opendid.mode === "opendid" && !hostedSuiPreflightIssues().length,
+      chainExecutionEnabled: !localNativeRequested() && !c.isolatedMock && !c.cxPreview && !requiresIntegrationSuiLimits(), redemptionEnabled: !localNativeRequested() && !isHostedSuiProfile() && !requiresIntegrationSuiLimits(), hostedTestRedemptionEnabled: isHostedSuiProfile() && hostedOmnioneEnabled() && !hostedSuiPreflightIssues().length },
     sui: { network: c.sui.network, packageId: c.isolatedMock || c.cxPreview ? "" : c.sui.packageId, campaignId: c.isolatedMock || c.cxPreview ? "" : c.sui.campaignId, explorer: c.isolatedMock || c.cxPreview ? "" : c.sui.explorer, googleClientId: c.sui.googleClientId },
     omnione: { chainId: c.omnione.chainId, targetId: omnioneConfigurationReady(c) ? c.omnione.targetId : "", registryAddress: omnioneConfigurationReady(c) ? c.omnione.registryAddress : "" },
     ttl: HK_TTL,

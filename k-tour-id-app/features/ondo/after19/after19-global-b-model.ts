@@ -1,4 +1,5 @@
 import type { FixtureId, LocalActualExecution, ReviewFixtureExecution } from "../contracts/execution-mode"
+import { CX_AGE19_POLICY, type JitIdentityReceipt } from "@/lib/hackathon/jit-identity-contract"
 
 export const GLOBAL_AFTER19_PREFERENCE_KEY = "ondo-b.after19.preferences.v1"
 export const GLOBAL_AFTER19_SESSION_KEY = "ondo-b.after19.session.v1"
@@ -44,7 +45,24 @@ export type GlobalAfter19LocalPredicateReceiptB = {
   disclosure: "night_view_only"
 }
 
-export type GlobalAfter19PredicateReceiptB = GlobalAfter19ReviewPredicateReceiptB | GlobalAfter19LocalPredicateReceiptB
+type GlobalAfter19CxReceiptB = {
+  schema: "cx-age-predicate.v1"; predicate: "AGE_GTE_19"; outcome: "eligible"
+  issuerType: "OMNIONE_CX"; provenanceTruth: "SERVER_VERIFIED"; issuedAt: string; expiresAt: string
+  disclosure: "predicate_only"; requestId: string; receipt: JitIdentityReceipt
+}
+export type GlobalAfter19PredicateReceiptB = GlobalAfter19ReviewPredicateReceiptB | GlobalAfter19LocalPredicateReceiptB | GlobalAfter19CxReceiptB
+// Authority is never reconstructed from browser storage/JSON. Only the
+// current document's successfully consumed server receipt can create this.
+const cxReceipts = new WeakSet<object>()
+export function completeGlobalAfter19CxCheckB(receipt: JitIdentityReceipt, requestId: string, now = new Date()): GlobalAfter19SessionB | null {
+  if (receipt.context.action !== "after19_access" || receipt.context.purpose !== "age19" || receipt.context.venueId !== null || receipt.context.tableId !== null ||
+    receipt.age19Verified !== true || receipt.age19Policy !== CX_AGE19_POLICY || receipt.provider !== "omnione_cx" ||
+    !/^idn_[A-Za-z0-9_-]{16,32}$/.test(requestId) || Date.parse(receipt.expiresAt) <= now.getTime() || Date.parse(receipt.evidenceExpiresAt) <= now.getTime()) return null
+  const predicate: GlobalAfter19CxReceiptB = { schema: "cx-age-predicate.v1", predicate: "AGE_GTE_19", outcome: "eligible", issuerType: "OMNIONE_CX", provenanceTruth: "SERVER_VERIFIED",
+    issuedAt: receipt.authorizedAt, expiresAt: new Date(Math.min(Date.parse(receipt.expiresAt), Date.parse(receipt.evidenceExpiresAt))).toISOString(), disclosure: "predicate_only", requestId, receipt }
+  cxReceipts.add(predicate)
+  return { version: 1, age: "eligible", ageExpiresAt: predicate.expiresAt, eligibilityReceipt: predicate, mode: "on", activation: "manual", expiryNotice: false }
+}
 
 export type GlobalAfter19SessionB = {
   version: 1
@@ -120,6 +138,10 @@ function validExpiry(value: unknown): string | null {
 }
 
 function predicateReceipt(value: unknown, expiry: string, allowReviewFixture: boolean): GlobalAfter19PredicateReceiptB | null {
+  if (value && typeof value === "object" && cxReceipts.has(value)) {
+    const receipt = value as GlobalAfter19CxReceiptB
+    return receipt.expiresAt === expiry && Date.parse(receipt.issuedAt) < Date.parse(expiry) ? receipt : null
+  }
   const current = record(value)
   const issuedAt = validExpiry(current.issuedAt)
   const receiptExpiry = validExpiry(current.expiresAt)
@@ -314,7 +336,7 @@ function isGlobalAfter19ReceiptCurrent(session: GlobalAfter19SessionB, now = new
     || receipt?.predicate !== "AGE_GTE_19"
     || receipt.outcome !== "eligible"
     || Date.parse(receipt.expiresAt) !== Date.parse(session.ageExpiresAt)
-    || Date.parse(receipt.expiresAt) - Date.parse(receipt.issuedAt) !== GLOBAL_AFTER19_AGE_TTL_MS
+    || (receipt.issuerType === "OMNIONE_CX" ? !cxReceipts.has(receipt) : Date.parse(receipt.expiresAt) - Date.parse(receipt.issuedAt) !== GLOBAL_AFTER19_AGE_TTL_MS)
     || Date.parse(session.ageExpiresAt) <= now.getTime()) return false
   return true
 }
@@ -336,6 +358,7 @@ export function isGlobalAfter19AgeCurrent(session: GlobalAfter19SessionB, now = 
 export function isGlobalAfter19NightViewCurrent(session: GlobalAfter19SessionB, now = new Date()): boolean {
   if (!isGlobalAfter19ReceiptCurrent(session, now)) return false
   const receipt = session.eligibilityReceipt
+  if (receipt?.issuerType === "OMNIONE_CX") return cxReceipts.has(receipt)
   if (receipt?.issuerType === "LOCAL_DECLARATION") {
     return receipt.provenanceTruth === "SELF_DECLARED" && receipt.disclosure === "night_view_only"
   }

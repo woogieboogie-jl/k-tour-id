@@ -44,6 +44,30 @@ function omni() {
     HK_OMNIONE_PRIVATE_KEY: "8".repeat(64), HK_OMNIONE_RPC_URL: "https://stage-chainapi.omnione.net/?token=fixture-token" }
 }
 
+test("native OpenDID admission is separately opted in with fixed HTTPS origin and retained execution limits", () => {
+  const env: HostedSuiEnv = { ...connected(), HK_HOSTED_OPENDID_ENABLED: "1", HK_MODE_OPENDID: "opendid",
+    NEXT_PUBLIC_HK_PUBLIC_CX: "public-identity-20260930-v1", HK_PUBLIC_CX: "public-identity-20260930-v1",
+    HK_OPENDID_HOLDER_BINDING_ENABLED: "1", HK_OPENDID_TRUSTED_ORIGIN: "https://native.example.org",
+    HK_OPENDID_BRIDGE_URL: "https://native.example.org", HK_OPENDID_CAS_URL: "https://native.example.org", HK_OPENDID_TA_URL: "https://native.example.org", HK_OPENDID_DID_API_URL: "https://native.example.org",
+    HK_OPENDID_BRIDGE_TOKEN: "1".repeat(64), HK_OPENDID_OWNER_BINDING_SECRET: "2".repeat(64), HK_OPENDID_ADMIN_TOKEN: "3".repeat(64),
+    HK_OPENDID_ISSUER_DID: "did:omn:issuerfixture", HK_OPENDID_SCHEMA_ID: "https://native.example.org/issuer/schema/ktour.pass.v1" }
+  assert.deepEqual(subject.hostedSuiPreflightIssues(env, NOW), [])
+  for (const action of ["issuance/start", "issuance/refresh", "presentation/start", "presentation/refresh", "cancel"]) {
+    assert.equal(subject.hostedSuiRouteAllowed("POST", path("provider/" + action), env), true)
+    assert.equal(subject.hostedSuiRouteAllowed("POST", path("provider/" + action), connected()), false)
+    subject.assertHostedSuiBody(path("provider/" + action), {}, env)
+    assert.throws(() => subject.assertHostedSuiBody(path("provider/" + action), { verified: true }, env), mismatch)
+  }
+  assert.equal(subject.hostedSuiRouteAllowed("POST", path("provider/issuance/start/extra"), env), false)
+  for (const patch of [{ HK_MODE_OPENDID: "mock" }, { HK_PUBLIC_CX: "" }, { HK_HOSTED_OPENDID_ENABLED: "0" },
+    { HK_OPENDID_BRIDGE_ALLOW_LOOPBACK: "1" }, { HK_OPENDID_CAS_URL: "https://other.example.org" }, { HK_OPENDID_SCHEMA_ID: "https://foreign.example.org/schema" },
+    { HK_OPENDID_TRUSTED_ORIGIN: "http://127.0.0.1:3182" }, { HK_OPENDID_ANY_OVERRIDE: "enabled" }, { HK_OPENDID_ADMIN_TOKEN: "short" },
+    { HK_STORE_KEY: "new-budget" }, { HK_HOSTED_SUI_MAX_OPERATIONS: "11" }]) {
+    assert.ok(subject.hostedSuiPreflightIssues({ ...env, ...patch }, NOW).length > 0)
+  }
+  assert.ok(subject.hostedSuiPreflightIssues(env, subject.PIN.maxEnd).includes("expiry"))
+})
+
 test("connected capabilities require the exact dual marker and explicit independent flags", () => {
   assert.deepEqual(subject.hostedSuiPreflightIssues(connected(), NOW), [])
   for (const flags of [{ NEXT_PUBLIC_HK_HOSTED_PROVIDERS: undefined }, { HK_HOSTED_PROVIDERS: "other" }, { HK_HOSTED_AI_ENABLED: "true" }, { HK_HOSTED_ZKLOGIN_ENABLED: "unknown" }]) {
@@ -129,6 +153,8 @@ test("actual connected config authorizes exact provider adapter strings, not nat
     for (const name of ["Sui", "Sui signing", "Sui delegation", "Sui agent execution", "Sui grant lookup", "Gemini proposal", "zkLogin provider authentication", "OmniOne Chain", "OmniOne Chain signing", "OmniOne Chain submission", "OmniOne Chain evidence"]) assert.doesNotThrow(() => assertExternalServicesEnabled(name), name)
     for (const name of ["OpenDID", "OmniOne signing", "Gemini chat", "other"]) assert.throws(() => assertExternalServicesEnabled(name), (e: unknown) => e instanceof HkError && e.code === "hosted_sui_scope")
     assert.equal(hkPublicConfig().modes.zklogin, "google")
+    assert.equal(hkPublicConfig().ai.model, subject.CONNECTED_PIN.model)
+    assert.equal(hkPublicConfig().deployment?.profile, "hosted-connected")
     assert.equal(hkPublicConfig().capabilities.hostedTestRedemptionEnabled, true)
     assert.equal(hkPublicConfig().capabilities.opendidProviderReady, false)
     assert.equal(hkPublicConfig().modes.opendid, "mock")

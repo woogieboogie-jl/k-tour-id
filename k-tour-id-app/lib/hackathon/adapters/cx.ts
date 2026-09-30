@@ -16,6 +16,7 @@ import { hkConfig, HK_TTL } from "../config"
 import { hmacHex, nowIso, plusMs, randomId, HkError } from "../util"
 import type { IdentityEvidence, IdentityHandoff } from "../types"
 import { currentCxPolicyDigest } from "../identity-policy"
+import { cxAge19FromClaims, CX_AGE19_POLICY } from "../cx-age-policy"
 
 export type CxStart = { handoff: IdentityHandoff; token?: string; txId?: string; cxId?: string }
 
@@ -125,16 +126,19 @@ async function cxPost(path: string, body: Record<string, unknown>) {
   return json
 }
 
-export async function cxStart(opts: { operationId: string; mobile: boolean }): Promise<CxStart> {
+export async function cxStart(opts: { operationId: string; mobile: boolean; purpose?: "person" | "adult" | "age19" }): Promise<CxStart> {
   const c = hkConfig().cx
   const expiresAt = plusMs(HK_TTL.identityHandoffMs)
   if (c.mode === "mock") {
     return { handoff: { kind: "mock", label: "Mobile ID sample", expiresAt } }
   }
-  const trans = await cxPost("/oacx/api/v1.0/trans", { serviceType: "MID", provider: `${c.provider}_v1.5`, contentInfo: { signType: "ENT_MID" }, extraParams: { zkpType: c.zkpType }, compareCI: false, reference: opts.operationId })
+  // Age19 uses the documented ordinary submission's birth claim; AdultVerify
+  // does not specify an exact threshold and may intentionally omit birth.
+  const extras = opts.purpose === "age19" ? {} : { extraParams: { zkpType: c.zkpType } }
+  const trans = await cxPost("/oacx/api/v1.0/trans", { serviceType: "MID", provider: `${c.provider}_v1.5`, contentInfo: { signType: "ENT_MID" }, ...extras, compareCI: false, reference: opts.operationId })
   const token = handle(trans.token, "token"), txId = handle(trans.txId, "transaction reference", 512)
   if (opts.mobile) {
-    const app = await cxPost("/oacx/api/v1.0/authen/app/request", { token, txId, provider: `${c.provider}_v1.5`, contentInfo: { signType: "ENT_MID" }, extraParams: { zkpType: c.zkpType }, mode: "direct" })
+    const app = await cxPost("/oacx/api/v1.0/authen/app/request", { token, txId, provider: `${c.provider}_v1.5`, contentInfo: { signType: "ENT_MID" }, ...extras, mode: "direct" })
     const d = dataOf(app)
     transactionEcho(app, txId)
     const cxId = handle(app.cxId, "correlation reference", 512)
@@ -142,7 +146,7 @@ export async function cxStart(opts: { operationId: string; mobile: boolean }): P
     if (!androidLink && !iosLink && !ssPayLink) throw new HkError("cx_handoff", "CX returned no app handoff", 502)
     return { token: handle(app.token ?? token, "token"), txId, cxId, handoff: { kind: "app", androidLink, iosLink, ssPayLink, cxId, expiresAt } }
   }
-  const qr = await cxPost("/oacx/api/v1.0/authen/qr/request", { token, txId, provider: `${c.provider}_v1.5`, contentInfo: { signType: "ENT_MID" }, extraParams: { zkpType: c.zkpType } })
+  const qr = await cxPost("/oacx/api/v1.0/authen/qr/request", { token, txId, provider: `${c.provider}_v1.5`, contentInfo: { signType: "ENT_MID" }, ...extras })
   const qd = dataOf(qr)
   transactionEcho(qr, txId)
   const qrCxId = handle(qr.cxId, "correlation reference", 512)
@@ -152,6 +156,7 @@ export async function cxStart(opts: { operationId: string; mobile: boolean }): P
 /** Server-side result verification. `sample` is only honoured in mock mode. */
 export async function cxComplete(opts: {
   operationId: string; token?: string; txId?: string; cxId?: string; mobile: boolean
+  purpose?: "person" | "adult" | "age19"
   sample?: { outcome: "verified" | "cancelled" | "failed" | "expired"; subjectSeed: string }
 }): Promise<CxResult | { pending: true; token?: string } | { failed: "cancelled" | "failed" | "expired" }> {
   const c = hkConfig().cx
@@ -200,7 +205,7 @@ export async function cxComplete(opts: {
   if (completionToken === opts.token) throw new HkError("cx_response", "CX did not return a completion token", 502)
   const parsed = await cxPost("/oacx/api/v1.0/trans/token", { token: completionToken })
   // Claims are nested under `data` and include full PII (name/birth/ihidnum/address).
-  // Only stable CI, binding metadata and an optional adult flag are used;
+  // Only stable CI, binding metadata and derived predicates are used;
   // raw claims are never returned or stored.
   const claims = dataOf(parsed)
   // The manual's token-parsing example contains jti/sub/CI but no txId/cxId.
@@ -218,9 +223,11 @@ export async function cxComplete(opts: {
   // data.zkp describes ZKP processing, not the affirmative AdultVerify claim.
   // Without an explicit adult claim we must not invent an age assertion.
   const adult = claims.adult ?? claims.adultYn ?? claims.isAdult
+  const age19Verified = opts.purpose === "age19" ? cxAge19FromClaims(claims) : null
   return { evidence: {
     evidenceId: randomId("evd"), subjectRef, source: "cx_mobile_id", mode: "cx", provider: c.provider,
     personVerified: true, adultVerified: adult === undefined ? null : Boolean(adult === true || adult === "Y" || adult === "true"),
+    age19Verified, ...(age19Verified === null ? {} : { age19Policy: CX_AGE19_POLICY }),
     verifiedAt: nowIso(), expiresAt: plusMs(HK_TTL.evidenceMs), providerTransactionRef: verifiedTxId,
     providerPolicyDigest: currentCxPolicyDigest(),
   } }

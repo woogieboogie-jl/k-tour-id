@@ -7,6 +7,9 @@ import type { OperationResult } from "../../lib/hackathon/types"
 const V = GUIDE_SAVE_V2
 const OP = "op_browser_guide_fixture_20260929"
 const now = new Date().toISOString()
+// Close while our deny-by-default routes still own the context; pending local
+// GET proxy work must not become an unhandled teardown error or escape routing.
+test.afterEach(async ({ context }) => { await context.close() })
 function operation(patch: Partial<OperationResult> = {}): OperationResult {
   return { journey: guideJourney(), operationId: OP, kind: "demo_entitlement", venueId: V.venueId, campaignId: V.campaignId, policyVersion: 1,
     status: "pending", phase: "identity", revision: 1, createdAt: now, updatedAt: now, expiresAt: "2026-09-30T14:59:59.000Z", execution: "provider", safeNextAction: "wait", allowedActions: ["open_handoff", "cancel"], returnContext: { venueId: V.venueId, focus: "offer" },
@@ -25,6 +28,12 @@ class GuideFixture {
   wrongProviderMode = false
   nativeV1 = false
   nativeMock = false
+  hostedSui = false
+  nativeBindingConfigured = false
+  nativeBound = false
+  localFresh = false
+  bindingVerified = false
+  bindingId = "nhb_" + "a".repeat(24)
   accessProfile: "guide-production" | "integration-preview" | "unavailable" | undefined = "guide-production"
   configProfile: string | undefined = "guide-production"
   configGuide = true
@@ -50,7 +59,10 @@ class GuideFixture {
       if (url.origin !== this.origin) { await route.abort("blockedbyclient"); return }
       if (!url.pathname.startsWith("/api/hackathon/v1/")) {
         if (req.method() === "GET") {
-          if (this.assetOrigin !== this.origin) await route.fulfill({ response: await route.fetch({ url: this.assetOrigin + url.pathname + url.search, maxRedirects: 0 }) })
+          if (this.assetOrigin !== this.origin) {
+            try { await route.fulfill({ response: await route.fetch({ url: this.assetOrigin + url.pathname + url.search, maxRedirects: 0 }) }) }
+            catch (error) { if (!this.page.isClosed()) throw error }
+          }
           else await route.continue()
         } else { this.unexpected.push(url.pathname); await route.abort() }
         return
@@ -67,7 +79,7 @@ class GuideFixture {
       if (path === "/guide/collection") { await send(this.collection); return }
       if (path === "/config") {
         if (this.codeRequired && !this.authorized) { await send({ error: { code: "guide_production_access_denied" } }, 401); return }
-        await send({ isolatedMock: false, guideProfile: this.configProfile, ...(this.configGuide ? { guide: { ...V } } : {}), campaign: { ...V, purpose: V.action, ...(this.configProfile === "integration-preview" ? { campaignId: "legacy-v1-preview-campaign" } : {}), title: { ko: "가이드 담기", en: "Save guide", ja: "ガイドを保存" }, description: { ko: "", en: "", ja: "" } }, consentVersion: V.consentVersion,
+        await send({ isolatedMock: false, ...(this.hostedSui ? { hostedSui: true, capabilities: { nativeBindingConfigured: this.nativeBindingConfigured, opendidProviderReady: false } } : {}), guideProfile: this.configProfile, ...(this.configGuide ? { guide: { ...V } } : {}), campaign: { ...V, purpose: V.action, ...(this.configProfile === "integration-preview" ? { campaignId: "legacy-v1-preview-campaign" } : {}), title: { ko: "가이드 담기", en: "Save guide", ja: "ガイドを保存" }, description: { ko: "", en: "", ja: "" } }, consentVersion: V.consentVersion,
           modes: { cx: "cx", opendid: this.nativeMock ? "mock" : "opendid", ai: "gemini", sui: "testnet", omnione: "stage", zklogin: "google" }, sui: { network: "testnet", packageId: "", campaignId: "", explorer: "", googleClientId: "fixture-client" }, omnione: { chainId: 0, registryAddress: "" } }); return
       }
       if (path === "/guide/access" || path === "/integration/access") {
@@ -80,8 +92,16 @@ class GuideFixture {
       if (path === `/places/${V.venueId}/demo-entitlements`) { await send({ supported: true, campaign: { ...V, title: { ko: "체험", en: "Perk", ja: "特典" } }, operation: this.nativeV1 ? this.op : null, redeemed: null }); return }
       if (path === "/identity/eligibility") { await send({ error: { code: "fixture_unavailable" } }, 503); return }
       if (path === "/guide/operations" && req.method() === "POST") { this.op = operation(); await send(this.op); return }
+      if (path === "/operations" && req.method() === "POST" && this.localFresh) { this.op = operation({ journey: undefined, campaignId: "ktour-local-native-3183-v1", phase: "identity", identity: null }); await send(this.op); return }
       if (path === `/operations/${OP}`) { if (this.operationResponseDelay) await new Promise(resolve => setTimeout(resolve, this.operationResponseDelay)); await send(this.missingResume ? { error: { code: "not_found" } } : this.op, this.missingResume ? 404 : 200); return }
       if (path === `/operations/${OP}/reconcile`) { await send(this.op); return }
+      if (path.includes(`/operations/${OP}/native-binding/`)) {
+        const base = { version: "cx-holder-v1", bindingId: this.bindingId, status: this.bindingVerified ? "verified" : "challenge", expiresAt: new Date(Date.now() + 300000).toISOString() }
+        if (path.endsWith("/start")) await send({ ...base, operationId: OP, token: "b".repeat(43), authNonce: "c".repeat(64) })
+        else if (path.endsWith("/cancel")) await send({ ...base, status: "cancelled" })
+        else await send(base)
+        return
+      }
       if (path === `/operations/${OP}/redeem`) {
         this.op = operation({ phase: "done", status: "succeeded", allowedActions: ["return", "reconcile"], fulfillment: { status: "redeemed", redemptionRef: "fixture-guide-save", redeemedAt: now, reason: null, recheck: null }, chain: { outboxId: "fixture-outbox", eventKey: "fixture-event", payloadCommitment: "fixture", status: "pending", txHash: null, blockNumber: null, attempts: 0, lastError: null, confirmedAt: null } })
         this.collection = { pendingOperation: null, items: [{ guideId: V.guideId, venueId: V.venueId, campaignId: V.campaignId, operationId: OP, savedAt: now, chain: { status: "pending", txHash: null, confirmedAt: null } }] }
@@ -93,7 +113,7 @@ class GuideFixture {
         if (path.endsWith("/cancel")) { this.op = { ...this.op!, phase: "cancelled", status: "cancelled", allowedActions: ["return"] }; await send({ operation: this.op, provider: { phase: "cancelled", offer: null } }); return }
         if (path.endsWith("issuance/refresh")) { this.op = { ...this.op!, phase: "presentation", allowedActions: ["present", "cancel"] }; await send({ operation: this.op, provider: { phase: "presentation", offer: null } }); return }
         if (path.endsWith("presentation/refresh") && this.denial) { this.op = operation({ phase: "failed", status: "failed", allowedActions: ["return"] }); await send({ operation: this.op, provider: { phase: "denied", offer: null } }); return }
-        await send({ operation: this.wrongProviderMode ? { ...this.op, execution: "sample" } : this.op, provider: { phase: this.op?.phase, offer: { qrPayload: this.qrPayload } } }); return
+        await send({ operation: this.wrongProviderMode ? { ...this.op, execution: "sample" } : this.op, provider: { phase: this.op?.phase, offer: { qrPayload: this.qrPayload }, ...(this.nativeBound && this.bindingVerified ? { nativeBindingId: this.bindingId } : {}) } }); return
       }
       this.unexpected.push(path); await send({ error: { code: "unexpected_fixture_call" } }, 409)
     })
@@ -386,7 +406,7 @@ test("GUIDE-21 a provider body arriving after timeout cannot restore QR or advan
 // The real main-origin URL below is intercepted completely: assets come ONLY
 // from the credential-free local server and ALL APIs are synthetic fixtures.
 // No production request, native SDK, identity, model or chain call occurs.
-async function nativeFixture(page: Page, localOrigin: string, options: { mainOrigin?: boolean; platform?: string; frozen?: boolean; guide?: boolean; mock?: boolean; throwOnOpen?: boolean } = {}) {
+async function nativeFixture(page: Page, localOrigin: string, options: { mainOrigin?: boolean; platform?: string; frozen?: boolean; guide?: boolean; mock?: boolean; throwOnOpen?: boolean; boundApp?: boolean } = {}) {
   // Next dev waits for its HMR connection before hydrating. Proxy that one
   // development channel to localhost too; never connect to Production's socket.
   await page.context().routeWebSocket("**", socket => {
@@ -413,7 +433,7 @@ async function nativeFixture(page: Page, localOrigin: string, options: { mainOri
     upstream.addEventListener("close", () => { if (!closed) socket.close() })
     upstream.addEventListener("error", () => { if (!closed) socket.close() })
   })
-  await page.addInitScript(({ platform, frozen, throwOnOpen }) => {
+  await page.addInitScript(({ platform, frozen, throwOnOpen, boundApp }) => {
     const state = window as unknown as Record<string, unknown>
     state.__nativeFixtureCalls = 0
     const bridge = { available: true, platform, openOffer() {
@@ -421,17 +441,78 @@ async function nativeFixture(page: Page, localOrigin: string, options: { mainOri
       if (throwOnOpen) throw new Error("fixture unknown handoff outcome")
       return { authorized: true } // Deliberately untrusted; the product must ignore it.
     }, showWallet() { throw new Error("not part of the handoff contract") } }
-    state.ktourNative = frozen ? Object.freeze(bridge) : bridge
-  }, { platform: options.platform ?? "ios", frozen: options.frozen ?? true, throwOnOpen: options.throwOnOpen ?? false })
+    const app = { available: true, version: 1, platform: "ios", bindingVersion: "cx-holder-v1", wallet: async () => ({ v: 1, holder: "synthetic", state: "needs_setup", biometric: "none" }), setup: async () => ({}), unlock: async () => ({}), cancel: async () => ({ v: 1, cancelled: false, reason: "in_flight" }),
+      bind: async (a: { requestId: string }) => { state.__nativeBindCalls = Number(state.__nativeBindCalls ?? 0) + 1; return { v: 1, requestId: a.requestId, outcome: "submitted", retryable: false } },
+      issue: async (a: { requestId: string; bindingId: string }) => { state.__nativeFixtureCalls = Number(state.__nativeFixtureCalls) + 1; state.__nativeBoundId = a.bindingId; return { v: 1, requestId: a.requestId, outcome: "submitted", retryable: false } }, present: async () => ({}) }
+    state.ktourNative = frozen ? Object.freeze(boundApp ? app : bridge) : boundApp ? app : bridge
+  }, { platform: options.platform ?? "ios", frozen: options.frozen ?? true, throwOnOpen: options.throwOnOpen ?? false, boundApp: options.boundApp ?? false })
   const origin = options.mainOrigin === false ? localOrigin : "https://ktour-id.vercel.app"
   const f = new GuideFixture(page, origin, localOrigin)
   f.nativeV1 = !options.guide
   f.nativeMock = options.mock ?? false
+  f.hostedSui = !options.guide
+  f.nativeBindingConfigured = !options.mock
+  f.nativeBound = options.boundApp ?? false
   await f.install()
   await f.pending("issuance", { expiresAt: new Date(Date.now() + 300_000).toISOString() })
   return f
 }
 const nativeCalls = (page: Page) => page.evaluate(() => Number((window as unknown as Record<string, unknown>).__nativeFixtureCalls))
+
+test("NATIVE-LOCAL-01 purpose consent starts one local operation without JIT or automatic CX request", async ({ page, baseURL }) => {
+  test.skip(baseURL !== "http://127.0.0.1:3183", "Requires the explicitly marked isolated local bundle")
+  const f = new GuideFixture(page, baseURL!); f.nativeV1 = true; f.localFresh = true; await f.install(); await f.place()
+  await expect(page.getByTestId("hackathon-start")).toBeDisabled()
+  await page.locator("#hk-consent").check(); await page.getByTestId("hackathon-start").click()
+  await expect(page.getByTestId("hackathon-layer")).toHaveAttribute("data-phase", "identity")
+  await expect(page.getByTestId("hackathon-identity-start")).toBeVisible()
+  expect(f.calls.filter(c => c.path === "/operations" && c.method === "POST")).toHaveLength(1)
+  expect(f.calls.some(c => c.path.startsWith("/identity/") || c.path.endsWith("/identity/start") || c.path.includes("/provider/"))).toBe(false)
+  expect(f.unexpected).toEqual([]); expect(f.errors).toEqual([])
+})
+test("NATIVE-LOCAL-02 local verification stops before AI chain or merchant execution", async ({ page, baseURL }) => {
+  test.skip(baseURL !== "http://127.0.0.1:3183", "Requires the explicitly marked isolated local bundle")
+  const f = new GuideFixture(page, baseURL!); f.nativeV1 = true; await f.install(); await f.pending("proposal", { allowedActions: ["propose", "cancel"] })
+  await expect(page.getByTestId("native-local-scope-end")).toBeVisible()
+  await expect(page.getByTestId("hackathon-propose")).toHaveCount(0)
+  expect(f.calls.some(c => /proposal|delegate|agent\/run|redeem/.test(c.path))).toBe(false); f.assertSafe()
+})
+test("NATIVE-BIND-01 explicit fresh binding never self-authorizes; server status then separate offer", async ({ page, baseURL }) => {
+  const f = await nativeFixture(page, baseURL!, { boundApp: true })
+  await expect(page.getByTestId("native-holder-binding")).toBeVisible()
+  await page.getByTestId("native-binding-start").click()
+  await expect.poll(() => page.evaluate(() => Number((window as unknown as Record<string, unknown>).__nativeBindCalls))).toBe(1)
+  expect(f.calls.filter(c => c.path.includes("/provider/")).length).toBe(0)
+  await expect(page.getByTestId("hackathon-layer")).toHaveAttribute("data-phase", "issuance")
+  await page.getByTestId("native-binding-status").click()
+  await expect(page.getByTestId("native-holder-binding")).not.toContainText("サーバーで本人確認とウォレットの接続を確認しました")
+  f.bindingVerified = true; await page.getByTestId("native-binding-status").click()
+  await expect(page.getByTestId("native-holder-binding")).toContainText("サーバーで本人確認とウォレットの接続を確認しました")
+  await page.getByTestId("native-holder-binding").scrollIntoViewIfNeeded()
+  await page.screenshot({ path: test.info().outputPath("native-binding-server-status.png"), fullPage: true })
+  await page.getByTestId("guide-provider-start").click(); await page.getByTestId("guide-provider-native-open").click()
+  expect(await nativeCalls(page)).toBe(1)
+  expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__nativeBoundId)).toBe(f.bindingId)
+  await expect(page.getByTestId("hackathon-layer")).toHaveAttribute("data-phase", "issuance")
+  const layout = await page.getByTestId("hackathon-layer").evaluate(root => {
+    const bounds = root.getBoundingClientRect(), sheet = root.firstElementChild!.getBoundingClientRect(), close = root.querySelector("[data-testid='hackathon-close']")!.getBoundingClientRect()
+    return { top: bounds.top, bottom: bounds.bottom, sheetTop: sheet.top, sheetBottom: sheet.bottom, closeTop: close.top, closeBottom: close.bottom }
+  })
+  expect(layout.sheetTop).toBeGreaterThanOrEqual(layout.top - 1)
+  expect(layout.sheetBottom).toBeLessThanOrEqual(layout.bottom + 1)
+  expect(layout.closeTop).toBeGreaterThanOrEqual(layout.top)
+  expect(layout.closeBottom).toBeLessThanOrEqual(layout.bottom)
+  await page.screenshot({ path: test.info().outputPath("native-binding-confirmed.png"), fullPage: true }); f.assertSafe()
+})
+test("NATIVE-BIND-02 absent server binding cannot dispatch an offer; explicit cancel has no retry", async ({ page, baseURL }) => {
+  const f = await nativeFixture(page, baseURL!, { boundApp: true })
+  await page.getByTestId("guide-provider-start").click(); await expect(page.getByTestId("guide-provider-native-open")).toHaveCount(0)
+  await page.getByTestId("native-binding-start").click(); await page.getByTestId("native-binding-cancel").click()
+  await expect(page.getByTestId("native-binding-start")).toHaveCount(0)
+  expect(f.calls.filter(c => c.path.endsWith("/native-binding/start")).length).toBe(1)
+  expect(f.calls.filter(c => c.path.endsWith("/native-binding/cancel")).length).toBe(1)
+  expect(await nativeCalls(page)).toBe(0); f.assertSafe()
+})
 
 test("NATIVE-01 explicit issue/present handoff is one-shot and return never approves or advances", async ({ page, baseURL }) => {
   const f = await nativeFixture(page, baseURL!)
@@ -542,5 +623,57 @@ test("NATIVE-07 unknown native outcome is not announced as delivered and is not 
   await expect(page.getByTestId("guide-provider-refresh")).toBeEnabled()
   expect(await nativeCalls(page)).toBe(1)
   expect(f.calls.filter(call => call.path.includes("/provider/")).length).toBe(1)
+  f.assertSafe()
+})
+
+// Run with a credential-free local NEXT_PUBLIC_HK_HOSTED_SUI=1 build/server.
+// The eight-step progress assertion prevents a non-hosted build from silently
+// passing this regression. All BFF calls are intercepted presentation fixtures.
+test("NATIVE-HOSTED-01 actual configured provider passes hosted gate and replaces mock issuance UI", async ({ page, baseURL }, info) => {
+  const f = new GuideFixture(page, baseURL!)
+  f.hostedSui = true; f.nativeBindingConfigured = true; f.nativeV1 = true
+  f.configGuide = false; f.configProfile = undefined
+  await f.install(); await f.pending("issuance", { expiresAt: new Date(Date.now() + 300_000).toISOString() })
+  await expect(page.getByRole("group", { name: /3\/8$/ })).toBeVisible()
+  await expect(page.getByTestId("integration-preview-access")).toHaveCount(0)
+  await expect(page.getByTestId("guide-provider-step")).toBeVisible()
+  await expect(page.getByTestId("hackathon-issue")).toHaveCount(0)
+  expect(f.calls.some(call => call.path.includes("/provider/"))).toBe(false)
+  await page.getByTestId("guide-provider-start").click()
+  await expect(page.getByTestId("guide-provider-step").locator("img")).toBeVisible()
+  await page.getByTestId("guide-provider-refresh").click()
+  await expect(page.getByTestId("hackathon-layer")).toHaveAttribute("data-phase", "presentation")
+  await expect(page.getByTestId("guide-provider-step")).toHaveAttribute("data-provider-phase", "presentation")
+  await expect(page.getByTestId("hackathon-layer")).not.toContainText("OpenDIDの身分証は発行しません")
+  await page.screenshot({ path: info.outputPath("hosted-native-provider-selection.png") })
+  expect(f.calls.filter(call => call.path.includes("/provider/")).map(call => call.path)).toEqual([
+    `/operations/${OP}/provider/issuance/start`, `/operations/${OP}/provider/issuance/refresh`,
+  ])
+  f.assertSafe()
+})
+
+test("NATIVE-HOSTED-02 native mode without server configuration capability cannot mount or call provider", async ({ page, baseURL }) => {
+  const f = new GuideFixture(page, baseURL!)
+  f.hostedSui = true; f.nativeBindingConfigured = false; f.nativeV1 = true
+  f.configGuide = false; f.configProfile = undefined
+  f.op = operation({ journey: undefined, phase: "issuance", expiresAt: new Date(Date.now() + 300_000).toISOString() })
+  await f.install(); await f.place()
+  await expect(page.getByTestId("integration-preview-access")).toContainText("現在、統合体験を開けません")
+  await expect(page.getByTestId("hackathon-layer")).toHaveCount(0)
+  await expect(page.getByTestId("guide-provider-step")).toHaveCount(0)
+  expect(f.calls.some(call => call.path.includes("/provider/"))).toBe(false)
+  f.assertSafe()
+})
+
+test("NATIVE-HOSTED-03 existing mock hosted lane keeps sample UI without native capability", async ({ page, baseURL }) => {
+  const f = new GuideFixture(page, baseURL!)
+  f.hostedSui = true; f.nativeBindingConfigured = false; f.nativeMock = true; f.nativeV1 = true
+  f.configGuide = false; f.configProfile = undefined
+  await f.install(); await f.pending("issuance", { expiresAt: new Date(Date.now() + 300_000).toISOString() })
+  await expect(page.getByRole("group", { name: /3\/8$/ })).toBeVisible()
+  await expect(page.getByTestId("hackathon-issue")).toBeVisible()
+  await expect(page.getByTestId("hackathon-layer")).toContainText("OpenDIDの身分証は発行しません")
+  await expect(page.getByTestId("guide-provider-step")).toHaveCount(0)
+  expect(f.calls.some(call => call.path.includes("/provider/"))).toBe(false)
   f.assertSafe()
 })

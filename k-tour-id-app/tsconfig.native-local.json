@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "tsBuildInfoFile": ".next-native3183/tsconfig.tsbuildinfo" },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next-native3183/types/**/*.ts", ".next-native3183/dev/types/**/*.ts"],
+  "exclude": ["node_modules", ".next"]
+}

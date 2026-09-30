@@ -1,5 +1,6 @@
 import { isGuideJourney } from "@/lib/hackathon/guide-contract"
 import type { OperationResult } from "@/lib/hackathon/types"
+import { nativeBindingAppBridge, nativeAppOfferText, nativeAppUi, boundedNativeAppCall, parseNativeAppFlow, cancelNativeAppRequest, type NativeAppUi, type NativeBindingAppBridge } from "./native-app-v1-transport-b"
 
 const MAIN_ORIGIN = "https://ktour-id.vercel.app"
 const OFFER_WINDOW_MS = 120_000
@@ -27,7 +28,7 @@ export function nativeEnvironment(): NativeEnvironment {
   if (typeof window === "undefined") return { origin: "", isTopLevel: false, bridge: null }
   return { origin: window.location.origin, isTopLevel: window.top === window, bridge: value(window, "ktourNative") }
 }
-export const canUseNativeOfferHandoff = (env: NativeEnvironment): boolean => bridgeFor(env) !== null
+export const canUseNativeOfferHandoff = (env: NativeEnvironment): boolean => bridgeFor(env) !== null || nativeBindingAppBridge(env) !== null
 
 /** Matches the server's implemented bridge-v1 policy. Guide V2 is deliberately
  * NOT added here merely because its web preparation screen exists. */
@@ -56,18 +57,35 @@ function current(context: NativeOfferContext, now: number): boolean {
 
 /** In-memory, single-send offer bound to one server response. It grants nothing;
  * there is deliberately no success callback, storage, event or auto-poll here. */
-export function createNativeOfferHandoff(context: NativeOfferContext, qrPayload: string, receivedAt = Date.now()) {
+export function createNativeOfferHandoff(context: NativeOfferContext, qrPayload: string, receivedAt = Date.now(), bindingId?: string) {
   if (!current(context, receivedAt) || typeof qrPayload !== "string" || !qrPayload.trim() ||
     new TextEncoder().encode(qrPayload).byteLength > 8192 || qrPayload.includes("\0")) return null
   const key = nativeOfferContextKey(context)
   const expiresAt = Math.min(Date.parse(context.expiresAt), receivedAt + OFFER_WINDOW_MS)
   let payload: string | null = qrPayload
   let sent = false
+  let appRequest: { bridge: NativeBindingAppBridge; requestId: string; controller: AbortController } | null = null
   const matches = (next: NativeOfferContext, now: number) => payload !== null && now < expiresAt && current(next, now) && nativeOfferContextKey(next) === key
   return {
     expiresAt,
     matches,
-    invalidate() { payload = null },
+    invalidate() { payload = null; if (appRequest) { appRequest.controller.abort(); void cancelNativeAppRequest(appRequest.bridge, appRequest.requestId); appRequest = null } },
+    async openApp(next: NativeOfferContext, env: NativeEnvironment, ui: NativeAppUi, now = Date.now()): Promise<NativeOfferAttempt> {
+      if (!matches(next, now)) { payload = null; return "stale" }
+      if (sent) return "already_sent"
+      const bridge = nativeBindingAppBridge(env)
+      if (!bridge || !bindingId || !/^nhb_[A-Za-z0-9_-]{24}$/.test(bindingId) || !nativeAppUi(ui) || !nativeAppOfferText(payload)) return "unavailable"
+      sent = true
+      const requestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("")
+      const controller = new AbortController(); appRequest = { bridge, requestId, controller }
+      const method = next.phase === "issuance" ? "issue" : "present"
+      const result = await boundedNativeAppCall(() => bridge[method]({ requestId, qr: payload!, ui, bindingId }), v => parseNativeAppFlow(v, requestId), { timeoutMs: Math.max(1, Math.min(210_000, expiresAt - now)), signal: controller.signal })
+      appRequest = null
+      if (!matches(next, Date.now())) return "stale"
+      // Even 'submitted' is only a transport acknowledgement. BFF refresh is
+      // the sole authority; all outcomes consume this one-shot affordance.
+      return result.status === "reply" && result.reply.outcome === "submitted" ? "sent" : "failed"
+    },
     open(next: NativeOfferContext, env: NativeEnvironment, now = Date.now()): NativeOfferAttempt {
       if (!matches(next, now)) { payload = null; return "stale" }
       if (sent) return "already_sent"

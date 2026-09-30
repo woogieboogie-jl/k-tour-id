@@ -11,6 +11,7 @@ import { parseStoredJourney } from "../../lib/hackathon/store-integrity"
 import { HkError, digestOf } from "../../lib/hackathon/util"
 import type { Db, OperationRecord } from "../../lib/hackathon/store"
 import type { IdentityEvidence } from "../../lib/hackathon/types"
+import { CX_AGE19_POLICY } from "../../lib/hackathon/cx-age-policy"
 
 const T = Date.parse("2026-09-29T00:00:00Z"), iso = (offset = 0) => new Date(T + offset).toISOString()
 const SESSION = "session_fixture_01", VENUE = "mois-0021cd596bc5b2a922ad", HASH = "0x" + "a".repeat(64)
@@ -86,8 +87,56 @@ test("adult requires affirmative provider claim; person never becomes age19 or p
     assert.equal((await h.api.create(SESSION, body(1))).status, "authorized")
   }
   const h = setup(), table = body(1, { action: "table_request", venueId: VENUE, tableId: "table-seoul-night-bites", purpose: "age19" })
-  const r = await h.api.create(SESSION, table); assert.equal(r.status, "denied"); assert.equal(r.reason, "unsupported_age_policy"); assert.equal(h.calls.start, 0); assert.equal(Object.keys(h.db().operations).length, 0)
-  await assert.rejects(h.api.start(SESSION, r.requestId, true)); await assert.rejects(h.api.create(SESSION, { ...body(), purpose: "payment_kyc" }))
+  const r = await h.api.create(SESSION, table); assert.equal(r.status, "awaiting_identity"); assert.equal(h.calls.start, 0); assert.equal(Object.keys(h.db().operations).length, 0)
+  await h.api.start(SESSION, r.requestId, true); const checked = await h.api.complete(SESSION, r.requestId)
+  assert.equal(checked.status, "denied"); assert.equal(checked.reason, "age19_not_verified")
+  await assert.rejects(h.api.create(SESSION, { ...body(), purpose: "payment_kyc" }))
+})
+test("current birth-derived age19 proof authorizes an exact purpose once; no raw birth or adult elevation", async () => {
+  const h = setup(); h.result.evidence = evidence({ adultVerified: null, age19Verified: true, age19Policy: CX_AGE19_POLICY })
+  const r = await h.verified({ action: "after19_access", purpose: "age19" })
+  assert.equal(r.status, "authorized"); assert.equal((await h.api.eligibility(SESSION)).age19.state, "verified")
+  const receipt = await h.api.consume(SESSION, r.authorizationRef!, r.context)
+  assert.equal(receipt.age19Verified, true); assert.equal(receipt.age19Policy, CX_AGE19_POLICY); assert.equal(receipt.adultVerified, false)
+  assert.equal(receipt.paymentKycVerified, false); assert.equal(JSON.stringify(h.db()).includes('"birth"'), false)
+  assert.deepEqual(await h.api.receipt(SESSION, r.requestId), receipt)
+  const table = await h.api.create(SESSION, body(2, { action: "table_request", purpose: "age19", venueId: VENUE, tableId: "table-seoul-night-bites" }))
+  assert.equal(table.status, "authorized"); assert.equal(h.calls.start, 1); assert.equal(Object.keys(h.db().operations).length, 1)
+  await assert.rejects(h.api.consume(SESSION, table.authorizationRef!, r.context), code("jit_identity_scope"))
+  await h.mutate(db => { Object.values(db.operations)[0].status = "cancelled" })
+  await assert.rejects(h.api.consume(SESSION, table.authorizationRef!, table.context), code("jit_identity_proof"))
+  assert.equal((await h.api.eligibility(SESSION)).age19.state, "proof_required")
+})
+test("age19 missing/false/old policy cannot authorize or consume; no inherited adult claim", async () => {
+  for (const patch of [{ age19Verified: true }, { age19Verified: true, age19Policy: "old" }, { age19Verified: false, age19Policy: CX_AGE19_POLICY }, { age19Verified: null }]) {
+    const h = setup(); Object.assign(h.result.evidence, patch)
+    const r = await h.verified({ action: "after19_access", purpose: "age19" })
+    assert.equal(r.status, "denied"); assert.equal(r.authorizationRef, null)
+  }
+})
+test("only consumed After19 receipt GET outlives the two-minute grant; original authority remains current", async () => {
+  const h = setup(); h.result.evidence = evidence({ age19Verified: true, age19Policy: CX_AGE19_POLICY })
+  const r = await h.verified({ action: "after19_access", purpose: "age19" })
+  const view = await h.api.consume(SESSION, r.authorizationRef!, r.context)
+  assert.equal(view.expiresAt, h.result.evidence.expiresAt)
+  h.advance(121000)
+  assert.deepEqual(await h.api.receipt(SESSION, r.requestId), view)
+  await assert.rejects(h.api.consume(SESSION, r.authorizationRef!, r.context), code("jit_identity_expired"))
+  await assert.rejects(h.api.receipt("another-session", r.requestId), code("not_found"))
+  await h.mutate(db => { db.sessions[SESSION].subjectRef = "subj_replaced" })
+  await assert.rejects(h.api.receipt(SESSION, r.requestId), code("jit_identity_proof"))
+})
+test("expired unconsumed age grant, changed policy and revoked evidence cannot extend After19", async () => {
+  for (const change of ["unconsumed", "policy", "revoked", "evidence-expired"]) {
+    const h = setup(); h.result.evidence = evidence({ age19Verified: true, age19Policy: CX_AGE19_POLICY })
+    const r = await h.verified({ action: "after19_access", purpose: "age19" })
+    if (change !== "unconsumed") await h.api.consume(SESSION, r.authorizationRef!, r.context)
+    h.advance(change === "evidence-expired" ? 3600001 : 121000)
+    if (change === "policy") h.drift()
+    if (change === "revoked") await h.mutate(db => { Object.values(db.operations)[0].status = "cancelled" })
+    await assert.rejects(h.api.receipt(SESSION, r.requestId))
+    await assert.rejects(h.api.consume(SESSION, r.authorizationRef!, r.context))
+  }
 })
 test("canonical table policy prevents venue swaps and lowering a hard19 action to generic adult/person", () => {
   for (const purpose of ["adult", "person"] as const) assert.throws(() => validateJitContext(context(0, { action: "table_request", tableId: "table-seoul-night-bites", venueId: VENUE, purpose }), policy()))

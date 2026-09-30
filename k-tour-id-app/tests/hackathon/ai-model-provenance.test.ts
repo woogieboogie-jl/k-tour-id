@@ -67,8 +67,8 @@ test("bounded connected caller sends exactly one request even when pinned model 
   const restore = setup(), calls: string[] = []
   try {
     globalThis.fetch = async url => { calls.push(target(url)); return new Response("not found", { status: 404 }) }
-    const result = await geminiGenerate({ key: KEY, model: "gemini-2.5-flash", system: "fixture", message: "fixture", allowModelFallback: false })
-    assert.deepEqual(calls, ["gemini-2.5-flash"])
+    const result = await geminiGenerate({ key: KEY, model: "gemini-3.8-flash", system: "fixture", message: "fixture", allowModelFallback: false })
+    assert.deepEqual(calls, ["gemini-3.8-flash"])
     assert.deepEqual(result, { error: "gemini_provider_http_404" })
   } finally { restore() }
 })
@@ -124,8 +124,8 @@ test("adapter's configured default is not silently replaced by a previously cach
     await geminiGenerate({ key: KEY, model: "fixture-cached-custom", system: "fixture", message: "fixture" })
     calls.length = 0
     const proposal = await proposePerk(input)
-    assert.deepEqual(calls, ["gemini-2.5-flash"])
-    assert.equal(proposal.model, "gemini-2.5-flash")
+    assert.deepEqual(calls, ["gemini-3.8-flash"])
+    assert.equal(proposal.model, "gemini-3.8-flash")
   } finally { restore() }
 })
 
@@ -198,6 +198,8 @@ test("proposal requests exact JSON schema and bounded complete output", async ()
       const config = JSON.parse(String(init?.body)).generationConfig
       assert.equal(config.responseMimeType, "application/json")
       assert.equal(config.maxOutputTokens, 1024)
+      assert.equal(config.temperature, 1)
+      assert.deepEqual(config.thinkingConfig, { thinkingLevel: "low" })
       assert.equal(config.responseJsonSchema.additionalProperties, false)
       assert.deepEqual(config.responseJsonSchema.properties.language.enum, [input.language])
       assert.deepEqual(config.responseJsonSchema.properties.target.properties.venueId.enum, [input.venueId])
@@ -206,6 +208,21 @@ test("proposal requests exact JSON schema and bounded complete output", async ()
     }
     assert.equal((await proposePerk(input)).mode, "gemini")
     assert.equal(calls, 1)
+  } finally { restore() }
+})
+
+test("explicit historical model remains replayable without unsupported 3.x thinking fields", async () => {
+  const restore = setup()
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(target(url), "gemini-2.5-flash")
+      const config = JSON.parse(String(init?.body)).generationConfig
+      assert.equal(config.thinkingConfig, undefined)
+      assert.equal(config.temperature, 0.4)
+      return successful("historical fixture reply")
+    }
+    const result = await geminiGenerate({ key: KEY, model: "gemini-2.5-flash", system: "fixture", message: "fixture", allowModelFallback: false })
+    assert.equal(result.model, "gemini-2.5-flash")
   } finally { restore() }
 })
 

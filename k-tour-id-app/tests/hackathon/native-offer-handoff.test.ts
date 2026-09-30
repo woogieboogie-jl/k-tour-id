@@ -96,3 +96,25 @@ test("actual native V1 policy excludes guide V2 and mock/source-expired evidence
   assert.equal(nativeOfferContext({ ...op, identity: { ...op.identity!, mode: "mock" } }).providerSupported, false)
   assert.equal(nativeOfferContext({ ...op, identity: { ...op.identity!, sourceCurrent: false } }).providerSupported, false)
 })
+
+test("new native app requires the server binding and emits exact issue/present DTO once", async () => {
+  const now = Date.now(), ctx = { ...context, expiresAt: new Date(now + 300000).toISOString() }, bindingId = "nhb_" + "a".repeat(24)
+  const calls: Record<string, unknown>[] = []
+  const bridge = Object.freeze({ available: true, version: 1, platform: "ios", bindingVersion: "cx-holder-v1", wallet: async () => ({}), setup: async () => ({}), unlock: async () => ({}), bind: async () => ({}), cancel: async () => ({ v: 1, cancelled: true }),
+    issue: async (a: Record<string, unknown>) => { calls.push(a); return { v: 1, requestId: a.requestId, outcome: "submitted", retryable: false } }, present: async (a: Record<string, unknown>) => { calls.push(a); return { v: 1, requestId: a.requestId, outcome: "submitted", retryable: false } } })
+  const env = { origin: "https://ktour-id.vercel.app", isTopLevel: true, bridge }, ui = { locale: "ja" as const, theme: "dark" as const }
+  assert.equal(await createNativeOfferHandoff(ctx, QR, now)!.openApp(ctx, env, ui, now), "unavailable")
+  const handoff = createNativeOfferHandoff(ctx, QR, now, bindingId)!
+  assert.equal(await handoff.openApp(ctx, env, ui, now), "sent"); assert.equal(await handoff.openApp(ctx, env, ui, now), "already_sent")
+  assert.equal(calls.length, 1); assert.equal(calls[0].qr, QR); assert.equal(calls[0].bindingId, bindingId); assert.deepEqual(calls[0].ui, ui)
+  assert.deepEqual(Object.keys(calls[0]).sort(), ["bindingId", "qr", "requestId", "ui"])
+  assert.equal("authorized" in handoff, false); assert.equal(JSON.stringify(handoff).includes(QR), false)
+})
+test("new app cancel invalidates delayed submitted result and never retransmits", async () => {
+  const now = Date.now(), ctx = { ...context, expiresAt: new Date(now + 300000).toISOString() }, bindingId = "nhb_" + "a".repeat(24)
+  let resolve!: (value: unknown) => void, nativeId = "", count = 0
+  const bridge = Object.freeze({ available: true, version: 1, platform: "ios", bindingVersion: "cx-holder-v1", wallet: async () => ({}), setup: async () => ({}), unlock: async () => ({}), bind: async () => ({}), present: async () => ({}), cancel: async (a: { requestId: string }) => { assert.equal(a.requestId, nativeId); return { v: 1, cancelled: false, reason: "in_flight" } }, issue: (a: { requestId: string }) => { count++; nativeId = a.requestId; return new Promise(r => resolve = r) } })
+  const env = { origin: "https://ktour-id.vercel.app", isTopLevel: true, bridge }, handoff = createNativeOfferHandoff(ctx, QR, now, bindingId)!
+  const pending = handoff.openApp(ctx, env, { locale: "ko", theme: "light" }, now); handoff.invalidate()
+  assert.equal(await pending, "stale"); resolve({ v: 1, requestId: nativeId, outcome: "submitted", retryable: false }); assert.equal(count, 1)
+})

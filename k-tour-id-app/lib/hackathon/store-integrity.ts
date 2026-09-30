@@ -8,6 +8,7 @@ import { parseIntegrationCutoverMarker, assertIntegrationCutoverMonotonic } from
 import { assertSharedBudget } from "./integration-shared-budget"
 import { assertJitIdentityLedger } from "./jit-identity-integrity"
 import { assertOmnioneTargetStore } from "./omnione-target-integrity"
+import { assertPublicIdentityStore } from "./public-cx-integrity"
 
 /** Reject corrupt/incompatible storage instead of clearing redemption history. */
 export function parseStoredJourney(raw: unknown): Db {
@@ -43,5 +44,6 @@ export function parseStoredJourney(raw: unknown): Db {
     if (op.journey !== undefined && !isGuideJourney(op)) throw invalid()
   }
   assertOmnioneTargetStore(parsed as Db)
+  assertPublicIdentityStore(parsed as Db)
   return parsed as Db
 }

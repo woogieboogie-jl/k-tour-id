@@ -2,7 +2,9 @@
 // back if a key lacks one (404), caches the first working model, supports
 // multi-turn history, and passes the key in a header (not the URL). Server-only.
 
-const CANDIDATES = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-flash-latest", "gemini-1.5-pro", "gemini-1.5-flash"]
+// Stable IDs verified against Google's model catalog and the project's models
+// list on 2026-09-30. No moving alias or implicit downgrade to a 2.x model.
+const CANDIDATES = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
 let cachedModel: string | null = null
 // One deadline covers the whole call, including missing-model fallbacks and
 // response consumption. A stalled stream must not outlive the caller's budget.
@@ -150,7 +152,10 @@ export async function geminiGenerate(opts: {
             contents,
             generationConfig: {
               maxOutputTokens: opts.maxOutputTokens ?? 700,
-              temperature: opts.temperature ?? 0.4,
+              temperature: opts.temperature ?? (model === "gemini-3.8-flash" ? 1 : 0.4),
+              // The small, bounded proposal does not need the model's default
+              // medium reasoning. `minimal` is unsupported by 3.8 Flash.
+              ...(model === "gemini-3.8-flash" ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
               ...(opts.responseJsonSchema ? { responseMimeType: "application/json", responseJsonSchema: opts.responseJsonSchema } : {}),
             },
           }),

@@ -40,7 +40,7 @@ import { ondoBProductTimeline, type OndoBProductTimelineOverride } from "../shar
 import { ONDO_B_TABLE, ONDO_B_TABLES, initialTableRuntime, ondoBTableById, ondoBTableTimeline, reduceTableRuntime, type OndoBTable, type TableAvailabilityState, type TableRuntime } from "./table-model"
 import styles from "./pulse-table-b.module.css"
 import { identityReviewOptionsB } from "../identity-b/identity-review-mode-b"
-import { consumeJitAuthorization } from "../identity-b/jit-identity-authority-b"
+import { consumeJitAuthorization, jitAuthorizationContext } from "../identity-b/jit-identity-authority-b"
 import { hashBActionReturnTo } from "../identity-b/action-gate-contract-b"
 
 export { ACTIVE_TABLE_ID, TABLE_VENUE_ID } from "./table-policy-b"
@@ -1095,6 +1095,7 @@ export function PulseTablesEntryB() {
         const allowed = await consumeJitAuthorization(pending.tokenId, hashBActionReturnTo(pending), isCurrent)
         if (!allowed || !isCurrent()) { transitionRuntime({ type: "JOIN_FAILED", reason: "policy" }); setJoinPersistError(true); return }
         satisfied.add("person")
+        if (jitAuthorizationContext(pending.tokenId)?.purpose === "age19") satisfied.add("age")
       }
       const age = restoreGlobalAfter19B(
         window.localStorage,

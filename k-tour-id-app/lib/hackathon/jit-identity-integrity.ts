@@ -2,6 +2,7 @@ import type { Db } from "./store"
 import type { JitIdentityLedger } from "./jit-identity-records"
 import { JIT_AUTHORIZATION_ID, JIT_REQUEST_ID, JIT_IDENTITY_CONSENT, JIT_IDENTITY_VERSION } from "./jit-identity-contract"
 import { assert, digestOf } from "./util"
+import { CX_AGE19_POLICY } from "./cx-age-policy"
 
 const same = (a: unknown, b: unknown) => digestOf(a) === digestOf(b)
 const object = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x)
@@ -36,10 +37,15 @@ export function assertJitIdentityLedger(value: unknown): asserts value is JitIde
       Date.parse(a.expiresAt) > Date.parse(a.createdAt) && Date.parse(a.expiresAt) <= Date.parse(r.expiresAt))
     if (a.operationId !== undefined) check(typeof a.operationId === "string" && a.context.action === "designated_perk" && a.receipt)
     if (a.receipt) check(a.receipt.version === JIT_IDENTITY_VERSION && /^idr_[A-Za-z0-9_-]{16,32}$/.test(a.receipt.receiptId) &&
-      same(a.receipt.context, a.context) && a.receipt.expiresAt === a.expiresAt && date(a.receipt.authorizedAt) &&
+      same(a.receipt.context, a.context) &&
+      (a.context.action === "after19_access" && a.context.purpose === "age19"
+        ? date(a.receipt.expiresAt) && Date.parse(a.receipt.expiresAt) <= Date.parse(a.receipt.evidenceExpiresAt) && Date.parse(a.receipt.expiresAt) > Date.parse(a.receipt.authorizedAt)
+        : a.receipt.expiresAt === a.expiresAt) && date(a.receipt.authorizedAt) &&
       Date.parse(a.receipt.authorizedAt) >= Date.parse(a.createdAt) && Date.parse(a.receipt.authorizedAt) < Date.parse(a.expiresAt) &&
       date(a.receipt.evidenceExpiresAt) && a.receipt.provider === "omnione_cx" && a.receipt.personVerified === true &&
-      typeof a.receipt.adultVerified === "boolean" && a.receipt.paymentKycVerified === false && r.status === "completed")
+      typeof a.receipt.adultVerified === "boolean" && a.receipt.paymentKycVerified === false && r.status === "completed" &&
+      (a.receipt.age19Verified === undefined || typeof a.receipt.age19Verified === "boolean") &&
+      (a.context.purpose !== "age19" || (a.receipt.age19Verified === true && a.receipt.age19Policy === CX_AGE19_POLICY)))
   }
 }
 

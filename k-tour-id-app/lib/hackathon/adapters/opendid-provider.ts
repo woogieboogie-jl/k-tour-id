@@ -7,7 +7,7 @@ import { HkError } from "../util"
 import { validateOpenDidNativeBridgeConfig } from "../opendid-native-config"
 
 export type OpenDidBinding = { sessionId: string; operationId: string }
-export type OpenDidCxSubject = { kind: "cx_evidence_ref"; evidenceRef: string; personVerified: true; adultVerified: boolean | null; kycRef: string }
+export type OpenDidCxSubject = { kind: "cx_evidence_ref"; evidenceRef: string; personVerified: true; adultVerified: boolean | null; kycRef: string; expectedHolderDid?: string }
 export type OpenDidCredential = { vcId: string; issuerDid: string; schemaId: string; validFrom: string; validUntil: string; holderBinding: string }
 export type OpenDidOffer = { qrPayload: string }
 export type OpenDidIssuance = {
@@ -141,7 +141,8 @@ export function createOpenDidBridgeClient(config: OpenDidBridgeConfig, fetcher: 
     ownerBinding,
     issuanceStart: (b, input) => {
       id(input.idempotencyKey)
-      const s = record(input.subject, ["kind", "evidenceRef", "personVerified", "adultVerified", "kycRef"])
+      const s = record(input.subject, ["kind", "evidenceRef", "personVerified", "adultVerified", "kycRef", ...(input.subject.expectedHolderDid === undefined ? [] : ["expectedHolderDid"])])
+      if (s.expectedHolderDid !== undefined && (typeof s.expectedHolderDid !== "string" || !/^did:omn:[A-Za-z0-9:_-]{8,160}$/.test(s.expectedHolderDid))) throw bad()
       if (s.kind !== "cx_evidence_ref" || s.personVerified !== true || !(s.adultVerified === null || typeof s.adultVerified === "boolean") || typeof s.kycRef !== "string" || !/^[0-9a-f]{64}$/.test(s.kycRef)) throw new HkError("opendid_cx_mapping_unavailable", "Verified CX-to-OpenDID identity mapping is required", 503)
       id(s.evidenceRef)
       return issuance(b, "POST", "/bridge/v1/issuances", undefined, { operationId: b.operationId, idempotencyKey: input.idempotencyKey, subject: s })
@@ -156,9 +157,10 @@ export function createOpenDidBridgeClient(config: OpenDidBridgeConfig, fetcher: 
 }
 
 export type OpenDidCxEvidence = { source: "cx_mobile_id"; mode: "cx"; evidenceRef: string; personVerified: boolean; adultVerified: boolean | null; expiresAt: string }
-export type VerifiedCxKycBinding = { evidenceRef: string; kycRef: string; mappingVersion: "cx-cas-v1" }
-/** The resolver must independently verify a real holder/CAS binding. Hashing an arbitrary
- * evidence ID is NOT a mapping. No resolver is provided until the native/CAS contract exists. */
+export type VerifiedCxKycBinding = { evidenceRef: string; kycRef: string; mappingVersion: "cx-cas-v1"; expectedHolderDid?: string }
+/** The resolver independently verifies a real holder/CAS binding. Hashing an
+ * arbitrary evidence ID is NOT a mapping. The production factory uses only the
+ * authenticated native DIDAuth + trusted TA/DID/CAS confirmation protocol. */
 export async function resolveOpenDidCxSubject(evidence: OpenDidCxEvidence, resolver?: (e: OpenDidCxEvidence) => Promise<VerifiedCxKycBinding | null>, now = Date.now(), timeoutMs = 5000): Promise<OpenDidCxSubject> {
   if (!Number.isFinite(now) || evidence.source !== "cx_mobile_id" || evidence.mode !== "cx" || evidence.personVerified !== true
     || !(evidence.adultVerified === null || typeof evidence.adultVerified === "boolean") || openDidUtcTime(evidence.expiresAt) <= now) throw new HkError("opendid_identity_required", "Current verified CX identity is required", 409)
@@ -169,10 +171,12 @@ export async function resolveOpenDidCxSubject(evidence: OpenDidCxEvidence, resol
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("mapping deadline")), timeoutMs) })
-    const mapped = record(await Promise.race([Promise.resolve().then(() => resolver(snapshot)), deadline]), ["evidenceRef", "kycRef", "mappingVersion"])
+    const raw = await Promise.race([Promise.resolve().then(() => resolver(snapshot)), deadline])
+    const mapped = record(raw, ["evidenceRef", "kycRef", "mappingVersion", ...(raw?.expectedHolderDid === undefined ? [] : ["expectedHolderDid"])])
     if (mapped.mappingVersion !== "cx-cas-v1" || mapped.evidenceRef !== snapshot.evidenceRef || typeof mapped.kycRef !== "string" || !/^[0-9a-f]{64}$/.test(mapped.kycRef)) throw bad()
     if (openDidUtcTime(snapshot.expiresAt) <= now + performance.now() - started) throw new HkError("opendid_identity_required", "Current verified CX identity is required", 409)
-    return { kind: "cx_evidence_ref", evidenceRef: snapshot.evidenceRef, personVerified: true, adultVerified: snapshot.adultVerified, kycRef: mapped.kycRef }
+    if (mapped.expectedHolderDid !== undefined && (typeof mapped.expectedHolderDid !== "string" || !/^did:omn:[A-Za-z0-9:_-]{8,160}$/.test(mapped.expectedHolderDid))) throw bad()
+    return { kind: "cx_evidence_ref", evidenceRef: snapshot.evidenceRef, personVerified: true, adultVerified: snapshot.adultVerified, kycRef: mapped.kycRef, ...(mapped.expectedHolderDid ? { expectedHolderDid: mapped.expectedHolderDid as string } : {}) }
   } catch (error) {
     if (error instanceof HkError && error.code === "opendid_identity_required") throw new HkError("opendid_identity_required", "Current verified CX identity is required", 409)
     // The private resolver must not leak provider payloads, hostnames, or identity data.

@@ -79,6 +79,19 @@ test("public origin inheritance accepts only HTTPS origin values", () => {
   }
 })
 
+test("public CX build freezes only the paired public switch and strips the server switch", () => {
+  const marker = "public-identity-20260930-v1"
+  const input = { ...metadata(), NEXT_PUBLIC_HK_PUBLIC_CX: marker, HK_PUBLIC_CX: marker }
+  const env = subject.hostedSuiBuildEnv(input)
+  assert.equal(env.NEXT_PUBLIC_HK_PUBLIC_CX, marker)
+  assert.equal(Object.hasOwn(env, "HK_PUBLIC_CX"), false)
+  assert.equal(env.HK_MODE_CX, "mock", "build never contacts real CX")
+  assert.equal(subject.hostedSuiBuildEnv(metadata()).NEXT_PUBLIC_HK_PUBLIC_CX, "")
+  for (const patch of [{ HK_PUBLIC_CX: "" }, { NEXT_PUBLIC_HK_PUBLIC_CX: "" }, { HK_PUBLIC_CX: "other" }]) {
+    assert.throws(() => subject.hostedSuiBuildEnv({ ...input, ...patch }), { message: "hosted_sui_build_public_cx_marker" })
+  }
+})
+
 test("dotenv files, including dangling symlinks, stop the plan without reading contents", () => {
   const root = mkdtempSync(join(tmpdir(), "ktour-hosted-sui-build-")), file = join(root, ".env.local")
   try { writeFileSync(file, "secret"); assert.throws(() => subject.assertNoHostedSuiEnvFiles(root), { message: "hosted_sui_build_env_file" }); unlinkSync(file); symlinkSync(join(root, "missing"), file); assert.throws(() => subject.assertNoHostedSuiEnvFiles(root), { message: "hosted_sui_build_env_file" }) }

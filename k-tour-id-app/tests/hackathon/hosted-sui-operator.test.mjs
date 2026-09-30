@@ -3,9 +3,10 @@ import { test } from "node:test"
 import { mkdtempSync, realpathSync, lstatSync, rmSync, symlinkSync, writeFileSync, readFileSync, readdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { createHmac } from "node:crypto"
 import { createJournalStorage, createReleaseOperator, readApiResponse } from "../../scripts/hackathon-hosted-sui-operator.mjs"
 import { HOSTED_SUI_BRANCH, PROJECT_ID, ORG_ID } from "../../scripts/hackathon-hosted-sui-build.mjs"
-import { PROVIDER_ADDED_KEYS, PROVIDER_SECRET_KEYS } from "../../scripts/hackathon-hosted-provider-inputs.mjs"
+import { CURRENT_GEMINI_MODEL, LEGACY_GEMINI_MODEL, PROVIDER_ADDED_KEYS, PROVIDER_SECRET_KEYS } from "../../scripts/hackathon-hosted-provider-inputs.mjs"
 
 // Pure synthetic API/state fixtures. Never invoke the operational wrapper,
 // read a real auth/run file, contact Vercel, create an env, or deploy anything.
@@ -17,9 +18,9 @@ function fixture() {
   const secrets = { credentialSeed: "c".repeat(64), issuer: "issuer-fixture-only-".repeat(4), agent: "agent-fixture-only-".repeat(4) }
   const providerInputs = { NEXT_PUBLIC_GOOGLE_CLIENT_ID: "1-fixture.apps.googleusercontent.com", GEMINI_API_KEY: "synthetic-gemini-not-a-key", HK_ZKLOGIN_SALT_SEED: "e".repeat(64), HK_OMNIONE_RPC_URL: "https://stage-chainapi.omnione.net/?token=synthetic", HK_OMNIONE_PRIVATE_KEY: "0x" + "1".repeat(64) }
   const envs = Object.keys(sourceValues).map((key, i) => ({ id: `source_${i}`, key, target: ["preview"], gitBranch: sourceBranch }))
-  const calls = [], deployments = new Map()
+  const calls = [], deployments = new Map(), syntheticValues = new Map()
   let stored = null, saves = 0, counter = 0, currentSha = SHA, locked = false
-  let postHook, patchHook, createdShape = "object", deploymentHook
+  let postHook, patchHook, createdShape = "object", deploymentHook, providerReadHook
   const api = async (path, method = "GET", body) => {
     calls.push({ path, method }) // Deliberately do not retain request values.
     if (path === "/v2/user") return { user: { username: "jaewook-9643" } }
@@ -34,6 +35,7 @@ function fixture() {
       assert.equal(method, "POST"); assert.equal(locked, true)
       assert.ok(stored.targets[body.target[0]].entries[body.key].intentAt, "durable intent precedes POST")
       const { value: _neverRetain, ...metadata } = body
+      syntheticValues.set(`${body.target[0]}:${body.key}`, _neverRetain)
       const item = { ...copy(metadata), id: `env_${++counter}`, createdAt: TIME + counter, updatedAt: TIME + counter }
       envs.push(item)
       if (postHook) await postHook(item)
@@ -41,9 +43,10 @@ function fixture() {
     }
     if (path.startsWith(`/v9/projects/${PROJECT_ID}/env/`) && method === "PATCH") {
       const item = envs.find(item => item.id === path.split("/").at(-1))
-      assert.equal(locked, true); assert.ok(["HK_MODE_CX", "HK_AI_MODE"].includes(item?.key))
-      assert.deepEqual(body, { value: item.key === "HK_MODE_CX" ? "cx" : "gemini" })
-      assert.ok(stored.targets[item.target[0]][item.key === "HK_MODE_CX" ? "cxMigration" : "providerMigration"].modeIntentAt)
+      assert.equal(locked, true); assert.ok(["HK_MODE_CX", "HK_AI_MODE", "GEMINI_MODEL"].includes(item?.key))
+      assert.deepEqual(body, { value: item.key === "HK_MODE_CX" ? "cx" : item.key === "GEMINI_MODEL" ? CURRENT_GEMINI_MODEL : "gemini" })
+      assert.ok(stored.targets[item.target[0]][item.key === "HK_MODE_CX" ? "cxMigration" : item.key === "GEMINI_MODEL" ? "geminiMigration" : "providerMigration"].modeIntentAt)
+      syntheticValues.set(`${item.target[0]}:${item.key}`, body.value)
       item.updatedAt = TIME + ++counter
       if (patchHook) await patchHook(item)
       return copy(item)
@@ -62,14 +65,144 @@ function fixture() {
     if (path.startsWith("/v13/deployments/") && method === "GET") { assert.ok(deployments.has(path.split("/").at(-1))); return copy(deployments.get(path.split("/").at(-1))) }
     assert.fail(`Unexpected fixture endpoint ${method} ${path}`)
   }
-  const run = createReleaseOperator({ api, readSecrets: () => copy(secrets), readProviderInputs: () => copy(providerInputs), localCheck: () => currentSha, now: () => TIME, nonce: () => (++counter).toString(16).padStart(32, "0"),
+  const run = createReleaseOperator({ api, readSecrets: () => copy(secrets), readProviderInputs: () => { providerReadHook?.(); return copy(providerInputs) }, localCheck: () => currentSha, now: () => TIME, nonce: () => (++counter).toString(16).padStart(32, "0"),
     loadJournal: () => copy(stored), saveJournal: value => { saves++; stored = copy(value) },
     withLock: async (_action, task) => { assert.equal(locked, false); locked = true; try { return await task() } finally { locked = false } } })
   return { run, envs, calls, deployments, secrets, sourceValues, providerInputs, journal: () => copy(stored), saves: () => saves,
+    // Reconstruct a historical 2.5 journal without real secrets or remote calls.
+    legacy(target) {
+      const state = stored.targets[target]
+      delete state.geminiModel
+      syntheticValues.set(`${target}:GEMINI_MODEL`, LEGACY_GEMINI_MODEL)
+      state.fingerprint = createHmac("sha256", secrets.credentialSeed).update(JSON.stringify(Object.keys(state.entries).map(key => [key, syntheticValues.get(`${target}:${key}`)]))).digest("hex")
+    },
     postCount: () => calls.filter(call => call.method === "POST").length,
-    shape: value => { createdShape = value }, postHook: value => { postHook = value }, patchHook: value => { patchHook = value }, deploymentHook: value => { deploymentHook = value }, sha: value => { currentSha = value } }
+    shape: value => { createdShape = value }, postHook: value => { postHook = value }, patchHook: value => { patchHook = value }, deploymentHook: value => { deploymentHook = value }, providerReadHook: value => { providerReadHook = value }, sha: value => { currentSha = value } }
 }
 const rejects = (promise, name) => assert.rejects(promise, { message: `release_${name}` })
+
+test("Gemini upgrade preserves old journal preparation and changes only the model once", async () => {
+  const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview"); await f.run("enable-providers-preview"); f.legacy("preview")
+  await f.run("prepare-preview")
+  const before = copy(f.envs), writes = f.calls.filter(c => c.method !== "GET").length
+  const plan = await f.run("plan-gemini-preview")
+  assert.equal(plan.fromModel, LEGACY_GEMINI_MODEL); assert.equal(plan.model, CURRENT_GEMINI_MODEL)
+  assert.deepEqual(plan.wouldUpdate, ["GEMINI_MODEL"])
+  assert.equal(f.calls.filter(c => c.method !== "GET").length, writes)
+  await f.run("upgrade-gemini-preview")
+  assert.equal(f.calls.filter(c => c.method !== "GET").length, writes + 1)
+  for (const row of before.filter(r => r.key !== "GEMINI_MODEL")) assert.deepEqual(f.envs.find(r => r.id === row.id), row)
+  assert.equal(f.journal().targets.preview.geminiModel, CURRENT_GEMINI_MODEL)
+  assert.equal((await f.run("upgrade-gemini-preview")).alreadyEnabled, true)
+  await f.run("prepare-preview"); await f.run("enable-public-cx-preview"); await f.run("deploy-preview")
+})
+
+test("Gemini production requires same-SHA READY model evidence and composes with public CX", async () => {
+  const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview"); await f.run("prepare-production")
+  const cx = await f.run("deploy-preview"); f.deployments.get(cx.id).readyState = "READY"
+  await f.run("mark-preview-passed", cx.id, REPORT); await f.run("enable-cx-production")
+  f.sha("c".repeat(40)); await f.run("prepare-preview"); await f.run("prepare-production"); await f.run("enable-providers-preview")
+  const connected = await f.run("deploy-preview"); f.deployments.get(connected.id).readyState = "READY"
+  await f.run("mark-preview-passed", connected.id, REPORT); await f.run("enable-providers-production")
+  f.legacy("preview"); f.legacy("production")
+  f.sha("d".repeat(40)); await f.run("prepare-preview"); await f.run("prepare-production")
+  await rejects(f.run("upgrade-gemini-production"), "preview_tests_required")
+  await f.run("upgrade-gemini-preview"); await f.run("enable-public-cx-preview")
+  const p = await f.run("deploy-preview"); f.deployments.get(p.id).readyState = "READY"
+  await rejects(f.run("upgrade-gemini-production"), "preview_tests_required")
+  await f.run("mark-preview-passed", p.id, REPORT)
+  let productionInputReads = 0
+  f.providerReadHook(() => {
+    if (++productionInputReads > 1) f.providerInputs.GEMINI_API_KEY = "synthetic-late-production-rotation"
+  })
+  await f.run("upgrade-gemini-production")
+  assert.equal(productionInputReads, 1, "production model and public-preview fingerprints share one input snapshot")
+  f.providerReadHook(undefined)
+  await f.run("enable-public-cx-production")
+  assert.equal((await f.run("deploy-production")).target, "production")
+})
+
+test("Gemini upgrade rejects input rotations and ambiguous PATCH without retry", async () => {
+  for (const kind of ["rotation", "ambiguous", "submitted"]) {
+    const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview"); await f.run("enable-providers-preview"); f.legacy("preview")
+    if (kind === "rotation") f.providerInputs.GEMINI_API_KEY = "synthetic-rotated-key"
+    if (kind === "ambiguous") f.patchHook(() => { throw new Error("secret provider outcome") })
+    if (kind === "submitted") await f.run("deploy-preview")
+    await rejects(f.run("upgrade-gemini-preview"), kind === "rotation" ? "prepared_values_changed" : kind === "ambiguous" ? "gemini_migration_outcome_unknown" : "gemini_requires_new_revision")
+    const writes = f.calls.filter(c => c.method !== "GET").length
+    if (kind === "ambiguous") {
+      await rejects(f.run("upgrade-gemini-preview"), "target_not_prepared")
+      await rejects(f.run("deploy-preview"), "target_not_prepared")
+      await rejects(f.run("prepare-preview"), "gemini_migration_incomplete")
+    }
+    assert.equal(f.calls.filter(c => c.method !== "GET").length, writes)
+  }
+})
+
+test("Gemini transition derives both target fingerprints from one immutable input snapshot", async () => {
+  const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview"); await f.run("enable-providers-preview"); f.legacy("preview")
+  let reads = 0
+  f.providerReadHook(() => {
+    if (++reads > 1) f.providerInputs.GEMINI_API_KEY = "synthetic-concurrent-rotation"
+  })
+  await f.run("upgrade-gemini-preview")
+  assert.equal(reads, 1)
+  f.providerReadHook(undefined)
+  await f.run("prepare-preview")
+})
+
+test("public CX migration adds only dual identity flags, preserves protected inputs and is idempotent", async () => {
+  const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview"); await f.run("enable-providers-preview")
+  const before = copy(f.envs), count = f.calls.filter(c => c.method !== "GET").length
+  const p = await f.run("plan-public-cx-preview")
+  assert.deepEqual(p.wouldCreate, ["NEXT_PUBLIC_HK_PUBLIC_CX", "HK_PUBLIC_CX"])
+  assert.equal(f.calls.filter(c => c.method !== "GET").length, count)
+  await f.run("enable-public-cx-preview")
+  for (const row of before) assert.deepEqual(f.envs.find(item => item.id === row.id), row)
+  assert.equal(f.journal().targets.preview.publicCxEnabled, true)
+  const after = f.calls.filter(c => c.method !== "GET").length
+  assert.equal((await f.run("enable-public-cx-preview")).alreadyEnabled, true)
+  await f.run("prepare-preview")
+  assert.equal(f.calls.filter(c => c.method !== "GET").length, after)
+})
+test("public CX cannot open an unconnected profile or an already submitted revision", async () => {
+  const f = fixture(); await f.run("prepare-preview")
+  await rejects(f.run("enable-public-cx-preview"), "public_cx_requires_connected")
+  await f.run("enable-cx-preview"); await f.run("enable-providers-preview"); await f.run("deploy-preview")
+  await rejects(f.run("enable-public-cx-preview"), "public_cx_requires_new_revision")
+})
+
+test("public production opens only after same-SHA public READY preview evidence", async () => {
+  const f = fixture()
+  await f.run("prepare-preview"); await f.run("enable-cx-preview"); await f.run("prepare-production")
+  const cx = await f.run("deploy-preview"); f.deployments.get(cx.id).readyState = "READY"
+  await f.run("mark-preview-passed", cx.id, REPORT); await f.run("enable-cx-production")
+  f.sha("c".repeat(40)); await f.run("prepare-preview"); await f.run("prepare-production")
+  await f.run("enable-providers-preview")
+  const connected = await f.run("deploy-preview"); f.deployments.get(connected.id).readyState = "READY"
+  await f.run("mark-preview-passed", connected.id, REPORT); await f.run("enable-providers-production")
+  f.sha("d".repeat(40)); await f.run("prepare-preview"); await f.run("prepare-production")
+  await rejects(f.run("enable-public-cx-production"), "preview_tests_required")
+  await f.run("enable-public-cx-preview")
+  const candidate = await f.run("deploy-preview"); f.deployments.get(candidate.id).readyState = "READY"
+  await rejects(f.run("enable-public-cx-production"), "preview_tests_required")
+  await f.run("mark-preview-passed", candidate.id, REPORT)
+  const before = copy(f.envs)
+  await f.run("enable-public-cx-production")
+  for (const row of before) assert.deepEqual(f.envs.find(item => item.id === row.id), row)
+  assert.equal((await f.run("deploy-production")).target, "production")
+})
+
+test("ambiguous public flag creation never retries or deploys partial admission", async () => {
+  const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview"); await f.run("enable-providers-preview")
+  f.postHook(() => { throw new Error("synthetic ambiguous response") })
+  await rejects(f.run("enable-public-cx-preview"), "public_cx_migration_outcome_unknown")
+  const writes = f.postCount()
+  await rejects(f.run("enable-public-cx-preview"), "target_not_prepared")
+  await rejects(f.run("deploy-preview"), "target_not_prepared")
+  await rejects(f.run("prepare-preview"), "public_cx_migration_incomplete")
+  assert.equal(f.postCount(), writes)
+})
 
 test("connected opt-in adds only reviewed provider rows, preserving shared budget/access/store/signers", async () => {
   const f = fixture(); await f.run("prepare-preview"); await f.run("enable-cx-preview")

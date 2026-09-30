@@ -1,5 +1,6 @@
 /** Server-only main-operation boundary for the native OpenDID bridge.
- * Provider transport is real; production CX→CAS mapping is deliberately unavailable.
+ * Provider transport and authenticated fresh native holder mapping are real
+ * implementations; both remain disabled without the reviewed hosting profile.
  * No native VC, QR payload, KYC/holder correlator or owner key enters public summaries.
  */
 import { createHmac } from "node:crypto"
@@ -7,6 +8,8 @@ import { assertExternalServicesEnabled, hkConfig, HK_SERVICE_ACCESS } from "./co
 import { identityPolicyChanged } from "./identity-policy"
 import { withStore, type Db, type OperationRecord } from "./store"
 import { refreshJitImportedIdentity } from "./jit-identity-import"
+import { assertNativeHolderBinding } from "./native-binding-service"
+import { nativeBindingConfiguration } from "./native-binding-provider"
 import type { CredentialSummary, PresentationSummary } from "./types"
 import { digestOf, HkError } from "./util"
 import { createOpenDidBridgeClient, openDidUtcTime, resolveOpenDidCxSubject, type OpenDidBridgeClient, type OpenDidCxEvidence, type OpenDidOffer, type VerifiedCxKycBinding } from "./adapters/opendid-provider"
@@ -14,7 +17,7 @@ import { resolveOpenDidNativeBridgeConfig } from "./opendid-native-config"
 import { assertOpenDidPermissionSnapshot, createOpenDidProviderLifecycle, type OpenDidProviderContext, type OpenDidProviderPhase, type OpenDidProviderState, type OpenDidProviderStore } from "./opendid-provider-lifecycle"
 
 export type ProviderOperationAction = "issuance/start" | "issuance/refresh" | "presentation/start" | "presentation/refresh" | "cancel"
-export type ProviderOperationResponse = { record: OperationRecord; provider: { phase: OpenDidProviderPhase; offer: OpenDidOffer | null } }
+export type ProviderOperationResponse = { record: OperationRecord; provider: { phase: OpenDidProviderPhase; offer: OpenDidOffer | null; nativeBindingId?: string } }
 export type ProviderPermission = { revision: number; binding: string }
 type AtomicStore = <T>(fn: (db: Db) => T | Promise<T>) => Promise<T>
 type MappingResolver = (evidence: OpenDidCxEvidence) => Promise<VerifiedCxKycBinding | null>
@@ -25,7 +28,7 @@ const future = (value: string | null | undefined, now: number) => Number.isFinit
 
 /** An environment flag cannot create the missing authenticated holder/CAS mapping,
  * or expand bridge-v1's hardcoded redeem_demo_entitlement policy to guide-save. */
-export function providerIntegrationAvailable(_env: NodeJS.ProcessEnv = process.env): boolean { return false }
+export function providerIntegrationAvailable(_env: NodeJS.ProcessEnv = process.env): boolean { return false } // Guide V2 remains unsupported.
 
 function supportedPolicy(op: OperationRecord): boolean {
   // Reject every V2/unknown journey, not just a matching known guide discriminator.
@@ -50,6 +53,7 @@ function stateReason(op: OperationRecord, now: number): string | null {
   if (!s || s.version !== "bridge-v1" || s.operationId !== op.operationId || s.operationBinding !== operationBinding(op)
     || s.subjectDigest !== digestOf(s.subject) || s.subject.kind !== "cx_evidence_ref" || s.subject.personVerified !== true
     || s.subject.evidenceRef !== i.evidenceId || s.subject.adultVerified !== i.adultVerified) return "opendid_operation_binding"
+  if (s.subject.expectedHolderDid) { try { const binding = assertNativeHolderBinding(op, undefined, now); if (binding.holder!.did !== s.subject.expectedHolderDid || binding.kycRef !== s.subject.kycRef) return "opendid_operation_binding" } catch { return "opendid_operation_binding" } }
   if (terminal(s.phase) || ["cancelled", "expired", "failed", "unknown"].includes(op.status)) return "opendid_permission_required"
   if (!future(s.expiresAt, now) || !future(op.expiresAt, now)) return "opendid_permission_expired"
   return null
@@ -110,10 +114,14 @@ export function providerPresentationReason(op: OperationRecord, now = Date.now()
   if (digestOf(p.requestedClaims) !== digestOf(expected.requestedClaims)) return "opendid_presentation_binding"
   return null
 }
-export function assertProviderPermissionForOperation(op: OperationRecord, expectedRevision?: number, now = Date.now()): void {
+export function assertProviderPermissionForOperation(op: OperationRecord, expectedRevision?: number, now = Date.now(), expectedNativeConfigBinding?: string): void {
   if (expectedRevision !== undefined && op.revision !== expectedRevision) throw fail("operation_changed", "Operation changed after credential status was checked")
   const reason = providerPresentationReason(op, now)
   if (reason) throw fail(reason, "Current OpenDID permission is required")
+  // Recheck configuration at the actual issuer/sign/broadcast/fulfillment
+  // boundary too. A preceding remote status check cannot bless a rotated
+  // authority. The explicit parameter is the factory's pinned config in tests.
+  if (op.secrets.openDidProvider?.subject.expectedHolderDid) assertNativeHolderBinding(op, expectedNativeConfigBinding ?? nativeBindingConfiguration().configBinding, now)
   assertOpenDidPermissionSnapshot(op.secrets.openDidProvider!, now)
 }
 
@@ -144,7 +152,7 @@ function project(op: OperationRecord, s: OpenDidProviderState, now: number): voi
 
 /** Injectable only on the server for deterministic, zero-provider-write tests.
  * The production factory below intentionally supplies no CX→CAS resolver. */
-export function createProviderOperationService(deps: { atomic: AtomicStore; bridge: OpenDidBridgeClient; resolveCxMapping?: MappingResolver; now?: () => number; identityChanged?: (op: OperationRecord) => boolean }) {
+export function createProviderOperationService(deps: { atomic: AtomicStore; bridge: OpenDidBridgeClient; resolveCxMapping?: MappingResolver; nativeConfigBinding?: string; now?: () => number; identityChanged?: (op: OperationRecord) => boolean }) {
   const now = deps.now ?? Date.now, changedIdentity = deps.identityChanged ?? (op => identityPolicyChanged(op.identity))
   async function load(sessionId: string, operationId: string) { return deps.atomic(db => structuredClone(owned(db, sessionId, operationId))) }
   function context(op: OperationRecord): OpenDidProviderContext {
@@ -161,6 +169,10 @@ export function createProviderOperationService(deps: { atomic: AtomicStore; brid
     if (action === "cancel" && ((op.status === "pending" && !["issuance", "presentation", "proposal"].includes(op.phase)) || op.status === "succeeded" || op.delegation?.userTxDigest || op.agent?.txDigest)) throw fail("opendid_cancel_after_execution", "Provider cancellation cannot undo an approved chain action")
   }
   function lifecycle(ctx: OpenDidProviderContext) {
+    const boundHolderCurrent = (op: OperationRecord, subject: OpenDidProviderState["subject"]) => {
+      if (!subject.expectedHolderDid) return deps.nativeConfigBinding === undefined
+      try { const b = assertNativeHolderBinding(op, deps.nativeConfigBinding, now()); return b.holder!.did === subject.expectedHolderDid && b.kycRef === subject.kycRef } catch { return false }
+    }
     const scoped: OpenDidProviderStore = {
       async read(id) {
         if (id !== ctx.operationId) throw fail("not_found", "Operation not found", 404)
@@ -168,7 +180,7 @@ export function createProviderOperationService(deps: { atomic: AtomicStore; brid
           const op = owned(db, ctx.sessionId, id), s = op.secrets.openDidProvider
           if (!s) return null
           // Outer cancellation, expiry, identity/policy drift wins over an in-flight result.
-          const invalid = operationBinding(op) !== s.operationBinding || changedIdentity(op) || op.identity?.sourceCurrent === false
+          const invalid = operationBinding(op) !== s.operationBinding || changedIdentity(op) || op.identity?.sourceCurrent === false || !boundHolderCurrent(op, s.subject)
           const dead = ["cancelled", "expired", "failed", "unknown"].includes(op.status)
           const expired = !future(op.expiresAt, now()) || !future(op.identity?.expiresAt, now())
           if (!terminal(s.phase) && (invalid || dead || expired)) {
@@ -184,7 +196,7 @@ export function createProviderOperationService(deps: { atomic: AtomicStore; brid
           const op = owned(db, ctx.sessionId, id), current = op.secrets.openDidProvider
           if ((current?.revision ?? null) !== expectedRevision || next.operationId !== id || next.ownerBinding !== deps.bridge.ownerBinding(ctx) || next.operationBinding !== ctx.operationBinding) return false
           const terminalUpdate = terminal(next.phase)
-          const active = op.status === "pending" && future(op.expiresAt, now()) && future(op.identity?.expiresAt, now()) && !changedIdentity(op) && op.identity?.sourceCurrent !== false
+          const active = op.status === "pending" && future(op.expiresAt, now()) && future(op.identity?.expiresAt, now()) && !changedIdentity(op) && op.identity?.sourceCurrent !== false && boundHolderCurrent(op, next.subject)
           if (!terminalUpdate && (!active || operationBinding(op) !== ctx.operationBinding)) return false
           // Terminal updates are allowed after enclosing cancellation only to remove authority/finish cleanup.
           if (terminalUpdate && !current) return false
@@ -212,30 +224,37 @@ export function createProviderOperationService(deps: { atomic: AtomicStore; brid
       const record = await load(sessionId, operationId), state = record.secrets.openDidProvider!
       // Another task may cancel after the provider result but before this response is projected.
       const current = record.status === "pending" && state.revision === result.state.revision && !terminal(state.phase) && operationBinding(record) === state.operationBinding
-      return { record, provider: { phase: state.phase, offer: current ? result.offer : null } }
+      return { record, provider: { phase: state.phase, offer: current ? result.offer : null, ...(current && state.subject.expectedHolderDid && record.secrets.nativeHolderBinding?.status === "verified" ? { nativeBindingId: record.secrets.nativeHolderBinding.bindingId } : {}) } }
     },
     async refreshPermission(sessionId: string, operationId: string): Promise<ProviderPermission> {
       const op = await load(sessionId, operationId); validate(op, "permission")
       const ctx = context(op), result = await lifecycle(ctx).assertFreshPermission(ctx)
       const current = await load(sessionId, operationId)
       if (current.secrets.openDidProvider?.revision !== result.state.revision) throw fail("operation_changed", "Operation changed after credential status was checked")
-      assertProviderPermissionForOperation(current, undefined, now())
+      assertProviderPermissionForOperation(current, undefined, now(), deps.nativeConfigBinding)
       return { revision: current.revision, binding: result.state.operationBinding }
     },
   }
 }
 
-function configuredService() {
+function configuredService(sessionId: string, operationId: string) {
   assertExternalServicesEnabled("OpenDID")
   if (hkConfig().opendid.mode !== "opendid") throw fail("opendid_mode_required", "Provider credential mode is not enabled", 503)
   const env = process.env
   const bridge = createOpenDidBridgeClient(resolveOpenDidNativeBridgeConfig(env))
-  // No resolver is wired until Claude/vendor provides the authenticated CX→holder/CAS contract.
-  return createProviderOperationService({ atomic: withStore, bridge })
+  const c = nativeBindingConfiguration(env)
+  return createProviderOperationService({ atomic: withStore, bridge, nativeConfigBinding: c.configBinding, resolveCxMapping: evidence => withStore(db => {
+    const op = db.operations[operationId]
+    if (!op || op.sessionId !== sessionId) throw fail("not_found", "Operation not found", 404)
+    refreshJitImportedIdentity(db, op)
+    const binding = assertNativeHolderBinding(op, c.configBinding)
+    if (identityPolicyChanged(op.identity) || op.identity?.evidenceId !== evidence.evidenceRef) throw fail("opendid_identity_required", "Current verified CX identity is required")
+    return { evidenceRef: evidence.evidenceRef, kycRef: binding.kycRef, mappingVersion: "cx-cas-v1", expectedHolderDid: binding.holder!.did }
+  }) })
 }
 export async function providerOperationAction(sessionId: string, operationId: string, action: ProviderOperationAction): Promise<ProviderOperationResponse> {
-  return configuredService().action(sessionId, operationId, action)
+  return configuredService(sessionId, operationId).action(sessionId, operationId, action)
 }
 export async function refreshProviderPermission(sessionId: string, operationId: string): Promise<ProviderPermission> {
-  return configuredService().refreshPermission(sessionId, operationId)
+  return configuredService(sessionId, operationId).refreshPermission(sessionId, operationId)
 }

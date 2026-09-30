@@ -18,7 +18,7 @@ import { isCxPreview, isReadinessPreview, previewReadOnlyResponse } from "@/lib/
 import { cxReadinessResponse } from "@/lib/hackathon/cx-readiness"
 import { assertCxPreviewOrigin, assertCxPreviewTarget, cxPreviewBody, cxPreviewRouteAllowed, grantCxPreviewAccess, requireCxPreviewAccess } from "@/lib/hackathon/cx-preview-access"
 import { assertIntegrationPreviewBody, assertIntegrationPreviewOrigin, assertIntegrationPreviewTarget, grantIntegrationPreviewAccess, integrationPreviewBody, integrationPreviewRouteAllowed, requireIntegrationPreviewAccess, requiresIntegrationPreviewAccess } from "@/lib/hackathon/integration-preview-access"
-import { isHostedSuiProfile, hostedSuiRouteAllowed, assertHostedSuiBody } from "@/lib/hackathon/hosted-sui-profile"
+import { isHostedSuiProfile, hostedSuiRouteAllowed, assertHostedSuiBody, hostedNativeEnabled } from "@/lib/hackathon/hosted-sui-profile"
 import { assertHostedSuiTarget, assertHostedSuiOrigin, hostedSuiOrigin, requireHostedSuiAccess, grantHostedSuiAccess } from "@/lib/hackathon/hosted-sui-access"
 import { isGuideProductionProfile } from "@/lib/hackathon/guide-production-profile"
 import { assertGuideProductionTarget, assertGuideProductionOrigin, requireGuideProductionAccess, grantGuideProductionAccess, guideProductionRouteAllowed, assertGuideProductionBody } from "@/lib/hackathon/guide-production-access"
@@ -26,6 +26,9 @@ import { isGuideJourney } from "@/lib/hackathon/guide-contract"
 import { jitIdentity } from "@/lib/hackathon/jit-identity"
 import { jitIdentityRouteAllowed, assertJitIdentityBody } from "@/lib/hackathon/jit-identity-routes"
 import { refreshJitImportedIdentity } from "@/lib/hackathon/jit-identity-import"
+import { publicCxRouteAllowed, publicJourneyRouteAllowed, assertPublicCxTarget, reservePublicCxRate } from "@/lib/hackathon/public-cx-policy"
+import { nativeBindingRoute, nativeBindingRouteAllowed } from "@/lib/hackathon/native-binding-route"
+import { localNativeRequested, assertLocalNativeTarget, localNativeRouteAllowed, assertLocalNativeBody, LOCAL_NATIVE_ORIGIN } from "@/lib/hackathon/local-native-policy"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -63,8 +66,39 @@ function venueCtx(venueId: string, loc: "ko" | "en" | "ja") {
   return { venueName: v?.name?.ko ?? venueId, category: String(v?.primaryCategory ?? "restaurant"), district: String(v?.districtId ?? ""), locale: loc }
 }
 
+async function nativeRoute(req: Request, path: string[]) {
+  if (!nativeBindingRouteAllowed(req.method, path)) return null
+  try {
+    // A separate narrow native capability channel, not a general exemption
+    // from hosted lifetime, project, origin, store or role configuration.
+    if (localNativeRequested()) assertLocalNativeTarget(req)
+    else {
+      if (!hostedNativeEnabled()) throw new HkError("native_binding_unavailable", "Native holder connection unavailable", 503)
+      assertHostedSuiTarget(req)
+    }
+    return await nativeBindingRoute(req, path, requireSession)
+  } catch (e) { return err(e) }
+}
+
 export async function GET(req: Request, ctx: Ctx) {
   const requestedPath = (await ctx.params).path
+  if (localNativeRequested()) {
+    try {
+      assertLocalNativeTarget(req)
+      if (!localNativeRouteAllowed("GET", requestedPath)) throw new HkError("native_binding_access_denied", "This action is not available in the isolated native lane", 403)
+    } catch (e) { return err(e) }
+  }
+  const native = await nativeRoute(req, requestedPath)
+  if (native) return native
+  // Exact public identity route only; it cannot issue a hosted access cookie.
+  if (publicCxRouteAllowed("GET", requestedPath)) {
+    try {
+      assertPublicCxTarget(req)
+      if (requestedPath[1] === "eligibility") return json(await jitIdentity.eligibility((await getSession())?.sessionId ?? null))
+      const s = await requireSession()
+      return json(requestedPath[3] === "receipt" ? await jitIdentity.receipt(s.sessionId, requestedPath[2]) : await jitIdentity.get(s.sessionId, requestedPath[2]))
+    } catch (e) { return err(e) }
+  }
   // Public fixed readiness summary. No session/provider request or credential
   // is created; eligible integration profiles may read committed budget state.
   if (req.method === "GET" && requestedPath.length === 2 && requestedPath[0] === "guide" && requestedPath[1] === "readiness" &&
@@ -83,7 +117,7 @@ export async function GET(req: Request, ctx: Ctx) {
       assertHostedSuiTarget(req)
       const { path } = await ctx.params
       if (!hostedSuiRouteAllowed(req.method, path) || new URL(req.url).search || new URL(req.url).hash) return json({ error: { code: "hosted_sui_scope" } }, 403)
-      requireHostedSuiAccess(req)
+      if (!publicJourneyRouteAllowed(req.method, path)) requireHostedSuiAccess(req)
     } catch (e) { return err(e) }
   }
   // The integration branch is locked even if its public flag was omitted.
@@ -135,9 +169,9 @@ export async function GET(req: Request, ctx: Ctx) {
       }
       return json(config)
     }
-    if (path[0] === "me") { const s = await ensureSession(); return json({ sessionId: s.sessionId.slice(0, 8) + "…", hasSubject: Boolean(s.subjectRef) }) }
+    if (path[0] === "me") { const s = publicJourneyRouteAllowed("GET", path) ? await requireSession() : await ensureSession(); return json({ sessionId: s.sessionId.slice(0, 8) + "…", hasSubject: Boolean(s.subjectRef) }) }
     if (path[0] === "places" && path[2] === "demo-entitlements") {
-      const s = await ensureSession()
+      const s = publicJourneyRouteAllowed("GET", path) ? await requireSession() : await ensureSession()
       const cfg = hkPublicConfig()
       if (path[1] !== cfg.campaign.venueId) return json({ supported: false, campaign: null, operation: null })
       // Only an in-progress operation is resumable; finished ones stay reachable via /operations/{id} and the evidence screen.
@@ -170,7 +204,35 @@ export async function GET(req: Request, ctx: Ctx) {
 }
 
 export async function POST(req: Request, ctx: Ctx) {
+  const publicPath = (await ctx.params).path
+  if (localNativeRequested()) {
+    try {
+      assertLocalNativeTarget(req)
+      if (!localNativeRouteAllowed("POST", publicPath)) throw new HkError("native_binding_access_denied", "This action is not available in the isolated native lane", 403)
+      if (!nativeBindingRouteAllowed("POST", publicPath) && (req.headers.get("origin") !== LOCAL_NATIVE_ORIGIN || req.headers.has("authorization") || req.headers.has("sec-fetch-site") && req.headers.get("sec-fetch-site") !== "same-origin")) throw new HkError("native_binding_access_denied", "Same-origin local consent is required", 403)
+    } catch (e) { return err(e) }
+  }
+  const native = await nativeRoute(req, publicPath)
+  if (native) return native
+  if (publicCxRouteAllowed("POST", publicPath)) {
+    try {
+      assertPublicCxTarget(req)
+      const b = await integrationPreviewBody(req)
+      assertJitIdentityBody(publicPath, b)
+      await reservePublicCxRate(req, publicPath)
+      const s = publicPath.length === 2 ? await ensureSession() : await requireSession()
+      if (publicPath.length === 2) return json(await jitIdentity.create(s.sessionId, b))
+      if (publicPath[1] === "authorizations") return json(await jitIdentity.consume(s.sessionId, publicPath[2], b))
+      if (publicPath[3] === "start") return json(await jitIdentity.start(s.sessionId, publicPath[2], b.mobile as boolean))
+      if (publicPath[3] === "complete") return json(await jitIdentity.complete(s.sessionId, publicPath[2]))
+      return json(await jitIdentity.cancel(s.sessionId, publicPath[2]))
+    } catch (e) { return err(e) }
+  }
   let checkedBody: Record<string, unknown> | undefined
+  if (localNativeRequested()) {
+    try { checkedBody = await integrationPreviewBody(req); assertLocalNativeBody(publicPath, checkedBody) }
+    catch (e) { return err(e) }
+  }
   const guideProduction = isGuideProductionProfile()
   if (guideProduction) {
     try {
@@ -200,9 +262,15 @@ export async function POST(req: Request, ctx: Ctx) {
         assertHostedSuiBody(path, b)
         return grantHostedSuiAccess(req, b.accessCode)
       }
-      requireHostedSuiAccess(req)
+      if (!publicJourneyRouteAllowed(req.method, path)) requireHostedSuiAccess(req)
       checkedBody = await integrationPreviewBody(req)
       assertHostedSuiBody(path, checkedBody)
+      if (publicJourneyRouteAllowed(req.method, path)) {
+        if (path[0] === "sessions") await reservePublicCxRate(req, path)
+        if (path.length === 1 && path[0] === "operations" && (!checkedBody.identityAuthorizationRef || !checkedBody.identityContextDigest)) {
+          throw new HkError("jit_identity_proof", "Confirm identity for this action before continuing", 403)
+        }
+      }
     } catch (e) { return err(e) }
   }
   const integrationPreview = requiresIntegrationPreviewAccess()

@@ -7,10 +7,13 @@ import { requiresIntegrationSuiLimits, integrationSuiPreflightIssues, claimInteg
 import { HkError, assert } from "./util"
 import { JIT_IDENTITY_CONSENT, type JitIdentityContext } from "./jit-identity-contract"
 import type { Db, OperationRecord } from "./store"
+import { publicCxEnabled } from "./public-cx-policy"
 
 export type JitRuntimePolicy = { enabled: boolean; digest: string; provider: string; expiresAt: string; campaignVenueId: string }
 export function jitRuntimePolicy(now = Date.now()): JitRuntimePolicy {
   const c = hkConfig(), hosted = isHostedSuiProfile(), integration = requiresIntegrationSuiLimits()
+  if (publicCxEnabled() && hosted && !integration) return { enabled: true, digest: currentCxPolicyDigest(), provider: c.cx.provider,
+    expiresAt: new Date(now + 24 * 60 * 60_000).toISOString(), campaignVenueId: c.campaign.venueId }
   const expiry = hosted ? process.env.HK_HOSTED_SUI_EXPIRES_AT : process.env.HK_GUIDE_EXPIRES_AT ?? process.env.HK_INTEGRATION_PREVIEW_EXPIRES_AT
   const enabled = c.cx.mode === "cx" && !c.isolatedMock && !c.cxPreview &&
     (hosted ? hostedSuiPreflightIssues(process.env, now).length === 0 : integration && integrationSuiPreflightIssues(process.env, now).length === 0)
@@ -18,12 +21,24 @@ export function jitRuntimePolicy(now = Date.now()): JitRuntimePolicy {
     expiresAt: expiry && Number.isFinite(Date.parse(expiry)) ? expiry : INTEGRATION_SUI_LIMITS.maxExpiresAt, campaignVenueId: c.campaign.venueId }
 }
 
-/** No new budget. Each new provider transaction occupies the existing pool. */
+/** Public identity has no signing/execution privilege and a separate bounded
+ * pool. Legacy identity rows continue to count against their original budget. */
 export function reserveJitIdentityOperation(db: Db, op: OperationRecord) {
-  if (requiresIntegrationSuiLimits()) claimIntegrationSuiOperation(db, op.operationId)
-  else if (isHostedSuiProfile()) assert(Object.keys(db.operations).length < PIN.maxOperations, "hosted_sui_limit", "Identity request limit reached", 429)
+  if (publicCxEnabled() && isHostedSuiProfile() && !requiresIntegrationSuiLimits()) {
+    assert(op.kind === "identity_check" && op.phase === "consent" && !op.credential && !op.delegation && !op.chain,
+      "jit_identity_scope", "Identity-only reservation required", 403)
+    const rows = Object.values(db.operations).filter(row => row.secrets?.publicIdentity === true)
+    assert(rows.length < 512 && rows.filter(row => row.sessionId === op.sessionId).length < 20,
+      "jit_identity_limit", "Identity request limit reached", 429)
+    op.secrets.publicIdentity = true
+  } else if (requiresIntegrationSuiLimits()) claimIntegrationSuiOperation(db, op.operationId)
+  else if (isHostedSuiProfile()) assert(hostedExecutionOperationCount(db) < PIN.maxOperations, "hosted_sui_limit", "Identity request limit reached", 429)
   else throw new HkError("jit_identity_unavailable", "Identity checking is unavailable", 503)
   db.operations[op.operationId] = op
+}
+
+export function hostedExecutionOperationCount(db: Db) {
+  return Object.values(db.operations).filter(op => !(op.kind === "identity_check" && op.secrets?.publicIdentity === true)).length
 }
 
 export function validateJitContext(value: unknown, policy: JitRuntimePolicy, consent = false): JitIdentityContext {
@@ -36,6 +51,8 @@ export function validateJitContext(value: unknown, policy: JitRuntimePolicy, con
   assert(["person", "adult", "age19"].includes(String(b.purpose)), "bad_request", "Invalid identity purpose")
   if (b.action === "pass_setup") {
     assert(b.venueId === null && b.tableId === null && ["person", "adult"].includes(String(b.purpose)), "jit_identity_scope", "Invalid pass check", 403)
+  } else if (b.action === "after19_access") {
+    assert(b.venueId === null && b.tableId === null && b.purpose === "age19", "jit_identity_scope", "Invalid After19 check", 403)
   } else if (b.action === "table_request") {
     const table = ondoBTablePolicyById(b.tableId)
     assert(table && table.venueId === b.venueId && b.purpose === (table.alcohol ? "age19" : "person"), "jit_identity_scope", "Table policy changed", 403)

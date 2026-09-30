@@ -3,8 +3,9 @@
 import { cookies, headers } from "next/headers"
 import { nowIso, randomId, HkError } from "./util"
 import { withStore, readStore, type SessionRecord } from "./store"
+import { localNativeRequested } from "./local-native-policy"
 
-export const HK_SESSION_COOKIE = "ondo_hk_session"
+export const HK_SESSION_COOKIE = localNativeRequested() ? "ondo_hk_native3183" : "ondo_hk_session"
 
 export async function assertSameOrigin() {
   const h = await headers()

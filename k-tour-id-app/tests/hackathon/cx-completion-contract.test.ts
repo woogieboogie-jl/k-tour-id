@@ -134,6 +134,28 @@ test("ZKP-mode flag is not an affirmative adult claim", async () => {
   assert.ok("evidence" in result)
   assert.equal(result.evidence.adultVerified, null)
 })
+test("age19 derives only canonical provider birth for explicitly consented age purpose and never returns it", async () => {
+  responses = [completion(), decoded({ birth: "20000101" })]
+  const result = await cxComplete({ ...input, purpose: "age19" })
+  assert.ok("evidence" in result); assert.equal(result.evidence.age19Verified, true)
+  assert.equal(result.evidence.adultVerified, null); assert.equal(result.evidence.age19Policy, "cx-birth-full19-kst-mar1/v1")
+  for (const secret of ["20000101", '"birth"', "synthetic-stable-subject"]) assert.equal(JSON.stringify(result).includes(secret), false)
+  responses = [completion(), decoded({ birth: "20000101" })]
+  const person = await cxComplete(input); assert.ok("evidence" in person); assert.equal(person.evidence.age19Verified, null)
+  responses = [completion(), decoded({ birth: "20000101", dob: "20100101" })]
+  await assert.rejects(cxComplete({ ...input, purpose: "age19" }), code("cx_age_claim_conflict"))
+})
+test("age19 ordinary submission omits ZKP selector; existing person request keeps it", async () => {
+  for (const purpose of ["person", "age19"] as const) for (const mobile of [false, true]) {
+    calls.length = 0
+    responses = [{ resultCode: "200", token: "trans-token-fixture", txId: input.txId },
+      { resultCode: "200", token: input.token, reqTxId: input.txId, cxId: input.cxId,
+        data: mobile ? { iosLink: "https://mobileid.go.kr/verify.html" } : { qrBase64: Buffer.from("89504e470d0a1a0a00000000", "hex").toString("base64") } }]
+    await cxStart({ operationId: input.operationId, mobile, purpose })
+    assert.equal(calls.length, 2)
+    for (const call of calls) assert.deepEqual(call.body.extraParams, purpose === "age19" ? undefined : { zkpType: "AdultVerify" })
+  }
+})
 
 test("request reqTxId conflicts cannot create an app or QR handoff", async () => {
   for (const mobile of [false, true]) {

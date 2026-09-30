@@ -65,7 +65,7 @@ import styles from "./action-gate-coordinator-b.module.css"
 import type { JitIdentityContext } from "@/lib/hackathon/jit-identity-contract"
 import { JitIdentityCheckB } from "./jit-identity-check-b"
 import { jitContextForAction } from "./jit-action-context-b"
-import { forgetJitAuthorization, hasJitAuthorization, JIT_IDENTITY_CHANGED, rememberJitAuthorization } from "./jit-identity-authority-b"
+import { forgetJitAuthorization, hasJitAuthorization, jitAuthorizationContext, JIT_IDENTITY_CHANGED, rememberJitAuthorization } from "./jit-identity-authority-b"
 import { identityReviewOptionsB, useIdentityReviewModeB } from "./identity-review-mode-b"
 
 const FOCUSABLE = "button:not([disabled]),[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex='-1'])"
@@ -636,7 +636,10 @@ export function BActionGateCoordinator() {
     const result = new Set<BActionGateKind>()
     if (state.account === "ACC-ACTIVE") result.add("account")
     if (reviewMode && axisReady(session.person, clock) && (!state.identityCredential || evaluateKPassService(state.identityCredential, { service: "person" }).status === "allowed")) result.add("person")
-    if (!reviewMode && pending && hasJitAuthorization(pending.tokenId, hashBActionReturnTo(pending), clock.getTime())) result.add("person")
+    if (!reviewMode && pending && hasJitAuthorization(pending.tokenId, hashBActionReturnTo(pending), clock.getTime())) {
+      result.add("person")
+      if (jitAuthorizationContext(pending.tokenId)?.purpose === "age19") result.add("age")
+    }
     if (reviewMode && ageSession && isGlobalAfter19AgeCurrent(ageSession, clock) && (!state.identityCredential || evaluateKPassService(state.identityCredential, { service: "age" }).status === "allowed")) result.add("age")
     if (reviewMode && axisReady(session.payment, clock)) result.add("payment_kyc")
     return result

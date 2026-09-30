@@ -47,6 +47,10 @@ import {
   type PlaceAfter19ReturnOutcomeB,
 } from "./after19-place-return-b-model"
 import { readGuestAfter19MemoryB, writeGuestAfter19MemoryB } from "./after19-guest-memory-b"
+import { JitIdentityCheckB } from "../identity-b/jit-identity-check-b"
+import { consumeJitRequestReceipt, jitContext, jitIdentityCall, parseJitReceipt } from "../identity-b/jit-identity-client-b"
+import type { JitIdentityContext } from "@/lib/hackathon/jit-identity-contract"
+import { completeGlobalAfter19CxCheckB } from "./after19-global-b-model"
 import styles from "./after19-global-b.module.css"
 
 export type GlobalAfter19ContextB = {
@@ -68,7 +72,7 @@ type GlobalAfter19BProps = {
 }
 
 type Notice = "off" | "expired" | null
-type GateView = "intro" | "pending" | "failure" | "unavailable" | "expired" | "checkExpired"
+type GateView = "intro" | "pending" | "failure" | "unavailable" | "expired" | "checkExpired" | "jit"
 
 type GlobalAfter19GatePresentationB = Readonly<{
   key: string
@@ -309,6 +313,7 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
   const [clock, setClock] = useState(() => new Date())
   const [gateOpen, setGateOpen] = useState(false)
   const [gateView, setGateView] = useState<GateView>("intro")
+  const [cxContext, setCxContext] = useState<JitIdentityContext | null>(null)
   const [placeReturn, setPlaceReturn] = useState<PlaceAfter19ReturnB | null>(null)
   const [notice, setNotice] = useState<Notice>(null)
   const [reviewDetailsOpen, setReviewDetailsOpen] = useState(false)
@@ -358,13 +363,14 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
     const now = new Date()
     const restored = restoreGlobalAfter19B(window.localStorage, accountActive ? window.sessionStorage : null, now, { allowReviewFixture: reviewMode })
     setPreference(restored.preference)
-    const restoredSession = accountActive
+    const restoredCandidate = reviewMode && accountActive
       ? restored.session
       : readGuestAfter19MemoryB(now, { allowReviewFixture: reviewMode })
+    const restoredSession = !reviewMode && restoredCandidate.eligibilityReceipt?.issuerType !== "OMNIONE_CX" ? { ...DEFAULT_GLOBAL_AFTER19_SESSION } : restoredCandidate
     setSession(restoredSession)
     setNotice(restoredSession.expiryNotice ? "expired" : null)
     writeStorage(window.localStorage, GLOBAL_AFTER19_PREFERENCE_KEY, restored.preference)
-    if (accountActive) writeStorage(window.sessionStorage, GLOBAL_AFTER19_SESSION_KEY, restoredSession)
+    if (reviewMode && accountActive) writeStorage(window.sessionStorage, GLOBAL_AFTER19_SESSION_KEY, restoredSession)
     else removeStorage(window.sessionStorage, GLOBAL_AFTER19_SESSION_KEY)
     const restoredReturn = restorePlaceAfter19ReturnSession(window.sessionStorage)
     if (restoredReturn.publicEnvelope) {
@@ -381,9 +387,10 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
   useEffect(() => {
     if (!hydrated) return
     const now = new Date()
-    const next = accountActive
+    const candidate = reviewMode && accountActive
       ? restoreGlobalAfter19B(window.localStorage, window.sessionStorage, now, { allowReviewFixture: reviewMode }).session
       : readGuestAfter19MemoryB(now, { allowReviewFixture: reviewMode })
+    const next = !reviewMode && candidate.eligibilityReceipt?.issuerType !== "OMNIONE_CX" ? { ...DEFAULT_GLOBAL_AFTER19_SESSION } : candidate
     setSession(next)
     if (!accountActive) removeStorage(window.sessionStorage, GLOBAL_AFTER19_SESSION_KEY)
   }, [accountActive, hydrated, reviewMode])
@@ -414,16 +421,36 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
   }, [])
 
   useEffect(() => {
+    const receipt = session.eligibilityReceipt
+    if (reviewMode || receipt?.issuerType !== "OMNIONE_CX") return
+    const controller = new AbortController()
+    const verify = async () => {
+      try { parseJitReceipt(await jitIdentityCall(`identity/requests/${receipt.requestId}/receipt`, undefined, controller.signal), receipt.receipt.context) }
+      catch {
+        if (controller.signal.aborted) return
+        const closed = writeGuestAfter19MemoryB({ ...DEFAULT_GLOBAL_AFTER19_SESSION, expiryNotice: true })
+        setSession(closed); setNotice("expired")
+      }
+    }
+    void verify()
+    const timer = window.setInterval(() => void verify(), 30_000)
+    const visible = () => { if (document.visibilityState === "visible") void verify() }
+    document.addEventListener("visibilitychange", visible)
+    return () => { controller.abort(); window.clearInterval(timer); document.removeEventListener("visibilitychange", visible) }
+  }, [reviewMode, session.eligibilityReceipt])
+
+  useEffect(() => {
     const syncSession = (event: Event) => {
       const now = new Date()
       const detail = event instanceof CustomEvent ? event.detail : null
-      const restoredSession = !accountActive && detail
+      const candidate = !reviewMode ? readGuestAfter19MemoryB(now) : !accountActive && detail
         ? writeGuestAfter19MemoryB(detail, now, { allowReviewFixture: reviewMode })
         : restoreGlobalAfter19B(window.localStorage, accountActive ? window.sessionStorage : null, now, { allowReviewFixture: reviewMode }).session
+      const restoredSession = !reviewMode && candidate.eligibilityReceipt?.issuerType !== "OMNIONE_CX" ? { ...DEFAULT_GLOBAL_AFTER19_SESSION } : candidate
       setClock(now)
       setSession(restoredSession)
       setNotice(restoredSession.expiryNotice ? "expired" : null)
-      if (accountActive) writeStorage(window.sessionStorage, GLOBAL_AFTER19_SESSION_KEY, restoredSession)
+      if (reviewMode && accountActive) writeStorage(window.sessionStorage, GLOBAL_AFTER19_SESSION_KEY, restoredSession)
       else removeStorage(window.sessionStorage, GLOBAL_AFTER19_SESSION_KEY)
     }
     window.addEventListener(GLOBAL_AFTER19_SESSION_EVENT, syncSession)
@@ -477,7 +504,7 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
   useEffect(() => {
     if (!gateOpen || gatePresence.phase !== "open" || !gatePresentation) return
     const frame = window.requestAnimationFrame(() => {
-      const target = gatePresentation.gateView === "intro" ? primaryRef.current : headingRef.current
+      const target = gatePresentation.gateView === "jit" ? dialogRef.current : gatePresentation.gateView === "intro" ? primaryRef.current : headingRef.current
       target?.focus({ preventScroll: true })
     })
     return () => window.cancelAnimationFrame(frame)
@@ -611,14 +638,15 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
   }, [reviewDetailsOpen, reviewResult, session.mode])
 
   function commitSession(next: GlobalAfter19SessionB, now = new Date(), accountAlreadyPersisted = false) {
+    if (!reviewMode && next.age === "eligible" && next.eligibilityReceipt?.issuerType !== "OMNIONE_CX") return false
     const canonical = sanitizeGlobalAfter19Session(next, now, { allowReviewFixture: reviewMode })
     if (JSON.stringify(canonical) !== JSON.stringify(next)) return false
-    if (accountActive && !accountAlreadyPersisted && !persistGlobalAfter19SessionB(window.sessionStorage, canonical, now, { allowReviewFixture: reviewMode })) return false
-    const committed = accountActive
+    if (reviewMode && accountActive && !accountAlreadyPersisted && !persistGlobalAfter19SessionB(window.sessionStorage, canonical, now, { allowReviewFixture: reviewMode })) return false
+    const committed = reviewMode && accountActive
       ? canonical
       : writeGuestAfter19MemoryB(canonical, now, { allowReviewFixture: reviewMode })
     setSession(committed)
-    if (!accountActive) {
+    if (!reviewMode || !accountActive) {
       removeStorage(window.sessionStorage, GLOBAL_AFTER19_SESSION_KEY)
     }
     window.dispatchEvent(new CustomEvent(GLOBAL_AFTER19_SESSION_EVENT, { detail: committed }))
@@ -699,10 +727,10 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
         finishPlaceReturn("cancel", completedAt)
         return
       }
-      const accountPersistence = accountActive
+      const accountPersistence = reviewMode && accountActive
         ? persistGlobalAfter19SessionB(window.sessionStorage, nextSession, completedAt, { allowReviewFixture: reviewMode })
         : null
-      if (accountActive && !accountPersistence) {
+      if (reviewMode && accountActive && !accountPersistence) {
         setGateView("failure")
         return
       }
@@ -727,6 +755,13 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
     setClock(now)
     if (placeReturn && !isPlaceAfter19ReturnPending(placeReturn, now)) {
       setGateView("expired")
+      return
+    }
+    if (!reviewMode) {
+      setGateView("pending")
+      void jitContext({ action: "after19_access", purpose: "age19", venueId: null, tableId: null }, JSON.stringify({ intent: crypto.randomUUID(), city: context.cityId, place: context.venueId, returnToken: placeReturn?.tokenId ?? null }))
+        .then(value => { if (gateOpenRef.current && gateLifecycleSerialRef.current === checkSerial) { setCxContext(value); setGateView("jit") } })
+        .catch(() => { if (gateOpenRef.current && gateLifecycleSerialRef.current === checkSerial) setGateView("failure") })
       return
     }
     const qa = readQaRuntime<{ after19Global?: "success" | "failure" | "unavailable" | "expired" }>()
@@ -956,7 +991,7 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
         onKeyDownCapture={consumeGateClosingInput}
       >
         <div className={styles.backdrop} aria-hidden="true" />
-        <section ref={dialogRef} className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="global-after19-title" tabIndex={-1} data-gate-view={gateView} onKeyDown={handleGateKeyDown}>
+        <section ref={dialogRef} className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby={gateView === "jit" ? undefined : "global-after19-title"} aria-label={gateView === "jit" ? "OmniOne CX · 19+" : undefined} tabIndex={-1} data-gate-view={gateView} onKeyDown={handleGateKeyDown}>
           <header
             className={styles.dialogHeader}
             aria-label={`${t.context} · ${contextKind}: ${contextLabel}`}
@@ -970,7 +1005,17 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
             <span><MapPin size={18} aria-hidden="true" /><strong>{contextLabel}</strong>{returnVenueLabel || (!placeReturn && context.venueLabel) ? <small>{returnCityLabel}</small> : null}</span>
             <button type="button" className={styles.dialogClose} data-testid="global-after19-close" aria-label={t.close} onClick={cancelGate}><X size={18} aria-hidden="true" /></button>
           </header>
-          <div className={styles.body}>
+          {gateView === "jit" && cxContext ? <div className={styles.body}>
+            <JitIdentityCheckB key={cxContext.contextDigest} locale={locale} context={cxContext} onCancel={cancelGate} onAuthorized={request => {
+              const serial = gateLifecycleSerialRef.current
+              void consumeJitRequestReceipt(request).then(receipt => {
+                if (!gateOpenRef.current || gateLifecycleSerialRef.current !== serial) return
+                const completedAt = new Date(), next = completeGlobalAfter19CxCheckB(receipt, request.requestId, completedAt)
+                if (!next) { setGateView("failure"); return }
+                finishConfirmedCheck(next, completedAt)
+              }).catch(() => { if (gateOpenRef.current && gateLifecycleSerialRef.current === serial) setGateView("failure") })
+            }} />
+          </div> : <div className={styles.body}>
             {gateView === "pending" ? <LoaderCircle className={styles.heroPending} size={27} aria-hidden="true" /> : gateView === "failure" || unavailable || checkExpired ? <AlertTriangle className={styles.heroFailure} size={27} aria-hidden="true" /> : <span className={styles.hero} aria-hidden="true">19+</span>}
             <h2 ref={headingRef} id="global-after19-title" tabIndex={gateView === "intro" ? undefined : -1}>{gateView === "pending" ? t.checkingTitle : gateView === "failure" ? t.failedTitle : unavailable ? t.unavailableTitle : returnExpired ? t.expiredReturnTitle : checkExpired ? t.checkExpiredTitle : t.title}</h2>
             <p className={styles.lead} role={gateView === "pending" || unavailable ? "status" : gateView !== "intro" ? "alert" : undefined} aria-live={gateView === "pending" || unavailable ? "polite" : undefined} aria-atomic={gateView === "intro" ? undefined : true} data-testid={gateView === "intro" ? undefined : "global-after19-status"}>{gateView === "pending" ? t.checkingBody : gateView === "failure" ? t.failedBody : unavailable ? t.unavailableBody : returnExpired ? t.expiredReturnBody : checkExpired ? t.checkExpiredBody : context.cityId === "jeju" ? t.jejuBody : t.body}</p>
@@ -988,13 +1033,13 @@ export function GlobalAfter19B({ locale, context, accountActive = false, onActiv
                 <>
                   <button ref={primaryRef} type="button" className={styles.primary} data-testid={escapeOnly ? "global-after19-general" : retryable ? "global-after19-retry" : "global-after19-confirm"} onClick={escapeOnly ? cancelGate : returnExpired ? retryExpiredPlaceReturn : runCheck}>
                     {retryable ? <RotateCcw size={17} aria-hidden="true" /> : escapeOnly ? <MapPin size={17} aria-hidden="true" /> : <span className={styles.inlineAge} aria-hidden="true">19+</span>}
-                    {escapeOnly ? generalLabel : retryable ? t.retry : t.primary}
+                    {escapeOnly ? generalLabel : retryable ? t.retry : reviewMode ? t.primary : locale === "ko" ? "모바일 신분증으로 확인" : locale === "ja" ? "モバイル身分証で確認" : "Verify with Mobile ID"}
                   </button>
                   {!escapeOnly ? <button type="button" className={styles.secondary} data-testid="global-after19-cancel" onClick={cancelGate}>{retryable ? generalLabel : t.cancel}</button> : null}
                 </>
               )}
             </div>
-          </div>
+          </div>}
         </section>
       </div>
     )

@@ -256,13 +256,13 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
   // ── step actions ──────────────────────────────────────────────────
   const start = () => run("start", async () => {
     if (!consent || !info?.supported || closedRef.current) return
-    if (!guide && config?.modes.cx === "cx" && config.isolatedMock === false) {
+    if (!guide && !localNativeOnly && config?.modes.cx === "cx" && config.isolatedMock === false) {
       // A status read does not approve reuse. Ask for this perk's explicit
       // purpose consent only when there is already a valid server-side proof.
       // First-time perk verification stays in its own budgeted operation.
       const eligibility = parseJitEligibility(await jitIdentityCall("identity/eligibility"))
       if (closedRef.current) return
-      if (eligibility.execution === "provider" && eligibility.person.state === "verified") {
+      if (eligibility.execution === "provider" && (eligibility.person.state === "verified" || process.env.NEXT_PUBLIC_HK_PUBLIC_CX === "public-identity-20260930-v1")) {
         const context = await jitContext({ action: "designated_perk", purpose: "person", venueId: detail.venueId, tableId: null }, crypto.randomUUID())
         if (closedRef.current) return
         reuseIdentityRef.current = context
@@ -404,13 +404,14 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
   const modes = info?.modes ?? config?.modes ?? {}
   const isolated = !guide && config?.isolatedMock !== false
   const hostedSui = !guide && process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1"
+  const localNativeOnly = process.env.NEXT_PUBLIC_HK_LOCAL_NATIVE === "local-native-20260930-v1" && process.env.NODE_ENV === "development"
   const hostedTestOperation = hostedSui && op?.hostedTestRedemption === true
   const hostedTestRedemption = hostedTestOperation && config?.capabilities?.hostedTestRedemptionEnabled === true && op?.allowedActions.includes("redeem") === true
   const hostedTestRecorded = hostedSui && op?.fulfillment?.status === "redeemed" && op.chain?.target?.targetId === "stage-20260930"
   const sampleIdentity = isolated || modes.cx === "mock"
   // Provider configuration must never fall back to browser-generated mock VC/VP
   // if the operation is inconsistent. The shared step rejects mismatched DTOs.
-  const providerStep = guide || (!isolated && !hostedSui && modes.opendid === "opendid")
+  const providerStep = guide || (!isolated && modes.opendid === "opendid")
   const steps: readonly string[] = hostedSui && !hostedTestOperation && !hostedTestRecorded ? [...c.steps.slice(0, 7), tr("실행 완료", "Execution complete", "実行完了")] : c.steps
   const stateOf = (i: number) => (op?.status === "cancelled" || op?.status === "failed" || op?.status === "expired" ? (i < stepIndex ? "done" : i === stepIndex ? "blocked" : "todo") : i < stepIndex ? "done" : i === stepIndex ? "current" : "todo")
   const title = useMemo(() => info?.campaign?.title?.[locale] ?? c.title, [info, locale, c.title])
@@ -523,7 +524,8 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
             </section>
           ) : null}
 
-          {activePhase === "proposal" && op ? <section className={styles.card}><h3>{c.steps[4]}</h3><p>{guide ? tr("패스에 담을 가이드와 한 번의 저장 범위를 확인해 주세요. 읽기에는 승인이 필요하지 않아요.", "Review the guide and the scope of one saving action. Reading does not require approval.", "保存するガイドと1回の保存範囲を確認してください。読むだけなら承認は不要です。") : tr("이 장소에서 체험할 수 있는 혜택 하나를 확인합니다. 내용을 보고 진행 여부를 직접 선택해 주세요.", "Review the one available experience perk, then choose whether to continue.", "この場所で体験できる特典を1つ確認し、進めるかどうか選んでください。")}</p>
+          {localNativeOnly && activePhase === "proposal" ? <section className={styles.card} data-testid="native-local-scope-end"><h3>{tr("로컬 VC·VP 확인", "Local VC and VP verification", "ローカルVC・VP確認")}</h3><p>{tr("이 격리 환경에서는 신원 연결과 패스 발급·제시까지만 확인합니다. AI·체인·실제 매장 혜택은 실행하지 않습니다.", "This isolated environment stops after identity binding, pass issuance and presentation. It does not run AI, chain actions or merchant benefits.", "この隔離環境は本人確認との紐付け、パス発行・提示までです。AI・チェーン操作・店舗特典は実行しません。")}</p><button type="button" className={styles.secondary} onClick={loadEvidence}>{tr("서버 확인 기록 보기", "View server evidence", "サーバー確認記録を見る")}</button><button type="button" className={styles.ghost} onClick={() => close(true)}>{c.close}</button></section> : null}
+          {!localNativeOnly && activePhase === "proposal" && op ? <section className={styles.card}><h3>{c.steps[4]}</h3><p>{guide ? tr("패스에 담을 가이드와 한 번의 저장 범위를 확인해 주세요. 읽기에는 승인이 필요하지 않아요.", "Review the guide and the scope of one saving action. Reading does not require approval.", "保存するガイドと1回の保存範囲を確認してください。読むだけなら承認は不要です。") : tr("이 장소에서 체험할 수 있는 혜택 하나를 확인합니다. 내용을 보고 진행 여부를 직접 선택해 주세요.", "Review the one available experience perk, then choose whether to continue.", "この場所で体験できる特典を1つ確認し、進めるかどうか選んでください。")}</p>
             {!op.allowedActions.includes("propose") ? <p data-testid="hackathon-proposal-unknown">{tr("요청은 이미 전송됐어요. 결과를 확인하며, 같은 요청을 다시 보내지 않습니다.", "The request was already sent. Check its result; it will not be sent again.", "リクエストは送信済みです。結果を確認し、同じリクエストは再送信しません。")}</p> : null}
             <div className={styles.actions}>{op.allowedActions.includes("propose") ? <button type="button" className={styles.primary} disabled={!!busy} onClick={propose} data-testid="hackathon-propose">{busy === "propose" ? <span className={styles.spinner} /> : null}{c.propose}</button> : <button type="button" className={styles.primary} disabled={!!busy} onClick={checkProposal} data-testid="hackathon-proposal-check">{c.fetchResult}</button>}<button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div></section> : null}
 
@@ -571,7 +573,9 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
 
           {activePhase === "fulfillment" && op && hostedTestOperation ? <section className={styles.card} data-testid="hackathon-hosted-test-confirm">
             <h3>{tr("테스트 체험을 확정할까요?", "Confirm this test experience?", "テスト体験を確定しますか？")}</h3>
-            <p>{tr("확인된 Sui 실행과 현재 이용 조건을 다시 검사해 앱 안의 테스트 체험 1회를 확정하고 OmniOne Chain에 검증용 기록을 남깁니다. 실제 매장 혜택·결제·예약은 아니며 OpenDID 자격은 mock입니다.", "Re-check the confirmed Sui execution and current eligibility, confirm one in-app test experience, and record its audit on OmniOne Chain. This is not a real merchant benefit, payment or reservation; the OpenDID credential is mock.", "確認済みのSui実行と現在の利用条件を再検証し、アプリ内のテスト体験を1回確定してOmniOne Chainに検証用の記録を残します。実際の店舗特典・決済・予約ではなく、OpenDID資格はmockです。")}</p>
+            <p>{op.credential?.mode === "opendid"
+              ? tr("확인된 Sui 실행과 현재 패스 자격을 다시 검사해 앱 안의 테스트 체험 1회를 확정하고 OmniOne Chain에 감사 기록을 남깁니다. 실제 매장 혜택·결제·예약은 아닙니다.", "Re-check the confirmed Sui execution and current pass eligibility, confirm one in-app test experience, and record its audit on OmniOne Chain. This is not a real merchant benefit, payment or reservation.", "確認済みのSui実行と現在のパス資格を再検証し、アプリ内のテスト体験を1回確定してOmniOne Chainに監査記録を残します。実際の店舗特典・決済・予約ではありません。")
+              : tr("확인된 Sui 실행과 현재 이용 조건을 다시 검사해 앱 안의 테스트 체험 1회를 확정하고 OmniOne Chain에 검증용 기록을 남깁니다. 실제 매장 혜택·결제·예약은 아니며 OpenDID 자격은 mock입니다.", "Re-check the confirmed Sui execution and current eligibility, confirm one in-app test experience, and record its audit on OmniOne Chain. This is not a real merchant benefit, payment or reservation; the OpenDID credential is mock.", "確認済みのSui実行と現在の利用条件を再検証し、アプリ内のテスト体験を1回確定してOmniOne Chainに検証用の記録を残します。実際の店舗特典・決済・予約ではなく、OpenDID資格はmockです。")}</p>
             {!hostedTestRedemption ? <p className={styles.notice} data-testid="hackathon-test-confirm-unavailable">{tr("현재 이 체험을 확정할 수 없어요. 기존 실행 결과만 다시 확인할 수 있습니다.", "This test experience cannot be confirmed now. You can check the existing execution result.", "現在、このテスト体験は確定できません。既存の実行結果を再確認できます。")}</p> : null}
             <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy || !hostedTestRedemption} onClick={redeem} data-testid="hackathon-redeem">{busy === "redeem" ? <span className={styles.spinner} /> : null}{tr("테스트 체험 확정", "Confirm test experience", "テスト体験を確定")}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={reconcile} data-testid="hackathon-reconcile">{c.reconcile}</button></div>
           </section> : null}

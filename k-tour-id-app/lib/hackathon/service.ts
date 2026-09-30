@@ -217,7 +217,7 @@ export async function createOperation(input: { sessionId: string; venueId: strin
     }
     // Lifetime budget, inside the same durable Redis mutation as creation.
     // Cancelled/failed operations still consume a slot; no reset on retry.
-    if (isHostedSuiProfile()) assert(Object.keys(db.operations).length < HOSTED_SUI_PIN.maxOperations, "hosted_sui_limit", "This journey has reached its execution limit.", 429)
+    if (isHostedSuiProfile()) assert(Object.values(db.operations).filter(row => !(row.kind === "identity_check" && row.secrets?.publicIdentity === true)).length < HOSTED_SUI_PIN.maxOperations, "hosted_sui_limit", "This journey has reached its execution limit.", 429)
     const now = nowIso()
     const consentDigest = digestOf({ version: input.consentVersion, campaignId: c.campaignId, venueId: input.venueId, purpose: c.purpose, policyVersion: c.policyVersion })
     const op: OperationRecord = {

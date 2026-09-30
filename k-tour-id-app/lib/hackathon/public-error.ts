@@ -4,6 +4,7 @@ import { HkError } from "./util"
 // identity response. Do not redact with a regex: never publish its text at all.
 // Only app-owned codes, HTTP statuses, and fixed copy cross this boundary.
 const CODES = new Set(`
+native_binding_request native_binding_access_denied native_binding_unavailable native_binding_provider_unavailable native_binding_unknown native_binding_inactive native_binding_pending native_binding_existing_holder native_binding_proof_invalid
 address bad_request campaign_closed cannot_cancel consent_version csrf
 jit_identity_unavailable jit_identity_scope jit_identity_inactive jit_identity_expired jit_identity_proof jit_identity_limit jit_identity_start_used jit_identity_poll_limit
 guide_setup_required guide_ai_unavailable guide_collection_invalid guide_already_saved guide_save_in_progress zklogin_required
@@ -42,6 +43,15 @@ const STATUSES = new Set([400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500,
 type PublicFailure = { status: number; error: { code: string; message: string; retryable: boolean } }
 
 const FIXED: Record<string, string> = {
+  native_binding_request: "The holder connection request is invalid.",
+  native_binding_access_denied: "This holder connection request is not authorized.",
+  native_binding_unavailable: "The native holder connection is not available yet.",
+  native_binding_provider_unavailable: "The holder connection could not be confirmed. Check the same request.",
+  native_binding_unknown: "The holder connection result is uncertain. Check this request; do not register again.",
+  native_binding_inactive: "This holder connection expired or its action context changed.",
+  native_binding_pending: "The holder connection is in progress. Check its current result.",
+  native_binding_existing_holder: "This identity already has a holder connection. Do not reset or re-register the wallet.",
+  native_binding_proof_invalid: "The native holder proof could not be verified.",
   ai_generation_already_requested: "The assistant request was already sent. Check its current result; it will not be sent again.",
   zklogin_attempt_inactive: "This sign-in expired or its approval context changed. Return to the same operation.",
   zklogin_attempt_used: "Check or cancel the current sign-in before starting another.",

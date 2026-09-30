@@ -26,6 +26,9 @@ export type IdentityEvidence = {
   provider: string
   personVerified: boolean
   adultVerified: boolean | null
+  /** Derived transiently from authenticated canonical birth; never raw DOB. */
+  age19Verified?: boolean | null
+  age19Policy?: string
   verifiedAt: string
   expiresAt: string
   providerTransactionRef: string

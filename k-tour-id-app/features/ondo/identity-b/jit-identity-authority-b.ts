@@ -15,7 +15,7 @@ export function forgetJitAuthorization(token: string) { grants.delete(token); no
 export function clearJitAuthorizations() { grants.clear(); notify() }
 export function hasJitAuthorization(token: string, snapshot: string | null, now = Date.now()) {
   const entry = grants.get(token)
-  return Boolean(entry && snapshot === entry.snapshot && Date.parse(entry.request.expiresAt) > now && Date.parse(entry.request.authorizationExpiresAt ?? "") > now && entry.request.context.purpose === "person")
+  return Boolean(entry && snapshot === entry.snapshot && Date.parse(entry.request.expiresAt) > now && Date.parse(entry.request.authorizationExpiresAt ?? "") > now && ["person", "age19"].includes(entry.request.context.purpose))
 }
 export function jitAuthorizationExpiresAt(token: string, snapshot: string | null) {
   const entry = grants.get(token)

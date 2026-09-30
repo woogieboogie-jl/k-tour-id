@@ -25,6 +25,9 @@ import { assertGuideCollectionMonotonic, type GuideCollectionRecord } from "./gu
 import type { OpenDidProviderState } from "./opendid-provider-lifecycle"
 import { refreshJitImportedIdentities, assertJitImportedIdentity } from "./jit-identity-import"
 import { assertJitIdentityMonotonic, jitImportBindings, assertJitImportBindings, pruneJitIdentitySecrets } from "./jit-identity-integrity"
+import { publicIdentityAllocations, assertPublicIdentityMonotonic } from "./public-cx-integrity"
+import { localNativeRequested, assertLocalNativeProfile } from "./local-native-policy"
+import { localNativeStorePath, persistLocalNativeStore } from "./local-native-storage"
 import { CUTOVER_SCOPE, assertCommittedCutover, assertCutoverSourceUnchanged, assertIntegrationCutoverMonotonic, nextCutoverControl, parseIntegrationCutoverControl,
   type IntegrationCutoverMarker, type IntegrationCutoverControl } from "./integration-cutover"
 import { assertSharedBudget, assertSharedBudgetMonotonic, assertSharedBudgetState, parseSharedBudgetControl, initialSharedBudgetState, nextSharedBudgetState,
@@ -34,10 +37,12 @@ export type OperationRecord = OperationResult & {
   omnioneTarget?: import("./omnione-targets").OmnioneTargetSnapshot
   sessionId: string
   secrets: {
+    publicIdentity?: true // Identity-only public lane; never a chain execution slot.
     zkLoginAttempt?: import("./zklogin-attempt").ZkLoginAttempt // No raw JWT, salt or private key; operation-owned one-shot prover claim.
     identityImport?: { sourceOperationId: string; evidenceId: string; authorizationRef: string; contextDigest: string; importedAt: string }
     identityImportInvalid?: boolean // Recomputed from the source row at read/mutation boundaries.
     openDidProvider?: OpenDidProviderState // Server-only; never expose KYC/owner binding or offers.
+    nativeHolderBinding?: import("./native-binding-service").NativeHolderBindingState // Private CAS handle/holder proof binding; excluded from OperationResult.
     vcDocument?: unknown            // mock/opendid issued VC (issuer-signed); never returned to evidence
     holderPublicKeyPem?: string     // holder binding (mock holder)
     holderKeyAlg?: "Ed25519" | "ECDSA-P256"
@@ -90,7 +95,16 @@ type RedisBackend = { kind: "redis"; url: string; token: string; key: string; ca
 type Backend = RedisBackend | { kind: "file"; path: string }
 
 let backendSingleton: Backend | null = null
+let localNativeBackend = false
 function backend(): Backend {
+  if (localNativeRequested()) {
+    assertLocalNativeProfile()
+    const path = localNativeStorePath()
+    if (backendSingleton && (!localNativeBackend || backendSingleton.kind !== "file" || backendSingleton.path !== path)) throw new HkError("store_configuration", "Local native storage configuration changed; restart the instance", 503)
+    localNativeBackend = true
+    return backendSingleton ??= { kind: "file", path }
+  }
+  if (localNativeBackend) throw new HkError("store_configuration", "Local native storage configuration changed; restart the instance", 503)
   if (process.env.NEXT_PUBLIC_HK_CX_PREVIEW === "1" || process.env.HK_STORE_CANARY_UUID || process.env.HK_STORE_CANARY_OWNER) {
     const config = previewRedisConfig(process.env)
     if (hkConfig().isolatedMock) throw new HkError("store_configuration", "CX Preview requires isolated Redis storage, not file fallback.", 503)
@@ -142,6 +156,10 @@ function fileLoad(path: string): Db {
   return fileCache
 }
 function filePersist(path: string, db: Db) {
+  if (localNativeBackend) {
+    try { persistLocalNativeStore(path, db); return }
+    catch (e) { fileCache = null; throw e }
+  }
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`
   writeFileSync(tmp, JSON.stringify(db), "utf8")
   renameSync(tmp, path)
@@ -244,6 +262,14 @@ function prune(db: Db) {
   pruneJitIdentitySecrets(db)
   const cutoff = Date.now() - RETAIN_MS
   const stale = (iso: string) => { const t = Date.parse(iso); return Number.isFinite(t) && t < cutoff }
+  // Expired identity-only history is bounded; references used by any retained
+  // downstream operation remain intact. This does not reset a chain budget.
+  const imported = new Set(Object.values(db.operations).flatMap(op => op.secrets?.identityImport ? [op.secrets.identityImport.authorizationRef] : []))
+  for (const [id, row] of Object.entries(db.jitIdentity?.requests ?? {})) {
+    if (!stale(row.expiresAt) || row.authorizationRef && imported.has(row.authorizationRef)) continue
+    if (row.authorizationRef) delete db.jitIdentity!.authorizations[row.authorizationRef]
+    delete db.jitIdentity!.requests[id]
+  }
   const expired = (iso: string | undefined) => Boolean(iso) && (!Number.isFinite(Date.parse(iso!)) || Date.parse(iso!) <= Date.now())
   for (const [id, op] of Object.entries(db.operations)) {
     const terminal = ["failed", "cancelled", "expired"].includes(op.status) || expired(op.expiresAt)
@@ -257,7 +283,7 @@ function prune(db: Db) {
         else op.identity = null
       }
     }
-    if (stale(op.updatedAt)) delete db.operations[id]
+    if (stale(op.updatedAt) && !Object.values(db.jitIdentity?.requests ?? {}).some(r => r.operationId === id || r.evidenceOperationId === id)) delete db.operations[id]
   }
   for (const [id, s] of Object.entries(db.sessions)) if (stale(s.lastSeenAt) && !s.subjectRef) delete db.sessions[id]
   for (const [id, n] of Object.entries(db.nonces)) if (stale(n.createdAt)) delete db.nonces[id]
@@ -281,7 +307,7 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       const collection = db.guideCollection ? structuredClone(db.guideCollection) : undefined
       const shared = db.integrationSharedBudget ? structuredClone(assertSharedBudget(db)) : undefined
       const jit = db.jitIdentity ? structuredClone(db.jitIdentity) : undefined, imports = jitImportBindings(db)
-      const chainTargets = omnioneTargetBindings(db)
+      const chainTargets = omnioneTargetBindings(db), publicAllocations = publicIdentityAllocations(db)
       refreshJitImportedIdentities(db)
       const result = await fn(db)
       refreshJitImportedIdentities(db)
@@ -292,6 +318,7 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       assertSharedBudgetMonotonic(shared, db)
       assertJitIdentityMonotonic(jit, db); assertJitImportBindings(imports, db)
       assertOmnioneTargetMonotonic(chainTargets, db)
+      assertPublicIdentityMonotonic(publicAllocations, db)
       prune(db)
       filePersist(b.path, db)
       fileCache = db
@@ -315,7 +342,7 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       const collection = db.guideCollection ? structuredClone(db.guideCollection) : undefined
       const shared = db.integrationSharedBudget ? structuredClone(assertSharedBudget(db)) : undefined
       const jit = db.jitIdentity ? structuredClone(db.jitIdentity) : undefined, imports = jitImportBindings(db)
-      const chainTargets = omnioneTargetBindings(db)
+      const chainTargets = omnioneTargetBindings(db), publicAllocations = publicIdentityAllocations(db)
       refreshJitImportedIdentities(db)
       const result = await fn(db)
       refreshJitImportedIdentities(db)
@@ -326,6 +353,7 @@ export function withStore<T>(fn: (db: Db) => T | Promise<T>): Promise<T> {
       assertSharedBudgetMonotonic(shared, db)
       assertJitIdentityMonotonic(jit, db); assertJitImportBindings(imports, db)
       assertOmnioneTargetMonotonic(chainTargets, db)
+      assertPublicIdentityMonotonic(publicAllocations, db)
       prune(db)
       if (cutover) await redisCutoverPersist(b, cutover, db, token, sourceToken)
       else await redisPersist(b, db, token)

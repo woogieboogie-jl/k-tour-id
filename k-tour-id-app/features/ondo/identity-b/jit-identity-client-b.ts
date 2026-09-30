@@ -1,11 +1,12 @@
 import { z } from "zod"
-import { JIT_IDENTITY_CONSENT, JIT_IDENTITY_VERSION, type JitIdentityContext, type JitIdentityEligibility, type JitIdentityReceipt, type JitIdentityRequest } from "@/lib/hackathon/jit-identity-contract"
+import { CX_AGE19_POLICY, JIT_IDENTITY_CONSENT, JIT_IDENTITY_VERSION, type JitIdentityContext, type JitIdentityEligibility, type JitIdentityReceipt, type JitIdentityRequest } from "@/lib/hackathon/jit-identity-contract"
 
 const date = z.string().datetime({ offset: true })
 const bounded = z.string().min(1).max(256)
-const contextSchema = z.object({ action: z.enum(["pass_setup", "local_moment", "table_request", "designated_perk"]), purpose: z.enum(["person", "adult", "age19"]), venueId: bounded.nullable(), tableId: bounded.nullable(), contextDigest: z.string().regex(/^0x[a-f0-9]{64}$/) }).strict()
+const contextSchema = z.object({ action: z.enum(["pass_setup", "local_moment", "table_request", "designated_perk", "after19_access"]), purpose: z.enum(["person", "adult", "age19"]), venueId: bounded.nullable(), tableId: bounded.nullable(), contextDigest: z.string().regex(/^0x[a-f0-9]{64}$/) }).strict()
 const axis = z.object({ state: z.enum(["verified", "proof_required", "unavailable"]), expiresAt: date.nullable() }).strict()
-const eligibilitySchema = z.object({ version: z.literal(JIT_IDENTITY_VERSION), provider: z.literal("omnione_cx"), execution: z.enum(["provider", "unavailable"]), person: axis, adult: z.object({ state: z.enum(["verified", "proof_required", "not_verified", "unavailable"]), expiresAt: date.nullable() }).strict(), age19: z.object({ state: z.literal("unsupported") }).strict(), paymentKyc: z.object({ state: z.literal("unsupported") }).strict(), canStart: z.boolean(), consentVersion: z.literal(JIT_IDENTITY_CONSENT) }).strict()
+const ageAxis = z.object({ state: z.enum(["verified", "proof_required", "not_verified", "unavailable"]), expiresAt: date.nullable() }).strict()
+const eligibilitySchema = z.object({ version: z.literal(JIT_IDENTITY_VERSION), provider: z.literal("omnione_cx"), execution: z.enum(["provider", "unavailable"]), person: axis, adult: ageAxis, age19: z.union([ageAxis, z.object({ state: z.literal("unsupported") }).strict().transform(() => ({ state: "unavailable" as const, expiresAt: null }))]), paymentKyc: z.object({ state: z.literal("unsupported") }).strict(), canStart: z.boolean(), consentVersion: z.literal(JIT_IDENTITY_CONSENT) }).strict()
 const requestId = z.string().regex(/^idn_[A-Za-z0-9_-]{16,32}$/)
 const authorizationId = z.string().regex(/^ida_[A-Za-z0-9_-]{16,32}$/)
 const handoff = z.discriminatedUnion("kind", [
@@ -13,15 +14,16 @@ const handoff = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("app"), androidLink: z.string().max(8192).optional(), iosLink: z.string().max(8192).optional(), ssPayLink: z.string().max(8192).optional(), cxId: bounded, expiresAt: date }).strict(),
 ])
 const requestSchema = z.object({ version: z.literal(JIT_IDENTITY_VERSION), requestId, status: z.enum(["awaiting_identity", "preparing", "handoff", "checking", "authorized", "completed", "denied", "cancelled", "expired", "unknown"]), context: contextSchema, expiresAt: date, handoff: handoff.nullable(), authorizationRef: authorizationId.nullable(), authorizationExpiresAt: date.nullable(), reason: z.string().max(128).nullable() }).strict()
-const receiptSchema = z.object({ version: z.literal(JIT_IDENTITY_VERSION), receiptId: bounded, context: contextSchema, authorizedAt: date, expiresAt: date, evidenceExpiresAt: date, provider: z.literal("omnione_cx"), personVerified: z.literal(true), adultVerified: z.boolean(), paymentKycVerified: z.literal(false) }).strict()
+const receiptSchema = z.object({ version: z.literal(JIT_IDENTITY_VERSION), receiptId: bounded, context: contextSchema, authorizedAt: date, expiresAt: date, evidenceExpiresAt: date, provider: z.literal("omnione_cx"), personVerified: z.literal(true), adultVerified: z.boolean(), age19Verified: z.boolean().optional(), age19Policy: z.literal(CX_AGE19_POLICY).optional(), paymentKycVerified: z.literal(false) }).strict()
 
 export function sameJitContext(a: JitIdentityContext, b: JitIdentityContext) { return a.action === b.action && a.purpose === b.purpose && a.venueId === b.venueId && a.tableId === b.tableId && a.contextDigest === b.contextDigest }
 function parseDto<T>(schema: z.ZodType<T>, value: unknown): T { const result = schema.safeParse(value); if (!result.success) throw new JitIdentityError("identity_response_invalid"); return result.data }
 export function parseJitEligibility(value: unknown): JitIdentityEligibility {
   const parsed = parseDto(eligibilitySchema, value)
-  if (parsed.execution !== "provider" && (parsed.canStart || parsed.person.state === "verified" || parsed.adult.state === "verified")) throw new Error("identity_response_mismatch")
+  if (parsed.execution !== "provider" && (parsed.canStart || parsed.person.state === "verified" || parsed.adult.state === "verified" || parsed.age19.state === "verified")) throw new Error("identity_response_mismatch")
   if (parsed.person.state === "verified" && (!parsed.person.expiresAt || Date.parse(parsed.person.expiresAt) <= Date.now())) throw new Error("identity_expired")
-  return parsed
+  if (parsed.age19.state === "verified" && (!parsed.age19.expiresAt || Date.parse(parsed.age19.expiresAt) <= Date.now())) throw new Error("identity_expired")
+  return { ...parsed, age19: parsed.age19.state === "unsupported" ? { state: "unavailable", expiresAt: null } : parsed.age19 }
 }
 export function parseJitRequest(value: unknown, expected: JitIdentityContext, expectedId?: string): JitIdentityRequest {
   const parsed = parseDto(requestSchema, value)
@@ -32,7 +34,7 @@ export function parseJitRequest(value: unknown, expected: JitIdentityContext, ex
 }
 export function parseJitReceipt(value: unknown, expected: JitIdentityContext): JitIdentityReceipt {
   const parsed = parseDto(receiptSchema, value)
-  if (!sameJitContext(parsed.context, expected) || parsed.context.purpose === "age19" || parsed.context.purpose === "adult" && !parsed.adultVerified || Date.parse(parsed.expiresAt) <= Date.now() || Date.parse(parsed.evidenceExpiresAt) <= Date.now() || Date.parse(parsed.authorizedAt) > Date.now() + 5000) throw new Error("identity_receipt_mismatch")
+  if (!sameJitContext(parsed.context, expected) || parsed.context.purpose === "age19" && (parsed.age19Verified !== true || parsed.age19Policy !== CX_AGE19_POLICY) || parsed.context.purpose === "adult" && !parsed.adultVerified || Date.parse(parsed.expiresAt) <= Date.now() || Date.parse(parsed.evidenceExpiresAt) <= Date.now() || Date.parse(parsed.authorizedAt) > Date.now() + 5000) throw new Error("identity_receipt_mismatch")
   return parsed
 }
 export class JitIdentityError extends Error { constructor(public code: string, public status = 0) { super(code) } }

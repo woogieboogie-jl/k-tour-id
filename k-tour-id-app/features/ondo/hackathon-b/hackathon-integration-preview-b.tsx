@@ -15,8 +15,8 @@ const COPY = {
   ja: { title: "統合体験へのアクセス", body: "案内された非公開アクセスコードを入力してください。アクセスの確認は本人確認や実行への同意を代替しません。", code: "アクセスコード", enter: "確認", close: "閉じる", checking: "アクセスを確認中です", denied: "アクセスコードを確認してください。", unavailable: "現在、統合体験を開けません。しばらくしてから再確認してください。", retry: "再確認" },
 } as const
 
-/** The unchanged Journey is not mounted until the server accepts its own
- * separate HttpOnly access cookie. No access code enters browser storage. */
+/** The Journey mounts only after server-side profile admission. The public
+ * profile no longer requires an access code; private profiles retain theirs. */
 export function HackathonIntegrationPreviewGate({ detail, onClose, children, hostedSui = false }: { detail: HackathonOpenDetail; onClose: (restore?: boolean) => void; children: ReactNode; hostedSui?: boolean }) {
   const [authorized, setAuthorized] = useState(false)
   const grant = useCallback(() => setAuthorized(true), [])
@@ -43,7 +43,9 @@ function IntegrationAccessForm({ detail, onClose, onGranted, hostedSui }: { deta
     if (!response.ok) { setStatus("unavailable"); return }
     const config = await response.json()
     if (signal.aborted) return
-    if (config.isolatedMock !== false || (hostedSui ? config.hostedSui !== true || config.modes?.sui !== "testnet" || config.modes?.opendid !== "mock" : config.modes?.cx !== "cx" || config.modes?.opendid !== "opendid")) { setStatus("unavailable"); return }
+    const hostedCredentialMode = config.modes?.opendid === "mock" ||
+      (config.modes?.opendid === "opendid" && config.modes?.cx === "cx" && config.capabilities?.nativeBindingConfigured === true)
+    if (config.isolatedMock !== false || (hostedSui ? config.hostedSui !== true || config.modes?.sui !== "testnet" || !hostedCredentialMode : config.modes?.cx !== "cx" || config.modes?.opendid !== "opendid")) { setStatus("unavailable"); return }
     onGranted()
   }, [onGranted, hostedSui])
 

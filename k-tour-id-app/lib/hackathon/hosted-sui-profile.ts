@@ -8,7 +8,7 @@ import { zkLoginRouteAllowed, assertZkLoginRequestBody } from "./zklogin-route-p
 
 export type HostedSuiEnv = Record<string, string | undefined>
 export const CONNECTED_PIN = Object.freeze({
-  marker: "connected-20260930-v1", model: "gemini-2.5-flash",
+  marker: "connected-20260930-v1", model: "gemini-3.8-flash",
   googleClientId: "746125368961-1njodv4sh0b2sjogudsl7dvreb9ra186.apps.googleusercontent.com",
   prover: "https://prover.mystenlabs.com/v1", targetId: "stage-20260930", chainId: "201210",
   registry: "0x07B35E14b1BF59be938Fd72a6f9d9f9E04f0A687", recorder: "0x315694F531f7b25c4CEC3660f9Cd66eab9F2C39a", gasLimit: "300000",
@@ -42,6 +42,26 @@ export function hostedConnectedProvidersEnabled(env: HostedSuiEnv = process.env)
 }
 export const hostedAiEnabled = (env: HostedSuiEnv = process.env) => hostedConnectedProvidersEnabled(env) && env.HK_HOSTED_AI_ENABLED === "1"
 export const hostedZkLoginEnabled = (env: HostedSuiEnv = process.env) => hostedConnectedProvidersEnabled(env) && env.HK_HOSTED_ZKLOGIN_ENABLED === "1"
+export const hostedNativeEnabled = (env: HostedSuiEnv = process.env) => hostedConnectedProvidersEnabled(env) && env.HK_HOSTED_OPENDID_ENABLED === "1" &&
+  env.NEXT_PUBLIC_HK_PUBLIC_CX === "public-identity-20260930-v1" && env.HK_PUBLIC_CX === "public-identity-20260930-v1"
+
+/** Configuration admission only, never evidence of a holder/provider success.
+ * No loopback, free-form upstream override or secret enters the browser build. */
+function nativeConfigurationReady(env: HostedSuiEnv): boolean {
+  const keys = ["HK_OPENDID_HOLDER_BINDING_ENABLED", "HK_OPENDID_BRIDGE_URL", "HK_OPENDID_TRUSTED_ORIGIN", "HK_OPENDID_BRIDGE_TOKEN", "HK_OPENDID_OWNER_BINDING_SECRET",
+    "HK_OPENDID_ISSUER_DID", "HK_OPENDID_SCHEMA_ID", "HK_OPENDID_ADMIN_TOKEN", "HK_OPENDID_CAS_URL", "HK_OPENDID_TA_URL", "HK_OPENDID_DID_API_URL"]
+  if (!only(env, ["HK_OPENDID_"], keys) || env.HK_OPENDID_HOLDER_BINDING_ENABLED !== "1" || env.HK_MODE_CX !== "cx" ||
+    !["HK_OPENDID_BRIDGE_TOKEN", "HK_OPENDID_OWNER_BINDING_SECRET", "HK_OPENDID_ADMIN_TOKEN"].every(k => secret(env[k])) ||
+    !/^did:omn:[A-Za-z0-9:_-]{8,160}$/.test(env.HK_OPENDID_ISSUER_DID ?? "")) return false
+  try {
+    const trusted = new URL(env.HK_OPENDID_TRUSTED_ORIGIN ?? "")
+    if (trusted.protocol !== "https:" || trusted.origin !== env.HK_OPENDID_TRUSTED_ORIGIN || trusted.username || trusted.password || trusted.port ||
+      !/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/i.test(trusted.hostname) || /(?:^|\.)(?:localhost|local|internal)$/.test(trusted.hostname)) return false
+    for (const key of ["HK_OPENDID_BRIDGE_URL", "HK_OPENDID_CAS_URL", "HK_OPENDID_TA_URL", "HK_OPENDID_DID_API_URL"]) if (env[key] !== trusted.origin) return false
+    const schema = new URL(env.HK_OPENDID_SCHEMA_ID ?? "")
+    return schema.origin === trusted.origin && !schema.username && !schema.password && !schema.search && !schema.hash && schema.pathname !== "/"
+  } catch { return false }
+}
 export const hostedOmnioneEnabled = (env: HostedSuiEnv = process.env) => hostedConnectedProvidersEnabled(env) && env.HK_HOSTED_OMNIONE_ENABLED === "1" &&
   env.HK_MODE_CX === "cx" && env.HK_OMNIONE_TARGET_ID === CONNECTED_PIN.targetId && env.HK_OMNIONE_CHAIN_ID === CONNECTED_PIN.chainId &&
   env.HK_OMNIONE_REGISTRY_ADDRESS?.toLowerCase() === CONNECTED_PIN.registry.toLowerCase() && env.HK_OMNIONE_RECORDER_ADDRESS?.toLowerCase() === CONNECTED_PIN.recorder.toLowerCase() && env.HK_OMNIONE_GAS_LIMIT === CONNECTED_PIN.gasLimit
@@ -71,7 +91,7 @@ function redisReady(env: HostedSuiEnv): boolean {
 export function hostedSuiPreflightIssues(env: HostedSuiEnv = process.env, now = Date.now()): string[] {
   const expiryText = env.HK_HOSTED_SUI_EXPIRES_AT ?? "", expiry = Date.parse(expiryText)
   const local = env.HK_HOSTED_SUI_LOCAL_TEST === "1" && !remote(env) && env.NODE_ENV !== "production"
-  const connected = hostedConnectedProvidersEnabled(env), ai = hostedAiEnabled(env), google = hostedZkLoginEnabled(env), omni = hostedOmnioneEnabled(env)
+  const connected = hostedConnectedProvidersEnabled(env), ai = hostedAiEnabled(env), google = hostedZkLoginEnabled(env), omni = hostedOmnioneEnabled(env), native = hostedNativeEnabled(env)
   const hasMarker = Boolean(env.NEXT_PUBLIC_HK_HOSTED_PROVIDERS || env.HK_HOSTED_PROVIDERS)
   const checks: Record<string, boolean> = {
     hosted_build: env.NEXT_PUBLIC_HK_HOSTED_SUI === "1" && (env !== process.env || process.env.NEXT_PUBLIC_HK_HOSTED_SUI === "1"),
@@ -84,7 +104,8 @@ export function hostedSuiPreflightIssues(env: HostedSuiEnv = process.env, now = 
     non_isolated: env.HK_ISOLATED_MOCK === "0",
     expiry: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(expiryText) && Number.isFinite(now) && Number.isFinite(expiry) && expiry > now && expiry <= PIN.maxEnd,
     cx_mode: env.HK_MODE_CX === "mock" || env.HK_MODE_CX === "cx",
-    sample_credential: env.HK_MODE_OPENDID === "mock",
+    sample_credential: native ? env.HK_MODE_OPENDID === "opendid" : env.HK_MODE_OPENDID === "mock",
+    native_profile: !env.HK_HOSTED_OPENDID_ENABLED || env.HK_HOSTED_OPENDID_ENABLED === "0" || native,
     connected_profile: !hasMarker || connected,
     connected_flags: ["HK_HOSTED_AI_ENABLED", "HK_HOSTED_ZKLOGIN_ENABLED", "HK_HOSTED_OMNIONE_ENABLED"].every(key => !env[key] || env[key] === "0" || (connected && env[key] === "1")),
     rule_ai: ai ? env.HK_AI_MODE === "gemini" : env.HK_AI_MODE === "rule",
@@ -93,7 +114,7 @@ export function hostedSuiPreflightIssues(env: HostedSuiEnv = process.env, now = 
     no_gemini: ai ? secret(env.GEMINI_API_KEY) && env.GEMINI_MODEL === CONNECTED_PIN.model && only(env, ["GEMINI_", "GOOGLE_GENERATIVE_AI_"], ["GEMINI_API_KEY", "GEMINI_MODEL"]) : absent(env, ["GEMINI_", "GOOGLE_GENERATIVE_AI_"]),
     no_omnione: omni ? approvedOmnioneRpc(env.HK_OMNIONE_RPC_URL ?? "") && /^(?:0x)?[a-fA-F0-9]{64}$/.test(env.HK_OMNIONE_PRIVATE_KEY ?? "") && only(env, ["HK_OMNIONE_"], ["HK_OMNIONE_TARGET_ID", "HK_OMNIONE_CHAIN_ID", "HK_OMNIONE_REGISTRY_ADDRESS", "HK_OMNIONE_RECORDER_ADDRESS", "HK_OMNIONE_GAS_LIMIT", "HK_OMNIONE_RPC_URL", "HK_OMNIONE_PRIVATE_KEY"]) : absent(env, ["HK_OMNIONE_"]),
     connected_omnione: env.HK_HOSTED_OMNIONE_ENABLED !== "1" || omni,
-    no_opendid_provider: absent(env, ["HK_OPENDID_"]),
+    no_opendid_provider: native ? nativeConfigurationReady(env) : absent(env, ["HK_OPENDID_"]),
     no_cx_fallback: !env.HK_CX_SAMPLE_FALLBACK || env.HK_CX_SAMPLE_FALLBACK === "0",
     sui_network: env.HK_SUI_NETWORK === PIN.network,
     sui_rpc: env.HK_SUI_GRPC_URL === PIN.rpc,
@@ -162,7 +183,7 @@ function parts(path: RoutePath): readonly string[] | null {
     out = (path.startsWith(prefix) ? path.slice(prefix.length) : path.slice(1)).split("/")
   } else if (Array.isArray(path)) out = path
   else return null
-  return out.length >= 1 && out.length <= 4 && out.every(p => typeof p === "string" && /^[A-Za-z0-9_-]{1,120}$/.test(p)) ? out : null
+  return out.length >= 1 && out.length <= 5 && out.every(p => typeof p === "string" && /^[A-Za-z0-9_-]{1,120}$/.test(p)) ? out : null
 }
 
 /** Unknown paths, methods, encodings and tails fail closed. Provider/fulfillment
@@ -170,6 +191,8 @@ function parts(path: RoutePath): readonly string[] | null {
 export function hostedSuiRouteAllowed(method: string, path: RoutePath, env: HostedSuiEnv = process.env): boolean {
   const p = parts(path)
   if (!p) return false
+  if (p[0] === "operations" && operationId.test(p[1] ?? "") && p[2] === "provider") return method === "POST" && hostedNativeEnabled(env) &&
+    ["issuance/start", "issuance/refresh", "presentation/start", "presentation/refresh", "cancel"].includes(p.slice(3).join("/"))
   if (jitIdentityRouteAllowed(method, p)) return true
   if (p[0] === "zklogin") return hostedZkLoginEnabled(env) && zkLoginRouteAllowed(method, p)
   if (p.length === 3 && p[0] === "operations" && operationId.test(p[1]) && p[2] === "redeem") return method === "POST" && hostedOmnioneEnabled(env)
@@ -222,6 +245,7 @@ export function assertHostedSuiBody(path: RoutePath, body: unknown, env: HostedS
     return
   }
   const action = p.slice(2).join("/")
+  if (p[2] === "provider") { fields(body, []); return }
   if (action === "redeem") { fields(body, ["idempotencyKey"], ["idempotencyKey"]); if (typeof body.idempotencyKey !== "string" || !/^[A-Za-z0-9_-]{1,80}$/.test(body.idempotencyKey)) scope(); return }
   const allowed = p.length === 1 ? (p[0] === "operations" ? ["venueId", "consentVersion", "locale", "identityAuthorizationRef", "identityContextDigest"] : [])
     : p[0] === "hosted" ? ["accessCode"] : actionFields[action]

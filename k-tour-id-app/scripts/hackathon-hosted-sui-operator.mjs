@@ -7,7 +7,7 @@ import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { createHash, createHmac, randomBytes } from "node:crypto"
 import { HOSTED_SUI_BRANCH, PROJECT_ID, ORG_ID } from "./hackathon-hosted-sui-build.mjs"
-import { PROVIDER_FIXED_VALUES, PROVIDER_SECRET_KEYS, PROVIDER_INPUT_KEYS, PROVIDER_ADDED_KEYS, readHostedProviderInputs } from "./hackathon-hosted-provider-inputs.mjs"
+import { CURRENT_GEMINI_MODEL, LEGACY_GEMINI_MODEL, PROVIDER_FIXED_VALUES, PROVIDER_SECRET_KEYS, PROVIDER_INPUT_KEYS, PROVIDER_ADDED_KEYS, readHostedProviderInputs } from "./hackathon-hosted-provider-inputs.mjs"
 
 const ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)))
 const EXPECTED_ROOT = "/Users/woogieboogie/github/k-tour-id/.codex-worktrees/sui-main-20260928"
@@ -82,7 +82,11 @@ const fixedValues = Object.freeze({
 const dynamicKeys = ["HK_HOSTED_SUI_ACCESS_SECRET", "HK_HOSTED_SUI_ACCESS_CODE", "KV_REST_API_URL", "KV_REST_API_TOKEN", "HK_ISSUER_SIGNING_SEED", "HK_SUI_ISSUER_SECRET_KEY", "HK_SUI_AGENT_SECRET_KEY", "HK_SUI_SPONSOR_SECRET_KEY"]
 const allKeys = [...Object.keys(fixedValues), ...dynamicKeys]
 const cxValues = Object.freeze({ HK_CX_BASE_URL: "https://cx.raonsecure.co.kr:18543", HK_CX_PROVIDER: "comdl", HK_CX_ZKP_TYPE: "AdultVerify" })
-const targetKeys = state => [...allKeys, ...(state?.cxEnabled === true ? Object.keys(cxValues) : []), ...(state?.providersEnabled === true ? PROVIDER_ADDED_KEYS : [])]
+const publicCxValues = Object.freeze({ NEXT_PUBLIC_HK_PUBLIC_CX: "public-identity-20260930-v1", HK_PUBLIC_CX: "public-identity-20260930-v1" })
+const targetKeys = state => [...allKeys, ...(state?.cxEnabled === true ? Object.keys(cxValues) : []), ...(state?.providersEnabled === true ? PROVIDER_ADDED_KEYS : []), ...(state?.publicCxEnabled === true ? Object.keys(publicCxValues) : [])]
+// Missing means the previously journalled September 30 release, never an
+// implicit model rotation. Upgrade uses one explicit, journalled PATCH below.
+const stateModel = state => state?.geminiModel ?? LEGACY_GEMINI_MODEL
 
 function privateJson(path) {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
@@ -160,10 +164,14 @@ function metadata(item, key, target, state, expected) {
   return { id: item.id, createdAt: item.createdAt, updatedAt: item.updatedAt }
 }
 function stateCheck(state) {
-  if (!record(state) || !NONCE.test(state.nonce ?? "") || !HASH.test(state.fingerprint ?? "") || !record(state.entries) || !record(state.deployments) || Object.keys(state.entries).some(key => !allKeys.includes(key) && !Object.hasOwn(cxValues, key) && !PROVIDER_ADDED_KEYS.includes(key))) stop("journal_target")
+  if (!record(state) || !NONCE.test(state.nonce ?? "") || !HASH.test(state.fingerprint ?? "") || !record(state.entries) || !record(state.deployments) || Object.keys(state.entries).some(key => !allKeys.includes(key) && !Object.hasOwn(cxValues, key) && !PROVIDER_ADDED_KEYS.includes(key) && !Object.hasOwn(publicCxValues, key))) stop("journal_target")
   if (state.cxMigration && state.cxMigration.complete !== true) stop("cx_migration_incomplete")
   if (state.providerMigration && state.providerMigration.complete !== true) stop("provider_migration_incomplete")
+  if (state.geminiMigration && state.geminiMigration.complete !== true) stop("gemini_migration_incomplete")
+  if (state.publicCxMigration && state.publicCxMigration.complete !== true) stop("public_cx_migration_incomplete")
+  if (![LEGACY_GEMINI_MODEL, CURRENT_GEMINI_MODEL].includes(stateModel(state))) stop("gemini_model")
   if (state.providersEnabled === true && state.cxEnabled !== true) stop("provider_requires_cx")
+  if (state.publicCxEnabled === true && state.providersEnabled !== true) stop("public_cx_requires_connected")
 }
 function reconcile(envs, target, state, complete = false) {
   stateCheck(state)
@@ -222,7 +230,7 @@ export function createReleaseOperator(io) {
     if (item.key !== key || item.gitBranch !== CX_BRANCH || targetsOf(item).length !== 1 || targetsOf(item)[0] !== "preview" || item.decrypted !== true || typeof item.value !== "string" || !item.value) stop("source_value")
     return item.value
   }
-  async function desiredValues(envs, cxEnabled = false, providersEnabled = false) {
+  async function desiredValues(envs, cxEnabled = false, providersEnabled = false, publicCxEnabled = false, geminiModel = CURRENT_GEMINI_MODEL) {
     const [kvUrl, kvToken, code] = await Promise.all(["KV_REST_API_URL", "KV_REST_API_TOKEN", "HK_CX_PREVIEW_ACCESS_CODE"].map(key => readCxValue(envs, key)))
     const privateKeys = io.readSecrets()
     if (!HASH.test(privateKeys.credentialSeed ?? "") || !/^[A-Za-z0-9_-]{32,128}$/.test(code) || ![privateKeys.issuer, privateKeys.agent, kvToken].every(value => typeof value === "string" && value.length >= 32 && value.length <= 1024 && !/[\x00-\x20\x7f]/.test(value))) stop("missing_value")
@@ -238,12 +246,16 @@ export function createReleaseOperator(io) {
       if (!cxEnabled || typeof io.readProviderInputs !== "function") stop("provider_input")
       const additions = io.readProviderInputs()
       if (!record(additions) || Object.keys(additions).length !== PROVIDER_INPUT_KEYS.length || PROVIDER_INPUT_KEYS.some(key => typeof additions[key] !== "string" || !additions[key] || additions[key].length > 4096 || /[\x00-\x20\x7f]/.test(additions[key]))) stop("provider_input")
-      Object.assign(values, PROVIDER_FIXED_VALUES, additions, { HK_AI_MODE: "gemini" })
+      if (![LEGACY_GEMINI_MODEL, CURRENT_GEMINI_MODEL].includes(geminiModel)) stop("gemini_model")
+      Object.assign(values, PROVIDER_FIXED_VALUES, additions, { HK_AI_MODE: "gemini", GEMINI_MODEL: geminiModel })
     }
-    const keys = targetKeys({ cxEnabled, providersEnabled })
+    const connectedKeys = targetKeys({ cxEnabled, providersEnabled })
+    const connectedFingerprint = createHmac("sha256", privateKeys.credentialSeed).update(JSON.stringify(connectedKeys.map(key => [key, values[key]]))).digest("hex")
+    if (publicCxEnabled) { if (!cxEnabled || !providersEnabled) stop("public_cx_requires_connected"); Object.assign(values, publicCxValues) }
+    const keys = targetKeys({ cxEnabled, providersEnabled, publicCxEnabled })
     if (Object.keys(values).length !== keys.length || keys.some(key => typeof values[key] !== "string" || !values[key])) stop("missing_value")
     return { values, fingerprint: createHmac("sha256", privateKeys.credentialSeed).update(JSON.stringify(keys.map(key => [key, values[key]]))).digest("hex"),
-      previousFingerprint,
+      previousFingerprint, connectedFingerprint,
       baseFingerprint: createHmac("sha256", privateKeys.credentialSeed).update(JSON.stringify(allKeys.map(key => [key, key === "HK_MODE_CX" ? "mock" : values[key]]))).digest("hex") }
   }
   function prepared(j, target, sha, envs) {
@@ -259,7 +271,7 @@ export function createReleaseOperator(io) {
     return boundDeployment(await io.api(`/v13/deployments/${intent.id}`), "preview", sha, intent, true)
   }
   return async function command(action, extra, evidenceHash) {
-    const simple = ["inspect", "prepare-preview", "prepare-production", "plan-preview", "plan-production", "deploy-preview", "deploy-production", "retry-rejected-preview", "plan-cx-preview", "plan-cx-production", "enable-cx-preview", "enable-cx-production", "plan-providers-preview", "plan-providers-production", "enable-providers-preview", "enable-providers-production"]
+    const simple = ["inspect", "prepare-preview", "prepare-production", "plan-preview", "plan-production", "deploy-preview", "deploy-production", "retry-rejected-preview", "plan-cx-preview", "plan-cx-production", "enable-cx-preview", "enable-cx-production", "plan-providers-preview", "plan-providers-production", "enable-providers-preview", "enable-providers-production", "plan-public-cx-preview", "plan-public-cx-production", "enable-public-cx-preview", "enable-public-cx-production", "plan-gemini-preview", "plan-gemini-production", "upgrade-gemini-preview", "upgrade-gemini-production"]
     if (!simple.includes(action) && !["status", "reconcile-deployment", "mark-preview-passed"].includes(action)) stop("arguments")
     if ((simple.includes(action) && extra !== undefined) || (action !== "mark-preview-passed" && evidenceHash !== undefined) || (!simple.includes(action) && !/^dpl_[A-Za-z0-9]+$/.test(extra ?? "")) || (action === "mark-preview-passed" && !HASH.test(evidenceHash ?? ""))) stop("arguments")
     const project = await projectCheck()
@@ -290,10 +302,77 @@ export function createReleaseOperator(io) {
         return { ...info, reconciled: true, remoteTestsAttested: action === "mark-preview-passed", mutation: "local-journal-only" }
       }
       const target = action.endsWith("production") ? "production" : "preview"
+      if (action.startsWith("plan-gemini-") || action.startsWith("upgrade-gemini-")) {
+        const state = prepared(j, target, sha, envs)
+        if (state.providersEnabled !== true || state.cxEnabled !== true) stop("gemini_requires_connected")
+        const before = await desiredValues(envs, true, true, state.publicCxEnabled === true, stateModel(state))
+        if (before.fingerprint !== state.fingerprint) stop("prepared_values_changed")
+        if (stateModel(state) === CURRENT_GEMINI_MODEL) return { target, model: CURRENT_GEMINI_MODEL, alreadyEnabled: true, mutation: false }
+        if (state.deployments[sha]) stop("gemini_requires_new_revision")
+        // One secret snapshot for the complete comparison and transition. Never
+        // re-read inputs and accidentally bless a concurrent, unrelated rotation.
+        const nextValues = { ...before.values, GEMINI_MODEL: CURRENT_GEMINI_MODEL }
+        const fingerprintFor = (values, publicEnabled) => createHmac("sha256", before.values.HK_ISSUER_SIGNING_SEED)
+          .update(JSON.stringify(targetKeys({ cxEnabled: true, providersEnabled: true, publicCxEnabled: publicEnabled }).map(key => [key, values[key]]))).digest("hex")
+        const nextFingerprint = fingerprintFor(nextValues, state.publicCxEnabled === true)
+        if (target === "production") {
+          await readyTestedPreview(j, sha, envs)
+          const preview = j.targets.preview
+          if (preview.providersEnabled !== true || stateModel(preview) !== CURRENT_GEMINI_MODEL) stop("gemini_preview_tests_required")
+          // Preview may already include the separately attested public-CX flags.
+          // Compare the complete preview scope, including all unchanged secrets.
+          if (state.publicCxEnabled === true && preview.publicCxEnabled !== true) stop("gemini_preview_tests_required")
+          const expectedPreview = fingerprintFor({ ...nextValues, ...(preview.publicCxEnabled === true ? publicCxValues : {}) }, preview.publicCxEnabled === true)
+          if (preview.fingerprint !== expectedPreview) stop("prepared_values_changed")
+        }
+        if (action.startsWith("plan-")) return { target, revision: sha, fromModel: stateModel(state), model: CURRENT_GEMINI_MODEL, wouldUpdate: ["GEMINI_MODEL"], mutation: false }
+        const prior = state.entries.GEMINI_MODEL
+        state.geminiMigration = { from: stateModel(state), to: CURRENT_GEMINI_MODEL, modeIntentAt: stamp(), complete: false }
+        state.complete = false; io.saveJournal(j)
+        let updated
+        try { updated = await io.api(`/v9/projects/${PROJECT_ID}/env/${prior.id}`, "PATCH", { value: CURRENT_GEMINI_MODEL }) }
+        catch { stop("gemini_migration_outcome_unknown") }
+        const next = metadata(updated, "GEMINI_MODEL", target, state)
+        if (next.id !== prior.id || next.createdAt !== prior.createdAt || next.updatedAt < prior.updatedAt) stop("environment_drift")
+        state.entries.GEMINI_MODEL = { ...prior, ...next }
+        state.geminiModel = CURRENT_GEMINI_MODEL; state.geminiMigration.complete = true; state.fingerprint = nextFingerprint
+        reconcile(await listEnvs(), target, state, true)
+        state.environmentDigest = environmentDigest(state); state.complete = true; io.saveJournal(j)
+        return { target, revision: sha, model: CURRENT_GEMINI_MODEL, updated: ["GEMINI_MODEL"], mutation: "environment-only", deploymentRequired: true }
+      }
+      if (action.startsWith("plan-public-cx-") || action.startsWith("enable-public-cx-")) {
+        const state = prepared(j, target, sha, envs)
+        if (state.providersEnabled !== true || state.cxEnabled !== true) stop("public_cx_requires_connected")
+        const { values, fingerprint, connectedFingerprint } = await desiredValues(envs, true, true, true, stateModel(state))
+        if (state.publicCxEnabled === true) {
+          if (fingerprint !== state.fingerprint) stop("prepared_values_changed")
+          return { target, publicIdentity: true, mutation: false, alreadyEnabled: true }
+        }
+        if (state.deployments[sha]) stop("public_cx_requires_new_revision")
+        if (state.fingerprint !== connectedFingerprint) stop("prepared_values_changed")
+        for (const key of Object.keys(publicCxValues)) if (envs.some(item => item.key === key && matchesTarget(item, target))) stop("existing_target_variable")
+        if (target === "production") {
+          await readyTestedPreview(j, sha, envs)
+          if (j.targets.preview.publicCxEnabled !== true || j.targets.preview.fingerprint !== fingerprint) stop("public_cx_preview_tests_required")
+        }
+        if (action.startsWith("plan-")) return { target, revision: sha, wouldCreate: Object.keys(publicCxValues), mutation: false }
+        state.publicCxMigration = { startedAt: stamp(), complete: false }; state.complete = false; io.saveJournal(j)
+        for (const key of Object.keys(publicCxValues)) {
+          state.entries[key] = { intentAt: stamp() }; io.saveJournal(j)
+          let response
+          try { response = await io.api(`/v10/projects/${PROJECT_ID}/env`, "POST", { key, value: values[key], type: "encrypted", target: [target], ...(target === "preview" ? { gitBranch: HOSTED_SUI_BRANCH } : {}), comment: marker(state, key) }) }
+          catch { stop("public_cx_migration_outcome_unknown") }
+          state.entries[key] = { ...state.entries[key], ...metadata(createdItem(response), key, target, state) }; io.saveJournal(j)
+        }
+        state.publicCxEnabled = true; state.publicCxMigration.complete = true; state.fingerprint = fingerprint
+        reconcile(await listEnvs(), target, state, true)
+        state.environmentDigest = environmentDigest(state); state.complete = true; io.saveJournal(j)
+        return { target, revision: sha, publicIdentity: true, created: Object.keys(publicCxValues), mutation: "environment-only", deploymentRequired: true }
+      }
       if (action.startsWith("plan-providers-") || action.startsWith("enable-providers-")) {
         const state = prepared(j, target, sha, envs)
         if (state.providersEnabled === true) {
-          const { fingerprint } = await desiredValues(envs, true, true)
+          const { fingerprint } = await desiredValues(envs, true, true, state.publicCxEnabled === true, stateModel(state))
           if (fingerprint !== state.fingerprint) stop("prepared_values_changed")
           return { target, providers: "connected-20260930-v1", mutation: false, alreadyEnabled: true }
         }
@@ -325,7 +404,7 @@ export function createReleaseOperator(io) {
         const next = metadata(updated, "HK_AI_MODE", target, state)
         if (next.id !== prior.id || next.createdAt !== prior.createdAt || next.updatedAt < prior.updatedAt) stop("environment_drift")
         state.entries.HK_AI_MODE = { ...prior, ...next }
-        state.providersEnabled = true; state.providerMigration.complete = true; state.fingerprint = fingerprint
+        state.providersEnabled = true; state.geminiModel = CURRENT_GEMINI_MODEL; state.providerMigration.complete = true; state.fingerprint = fingerprint
         reconcile(await listEnvs(), target, state, true)
         state.environmentDigest = environmentDigest(state); state.complete = true; io.saveJournal(j)
         return { target, revision: sha, providers: "connected-20260930-v1", updated: ["HK_AI_MODE"], created: PROVIDER_ADDED_KEYS, mutation: "environment-only", deploymentRequired: true }
@@ -400,7 +479,7 @@ export function createReleaseOperator(io) {
         }
         const info = boundDeployment(d, target, sha, intent); intent.id = info.id; io.saveJournal(j); return info
       }
-      const { values, fingerprint } = await desiredValues(envs, j.targets[target]?.cxEnabled === true, j.targets[target]?.providersEnabled === true), state = j.targets[target] ?? { nonce: nonce(), fingerprint, entries: {}, deployments: {} }
+      const { values, fingerprint } = await desiredValues(envs, j.targets[target]?.cxEnabled === true, j.targets[target]?.providersEnabled === true, j.targets[target]?.publicCxEnabled === true, stateModel(j.targets[target])), state = j.targets[target] ?? { nonce: nonce(), fingerprint, entries: {}, deployments: {} }
       if (state.fingerprint !== fingerprint) stop("prepared_values_changed")
       const missing = reconcile(envs, target, state)
       if (action.startsWith("plan")) return { target, branch: target === "preview" ? HOSTED_SUI_BRANCH : null, revision: sha, wouldCreate: missing, alreadyCreated: targetKeys(state).length - missing.length, mutation: false }

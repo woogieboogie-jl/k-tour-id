@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url"
 // scanner respects .gitignore. Next watches those directories recursively,
 // so recording QA video/trace there must not trigger a dev rebuild loop.
 const qaOutputDirectory = fileURLToPath(new URL("./artifacts/qa", import.meta.url))
+const localNativeRequested = Object.hasOwn(process.env, "HK_LOCAL_NATIVE") || Object.hasOwn(process.env, "NEXT_PUBLIC_HK_LOCAL_NATIVE")
+if (localNativeRequested && (process.env.HK_LOCAL_NATIVE !== "local-native-20260930-v1" || process.env.NEXT_PUBLIC_HK_LOCAL_NATIVE !== "local-native-20260930-v1"
+  || process.env.NODE_ENV !== "development" || Object.keys(process.env).some(k => k === "VERCEL" || k.startsWith("VERCEL_")))) throw new Error("Local native profile is development-only")
 
 const productionSecurityHeaders = withSumsubSandboxHeaders([
   {
@@ -36,6 +39,7 @@ const productionSecurityHeaders = withSumsubSandboxHeaders([
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  ...(localNativeRequested ? { distDir: ".next-native3183", typescript: { tsconfigPath: "tsconfig.native-local.json" } } : {}),
   turbopack: {
     root: process.cwd(),
   },

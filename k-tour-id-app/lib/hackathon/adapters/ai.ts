@@ -71,7 +71,7 @@ export async function proposePerk(input: ProposalInput): Promise<ProposalSummary
         language: { type: "string", enum: [input.language] },
       },
     }
-    const res = await geminiGenerate({ key: process.env.GEMINI_API_KEY, model: c.model, system, message, maxOutputTokens: 1024, temperature: 0.3, responseJsonSchema, ...(isHostedSuiProfile() ? { allowModelFallback: false } : {}) })
+    const res = await geminiGenerate({ key: process.env.GEMINI_API_KEY, model: c.model, system, message, maxOutputTokens: 1024, temperature: c.model === "gemini-3.8-flash" ? 1 : 0.3, responseJsonSchema, ...(isHostedSuiProfile() ? { allowModelFallback: false } : {}) })
     let parsed: unknown = null
     if (res.reply) { try { parsed = JSON.parse(res.reply) } catch { parsed = null } }
     const v = validate(parsed, input)
