@@ -48,6 +48,7 @@ import { B_DISCOVERY_FOCUS_EVENT, readBDiscoveryFocusRequest, type BDiscoveryFoc
 import { classifyBDiscoveryPreferencePresentation, orderBCanonicalDiscoveryPlaces } from "./b-discovery-personalization"
 import { CanonicalVenueCapsuleB } from "./canonical-venue-capsule-b"
 import { observeCenteredCanonicalPeek } from "./canonical-peek-camera-b"
+import { retryFocusForUnchangedOwner } from "./map-focus-ownership-b"
 import {
   PLACE_RETURN_UI_RESTORE_EVENT,
   readPlaceReturnUiRestoreEvent,
@@ -1309,6 +1310,7 @@ export function MapEntryB() {
   const userLocationRef = useRef<UserLocation | null>(null)
   const zoomFocusOwnedRef = useRef(false)
   const retryFocusPending = useRef(false)
+  const retryFocusRestoring = useRef(false)
   const locationRequestRef = useRef(0)
   const filterCameraSignatureRef = useRef("")
   const mapModeRef = useRef<CityId | "nation" | null>(null)
@@ -1565,7 +1567,11 @@ export function MapEntryB() {
       target?.focus({ preventScroll: true })
     }
     focusEnteredCity()
-    window.requestAnimationFrame(focusEnteredCity)
+    return retryFocusForUnchangedOwner(focusEnteredCity, {
+      active: () => document.activeElement,
+      schedule: callback => window.requestAnimationFrame(callback),
+      cancel: frame => window.cancelAnimationFrame(frame),
+    })
   }, [city])
 
   useLayoutEffect(() => {
@@ -2043,10 +2049,6 @@ export function MapEntryB() {
           if (disposed || failed) return
           setMapState("ready")
           setRetryListForeground(false)
-          if (retryFocusPending.current) {
-            retryFocusPending.current = false
-            window.setTimeout(() => document.querySelector<HTMLElement>("[data-testid='ondo-b-view-toggle']")?.focus({ preventScroll: true }), 0)
-          }
         })
       })
     }
@@ -3065,6 +3067,14 @@ export function MapEntryB() {
     return () => window.cancelAnimationFrame(frame)
   }, [city, effectiveView])
 
+  useLayoutEffect(() => {
+    if (mapState !== "ready" || retryListForeground || !retryFocusPending.current) return
+    // Focus the committed successor, not the retiring List button before React
+    // replaces it. A newer user interaction still cancels the pending receipt.
+    const frame = window.requestAnimationFrame(focusRetrySuccessor)
+    return () => window.cancelAnimationFrame(frame)
+  }, [mapState, retryListForeground])
+
   useEffect(() => {
     userLocationRef.current = userLocation
     const source = mapRef.current?.getSource("ondo-user-location") as GeoJSONSource | undefined
@@ -3512,13 +3522,28 @@ export function MapEntryB() {
   }
 
   function preserveFallbackListIntent(event: { target: EventTarget | null }) {
-    if (mapState !== "error" || view === "list" || !(event.target instanceof Element)) return
+    if (retryFocusRestoring.current || !(event.target instanceof Element)) return
     if (event.target.closest("[data-testid='ondo-b-map-fallback-status']")) return
     if (!event.target.closest("[data-testid='ondo-b-list-panel'], [data-testid='ondo-b-search-shell'], [data-testid='ondo-b-category-rail']")) return
+    // A retry may settle after the user has already moved into the still-live
+    // List/search. That newer focus/input owns the surface, even while loading.
+    retryFocusPending.current = false
+    if ((mapState !== "error" && !retryListForeground) || view === "list") return
     // A late map response must not pull someone out of a list they have
     // started using. Pointer/key/wheel intent is distinct from restored scroll.
     setView("list")
     updateCityContext({ view: "list" })
+  }
+
+  function focusRetrySuccessor() {
+    if (!retryFocusPending.current) return
+    retryFocusPending.current = false
+    retryFocusRestoring.current = true
+    try {
+      document.querySelector<HTMLElement>("[data-testid='ondo-b-view-toggle']")?.focus({ preventScroll: true })
+    } finally {
+      retryFocusRestoring.current = false
+    }
   }
 
   function openMapOptions() {
@@ -3592,10 +3617,6 @@ export function MapEntryB() {
       window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
         setMapState("ready")
         setRetryListForeground(false)
-        if (retryFocusPending.current) {
-          retryFocusPending.current = false
-          document.querySelector<HTMLElement>("[data-testid='ondo-b-view-toggle']")?.focus({ preventScroll: true })
-        }
       }))
     }
     const cleanup = () => {
@@ -3742,6 +3763,7 @@ export function MapEntryB() {
         onPointerDownCapture={preserveFallbackListIntent}
         onKeyDownCapture={preserveFallbackListIntent}
         onWheelCapture={preserveFallbackListIntent}
+        onFocusCapture={preserveFallbackListIntent}
         className={`${styles.root} ${mapLayoutMode === "ultra-short" ? styles.ultraShort : ""}`}
         data-testid="ondo-b-map-entry"
         data-hydrated={state.hydrated ? "true" : "false"}
