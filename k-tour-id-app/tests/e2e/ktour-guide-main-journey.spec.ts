@@ -33,6 +33,9 @@ class GuideFixture {
   nativeBound = false
   localFresh = false
   bindingVerified = false
+  bindingStarted = false
+  bindingStartUnknown = false
+  bindingStatusMissing = false
   bindingId = "nhb_" + "a".repeat(24)
   accessProfile: "guide-production" | "integration-preview" | "unavailable" | undefined = "guide-production"
   configProfile: string | undefined = "guide-production"
@@ -105,8 +108,13 @@ class GuideFixture {
       if (path === `/operations/${OP}`) { if (this.operationResponseDelay) await new Promise(resolve => setTimeout(resolve, this.operationResponseDelay)); await send(this.missingResume ? { error: { code: "not_found" } } : this.op, this.missingResume ? 404 : 200); return }
       if (path === `/operations/${OP}/reconcile`) { await send(this.op); return }
       if (path.includes(`/operations/${OP}/native-binding/`)) {
+        if (path.endsWith("/status") && (this.bindingStatusMissing || !this.bindingStarted && !this.bindingVerified)) { await send(null); return }
         const base = { version: "cx-holder-v1", bindingId: this.bindingId, status: this.bindingVerified ? "verified" : "challenge", expiresAt: new Date(Date.now() + 300000).toISOString() }
-        if (path.endsWith("/start")) await send({ ...base, operationId: OP, token: "b".repeat(43), authNonce: "c".repeat(64) })
+        if (path.endsWith("/start")) {
+          this.bindingStarted = true
+          if (this.bindingStartUnknown) { await route.abort("failed"); return }
+          await send({ ...base, operationId: OP, token: "b".repeat(43), authNonce: "c".repeat(64) })
+        }
         else if (path.endsWith("/cancel")) await send({ ...base, status: "cancelled" })
         else await send(base)
         return
@@ -537,6 +545,34 @@ test("NATIVE-BIND-02 absent server binding cannot dispatch an offer; explicit ca
   expect(f.calls.filter(c => c.path.includes("/provider/")).length).toBe(0)
   await expect(page.getByTestId("guide-provider-start")).toBeDisabled()
   expect(await nativeCalls(page)).toBe(0); f.assertSafe()
+})
+
+test("NATIVE-BIND-03 initial owned status null preserves one explicit first start", async ({ page, baseURL }) => {
+  const f = await nativeFixture(page, baseURL!, { boundApp: true })
+  await page.getByTestId("native-binding-status").click()
+  await expect(page.getByTestId("native-binding-start")).toBeEnabled()
+  expect(f.calls.filter(c => c.path.endsWith("/native-binding/start"))).toHaveLength(0)
+  await expect(page.getByTestId("guide-provider-start")).toBeDisabled()
+  await page.getByTestId("native-binding-start").click()
+  await expect.poll(() => page.evaluate(() => Number((window as unknown as Record<string, unknown>).__nativeBindCalls))).toBe(1)
+  expect(f.calls.filter(c => c.path.endsWith("/native-binding/start"))).toHaveLength(1)
+  await expect(page.getByTestId("native-binding-start")).toHaveCount(0)
+  expect(f.calls.some(c => c.path.includes("/provider/"))).toBe(false); f.assertSafe()
+})
+
+test("NATIVE-BIND-04 absent status after uncertain start cannot re-enable or resend", async ({ page, baseURL }) => {
+  const f = await nativeFixture(page, baseURL!, { boundApp: true })
+  f.bindingStartUnknown = true; f.bindingStatusMissing = true
+  await page.getByTestId("native-binding-start").click()
+  await expect(page.getByTestId("native-holder-binding")).toContainText("再登録せず")
+  await expect(page.getByTestId("native-binding-start")).toHaveCount(0)
+  await page.getByTestId("native-binding-status").click()
+  await expect(page.getByTestId("native-binding-status")).toBeEnabled()
+  await expect(page.getByTestId("native-binding-start")).toHaveCount(0)
+  await expect(page.getByTestId("guide-provider-start")).toBeDisabled()
+  expect(f.calls.filter(c => c.path.endsWith("/native-binding/start"))).toHaveLength(1)
+  expect(await page.evaluate(() => Number((window as unknown as Record<string, unknown>).__nativeBindCalls ?? 0))).toBe(0)
+  expect(f.calls.some(c => c.path.includes("/provider/"))).toBe(false); f.assertSafe()
 })
 
 test("NATIVE-01 explicit issue/present handoff is one-shot and return never approves or advances", async ({ page, baseURL }) => {

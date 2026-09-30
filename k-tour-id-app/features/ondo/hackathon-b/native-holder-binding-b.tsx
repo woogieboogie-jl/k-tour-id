@@ -14,15 +14,27 @@ export function NativeHolderBindingB({ operation, locale, onVerified }: { operat
   const [state, setState] = useState<"idle" | "pending" | "verified" | "error" | "cancelled">("idle"), [busy, setBusy] = useState(false)
   const mounted = useRef(true), request = useRef<AbortController | null>(null), nativeRequest = useRef<{ id: string; bridge: NonNullable<ReturnType<typeof nativeBindingAppBridge>> } | null>(null)
   const needsCancel = useRef(false)
+  // Reserve before any I/O. An absent status after an uncertain start must not
+  // revive the start button or repeat a native registration attempt.
+  const startAttempted = useRef(false)
   const key = operation.operationId
   const call = async (action: "start" | "status" | "cancel") => {
     if (request.current) return
+    if (action === "start") {
+      if (startAttempted.current) return
+      startAttempted.current = true
+    }
     const started = latest.current, controller = new AbortController(); request.current = controller; setBusy(true)
     const timer = setTimeout(() => controller.abort(), 15_000)
     try {
       const r = await fetch(`/api/hackathon/v1/operations/${encodeURIComponent(key)}/native-binding/${action}`, { method: action === "status" ? "GET" : "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal, ...(action === "status" ? {} : { headers: { "content-type": "application/json" }, body: "{}" }) })
       const value: unknown = await r.json()
       if (!mounted.current || controller.signal.aborted || latest.current !== started || !r.ok) throw new Error("closed")
+      // An owned operation with no binding returns 200/null, not 404. Reading
+      // that before the first explicit start is normal, not a failed binding.
+      if (action === "status" && value === null && !startAttempted.current) {
+        setState("idle"); onVerified?.(null); return
+      }
       if (action === "start") {
         const launch = parseNativeBindingLaunch(value, key), bridge = nativeBindingAppBridge(nativeEnvironment())
         if (!launch || !bridge) throw new Error("binding_unavailable")

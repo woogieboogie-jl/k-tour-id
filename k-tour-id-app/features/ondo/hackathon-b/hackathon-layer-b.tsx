@@ -173,6 +173,7 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
   // Sit above the place sheet in the app's modal stack: the sheet (and dock)
   // become inert while the journey is open and are restored on close.
   const rootRef = useRef<HTMLDivElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
   useModalIsolation(true, rootRef)
   useDocumentScrollLock(true)
   useEffect(() => { closedRef.current = false; return () => { closedRef.current = true } }, [])
@@ -424,7 +425,7 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
         <header className={styles.head}>
           <div className={styles.headRow}>
             <h2>{title}</h2>
-            <button type="button" className={styles.close} aria-label={c.close} data-testid="hackathon-close" onClick={() => close(true)}><X size={18} aria-hidden="true" /></button>
+            <button ref={closeButtonRef} type="button" className={styles.close} aria-label={c.close} data-testid="hackathon-close" onClick={() => close(true)}><X size={18} aria-hidden="true" /></button>
           </div>
           <div className={styles.progress} role="group" aria-label={`${steps[stepIndex]} · ${stepIndex + 1}/${steps.length}`}>
             <div className={styles.progressLabel}><span><b>{steps[stepIndex]}</b></span><span>{stepIndex + 1} / {steps.length}</span></div>
@@ -469,6 +470,9 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
 
           {!op && reuseIdentity ? <JitIdentityCheckB locale={locale} context={reuseIdentity} onAuthorized={acceptIdentityReuse} onCancel={() => {
             reuseIdentityRef.current = null; setReuseIdentity(null); setConsent(false)
+            // The nested cancel button unmounts. Keep keyboard/Escape ownership
+            // on the stable outer dialog without a delayed focus race.
+            closeButtonRef.current?.focus({ preventScroll: true })
           }} /> : null}
           {!op && !reuseIdentity ? (
             <section className={styles.card}>

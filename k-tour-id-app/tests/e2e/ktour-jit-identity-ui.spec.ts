@@ -209,6 +209,55 @@ for (const mode of ["fresh", "normal"] as const) test(`JIT-09 Roba ${mode} ident
   expect(harvey.forbiddenRequests).toHaveLength(0)
 })
 
+test("JIT-13 Roba identity consent cancel retains Escape ownership and returns to usable map search", async ({ page, baseURL }, info) => {
+  test.setTimeout(120_000)
+  const harvey = new HarveyFixture(page, new URL(baseURL!).origin)
+  harvey.config.isolatedMock = false; harvey.config.modes.cx = "cx"
+  await harvey.install()
+  // A synthetic current result selects this same nested consent surface even
+  // in legacy builds. No provider request, consent grant or operation is made.
+  const api = await fixture(page, "fresh", true)
+  await page.goto(`/?venueId=${VENUE}&review=0`, { waitUntil: "domcontentloaded" })
+  // Bound cold development hydration separately; the behavior assertions below
+  // retain the normal short timeout and never force focus or pointer events.
+  await expect(page.getByTestId("ondo-b-root")).toHaveAttribute("data-hydrated", "true", { timeout: 45_000 })
+  if (!await page.getByTestId("canonical-place-overlay").isVisible()) await page.getByTestId("canonical-place-details").click()
+  await page.getByTestId("hackathon-entitlement-open").click()
+  await expect(page.getByTestId("hackathon-layer")).toBeVisible()
+  await page.locator("#hk-consent").check()
+  await page.getByTestId("hackathon-start").click()
+  await expect(page.getByTestId("jit-identity-check")).toBeVisible()
+  await expect(page.getByTestId("jit-identity-consent")).not.toBeChecked()
+  await expect(page.getByTestId("jit-identity-create")).toBeDisabled()
+  await page.getByTestId("jit-identity-cancel").click()
+  await expect(page.getByTestId("jit-identity-check")).toBeHidden()
+  await expect(page.getByTestId("hackathon-close")).toBeFocused()
+  await expect(page.locator("#hk-consent")).not.toBeChecked()
+  await expect(page.getByTestId("hackathon-start")).toBeDisabled()
+  await page.screenshot({ path: info.outputPath("roba-cancel-focused-close.png") })
+  // Do not click another control or force focus: Escape must work immediately
+  // after the real nested Cancel, with exactly the same place restored.
+  await page.keyboard.press("Escape")
+  await expect(page.getByTestId("hackathon-layer")).toBeHidden()
+  const place = page.getByTestId("canonical-place-overlay")
+  await expect(place).toHaveAttribute("data-venue-id", VENUE)
+  await expect(page.getByTestId("hackathon-entitlement-open")).toBeFocused()
+  await page.keyboard.press("Escape")
+  await expect(place).toBeHidden()
+  await expect(page.getByTestId("nav-ondo")).toHaveAttribute("aria-current", "page")
+  await page.getByTestId("ondo-b-map-search-toggle").click()
+  const search = page.getByTestId("ondo-b-search")
+  await search.fill("Roba")
+  await expect(search).toBeFocused()
+  await expect(search).toHaveValue("Roba")
+  expect(api.writes.filter(write => write.path.startsWith("identity/") || write.path.startsWith("operations"))).toHaveLength(0)
+  expect(harvey.count("/operations")).toBe(0)
+  expect(harvey.forbiddenRequests).toHaveLength(0)
+  expect(harvey.pageErrors).toHaveLength(0)
+  await noAuthorityStorage(page)
+  await page.screenshot({ path: info.outputPath("roba-cancel-search.png") })
+})
+
 test("JIT-10 Roba lost create response restores the same campaign operation with GET only", async ({ page, baseURL }) => {
   const harvey = new HarveyFixture(page, new URL(baseURL!).origin)
   harvey.config.isolatedMock = false; harvey.config.modes.cx = "cx"
