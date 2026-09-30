@@ -53,7 +53,8 @@ import { isReviewCredentialDraftB, simulatedCredentialStatusB } from "./ktour-id
 import { resolveTravelerAxisPresentationB } from "./traveler-id-status-b"
 import styles from "./traveler-id-entry-b.module.css"
 import { identityReviewOptionsB, useIdentityReviewModeB } from "./identity-review-mode-b"
-import { jitPersonLabelB, useJitIdentityStatusB } from "./jit-pass-setup-b"
+import { jitPersonLabelB, useJitIdentityReadinessB } from "./jit-pass-setup-b"
+import { age19ReadinessB, age19ReadinessCopyB } from "./age19-readiness-b"
 
 const actionGateSessionOptions = identityReviewOptionsB
 
@@ -219,7 +220,7 @@ export function TravelerIdEntryB() {
   // Mount the task at the themed viewport, never inside that scrolled content.
   const checkHost = typeof document === "undefined" ? null : document.querySelector("[data-testid='ondo-canvas']")
   const reviewMode = useIdentityReviewModeB()
-  const actualIdentity = useJitIdentityStatusB(!reviewMode)
+  const { status: actualIdentity, readState: identityReadState } = useJitIdentityReadinessB(!reviewMode)
   const [personOutcome, setPersonOutcome] = useState<LocalCheckOutcome | null>(null)
   const [ageOutcome, setAgeOutcome] = useState<LocalCheckOutcome | null>(null)
   const [actionSession, setActionSession] = useState<BActionGateSession>(DEFAULT_B_ACTION_GATE_SESSION)
@@ -233,6 +234,8 @@ export function TravelerIdEntryB() {
   const returnFocusCheckRef = useRef<LocalCheckKind | null>(null)
   const locale = state.locale
   const copy = COPY[locale]
+  const actualAgeState = age19ReadinessB(actualIdentity, identityReadState, Math.max(statusClock, Date.now()))
+  const actualAgeCopy = age19ReadinessCopyB(locale, actualAgeState)
   const accountActive = state.account === "ACC-ACTIVE"
   const restoredPerson = resolveTravelerAxisPresentationB(actionSession.person, statusClock)
   const restoredPersonStatus = restoredPerson.outcome
@@ -303,6 +306,15 @@ export function TravelerIdEntryB() {
     const timer = window.setTimeout(() => setStatusClock(Date.now()), delay + 16)
     return () => window.clearTimeout(timer)
   }, [actionSession.payment.expiresAt, actionSession.payment.status, actionSession.person.expiresAt, actionSession.person.status, after19Session?.ageExpiresAt, state.identityCredential])
+
+  useEffect(() => {
+    // Display repaint only: no provider request, grant, or persisted age state.
+    if (reviewMode || actualIdentity?.age19.state !== "verified") return
+    const delay = Date.parse(actualIdentity.age19.expiresAt ?? "") - Date.now()
+    if (!Number.isFinite(delay) || delay <= 0) return
+    const timer = window.setTimeout(() => setStatusClock(Date.now()), Math.min(delay + 16, 2_147_483_647))
+    return () => window.clearTimeout(timer)
+  }, [actualIdentity?.age19.expiresAt, actualIdentity?.age19.state, reviewMode])
 
   useEffect(() => {
     if (directCheckPresence.phase !== "closed" || activeCheck !== null) return
@@ -488,10 +500,10 @@ export function TravelerIdEntryB() {
               <button ref={personRef} type="button" aria-label={copy.checkPerson} data-testid="traveler-id-person-check" onClick={() => openCheck("person")}><span className={styles.actionLabel}>{copy.checkPerson}</span><ChevronRight size={17} aria-hidden="true" /></button>
             </article>
 
-            <article className={styles.statusCard} data-testid="traveler-id-age" data-status={!reviewMode ? "unsupported" : ageStatus ?? "none"} data-review-result={reviewMode && ageReviewResult ? "true" : "false"}>
-              <div className={styles.statusTop}><CalendarClock size={20} aria-hidden="true" /><span>{!reviewMode ? copy.unsupported : ageReviewResult ? copy.reviewResult : outcomeLabel(locale, ageStatus)}</span></div>
+            <article className={styles.statusCard} data-testid="traveler-id-age" data-display-only-age={!reviewMode ? "true" : undefined} data-status={!reviewMode ? actualAgeState : ageStatus ?? "none"} data-review-result={reviewMode && ageReviewResult ? "true" : "false"}>
+              <div className={styles.statusTop}><CalendarClock size={20} aria-hidden="true" /><span>{!reviewMode ? actualAgeCopy.label : ageReviewResult ? copy.reviewResult : outcomeLabel(locale, ageStatus)}</span></div>
               <h3>{copy.ageTitle}</h3>
-              {reviewMode ? <button ref={ageRef} type="button" aria-label={copy.checkAge} data-testid="traveler-id-age-check" onClick={() => openCheck("age")}><span className={styles.actionLabel}>{copy.checkAge}</span><ChevronRight size={17} aria-hidden="true" /></button> : <p>{locale === "ko" ? "19세 이상 증명은 아직 연결되지 않았어요. 야간 지도 설정과는 별개예요." : locale === "ja" ? "19歳以上の証明は未接続です。夜の地図設定とは別です。" : "19+ proof is not connected. Night-map settings are separate."}</p>}
+              {reviewMode ? <button ref={ageRef} type="button" aria-label={copy.checkAge} data-testid="traveler-id-age-check" onClick={() => openCheck("age")}><span className={styles.actionLabel}>{copy.checkAge}</span><ChevronRight size={17} aria-hidden="true" /></button> : <p>{actualAgeCopy.guidance}</p>}
             </article>
 
             <article className={styles.statusCard} data-testid="traveler-id-credential" data-status={reviewMode ? credentialStatus : "none"} data-review-result={reviewMode ? credentialReviewResult ?? "none" : "none"}>

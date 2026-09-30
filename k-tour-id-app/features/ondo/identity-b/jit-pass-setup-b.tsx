@@ -7,19 +7,26 @@ import { useSheetPresence } from "../shared/ui/use-sheet-presence"
 import { JitIdentityCheckB } from "./jit-identity-check-b"
 import { consumeJitRequestReceipt, jitContext, jitIdentityCall, parseJitEligibility } from "./jit-identity-client-b"
 import { JIT_IDENTITY_CHANGED } from "./jit-identity-authority-b"
+import type { JitIdentityReadStateB } from "./age19-readiness-b"
 import styles from "./jit-identity-check-b.module.css"
 
-export function useJitIdentityStatusB(enabled: boolean) {
+export function useJitIdentityReadinessB(enabled: boolean) {
   const [status, setStatus] = useState<JitIdentityEligibility | null>(null)
+  const [readState, setReadState] = useState<JitIdentityReadStateB>(enabled ? "loading" : "unavailable")
   useEffect(() => {
-    if (!enabled) { setStatus(null); return }
+    if (!enabled) { setStatus(null); setReadState("unavailable"); return }
+    setReadState("loading")
     let current: AbortController | null = null
-    const read = () => { current?.abort(); const controller = new AbortController(); current = controller; void jitIdentityCall("identity/eligibility", undefined, controller.signal).then(parseJitEligibility).then(value => { if (!controller.signal.aborted) setStatus(value) }).catch(() => { if (!controller.signal.aborted) setStatus(null) }) }
+    const read = () => { current?.abort(); const controller = new AbortController(); current = controller; void jitIdentityCall("identity/eligibility", undefined, controller.signal).then(parseJitEligibility).then(value => { if (!controller.signal.aborted) { setStatus(value); setReadState("ready") } }).catch(() => { if (!controller.signal.aborted) { setStatus(null); setReadState("unavailable") } }) }
     read(); window.addEventListener(JIT_IDENTITY_CHANGED, read); window.addEventListener("focus", read)
     const timer = window.setInterval(read, 60_000)
     return () => { current?.abort(); window.clearInterval(timer); window.removeEventListener(JIT_IDENTITY_CHANGED, read); window.removeEventListener("focus", read) }
   }, [enabled])
-  return status
+  return { status, readState }
+}
+
+export function useJitIdentityStatusB(enabled: boolean) {
+  return useJitIdentityReadinessB(enabled).status
 }
 
 export function jitPersonLabelB(locale: "ko" | "en" | "ja", status: JitIdentityEligibility | null) {

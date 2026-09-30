@@ -475,4 +475,6 @@
   .walletPane { margin-top: 16px; }
   .readiness .statusCard { min-height: 72px; }
   .readiness .statusCard button { align-self: center; margin: 0; }
+  .readiness .statusCard[data-display-only-age="true"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; }
+  .readiness .statusCard[data-display-only-age="true"] > p { grid-column: 1; grid-row: 3; }
 }
