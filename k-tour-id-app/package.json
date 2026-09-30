@@ -71,6 +71,7 @@
     "@fontsource-variable/noto-sans-kr": "5.3.0",
     "@fontsource-variable/noto-serif-kr": "5.3.0",
     "@hookform/resolvers": "^3.10.0",
+    "@mysten/bcs": "2.1.1",
     "@mysten/sui": "2.31.0",
     "@radix-ui/react-accordion": "1.2.2",
     "@radix-ui/react-alert-dialog": "1.1.4",
