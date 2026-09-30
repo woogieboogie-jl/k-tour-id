@@ -151,7 +151,8 @@ function project(op: OperationRecord, s: OpenDidProviderState, now: number): voi
 }
 
 /** Injectable only on the server for deterministic, zero-provider-write tests.
- * The production factory below intentionally supplies no CX→CAS resolver. */
+ * The configured factory resolves only a current, cryptographically verified
+ * CX→native-holder binding; missing or expired mappings never fall back. */
 export function createProviderOperationService(deps: { atomic: AtomicStore; bridge: OpenDidBridgeClient; resolveCxMapping?: MappingResolver; nativeConfigBinding?: string; now?: () => number; identityChanged?: (op: OperationRecord) => boolean }) {
   const now = deps.now ?? Date.now, changedIdentity = deps.identityChanged ?? (op => identityPolicyChanged(op.identity))
   async function load(sessionId: string, operationId: string) { return deps.atomic(db => structuredClone(owned(db, sessionId, operationId))) }

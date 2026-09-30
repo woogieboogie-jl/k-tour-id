@@ -32,6 +32,9 @@ export function GuideProviderStepB({ operation, locale, onOperation, onAccessReq
   const [error, setError] = useState(false)
   const [nativeAvailable, setNativeAvailable] = useState(false)
   const [bindingApp, setBindingApp] = useState(false)
+  // UX ordering only: every provider request still verifies binding server-side.
+  // A native acknowledgement must not unlock issuance before BFF status does.
+  const [bindingReadyUntil, setBindingReadyUntil] = useState<number | null>(null)
   const [nativeSent, setNativeSent] = useState(false)
   const [nativeFailed, setNativeFailed] = useState(false)
   const offerRef = useRef<ReturnType<typeof createNativeOfferHandoff>>(null)
@@ -40,8 +43,14 @@ export function GuideProviderStepB({ operation, locale, onOperation, onAccessReq
   const contextKey = nativeOfferContextKey(context)
   const currentContext = useRef(context)
   currentContext.current = context
+  const bindingPending = bindingApp && nativeSupported && phase === "issuance" && (!bindingReadyUntil || bindingReadyUntil <= Date.now())
   const inFlight = useRef(false)
   const requestRef = useRef<AbortController | null>(null)
+  useEffect(() => {
+    if (!bindingReadyUntil) return
+    const timer = window.setTimeout(() => setBindingReadyUntil(null), Math.max(0, bindingReadyUntil - Date.now()))
+    return () => window.clearTimeout(timer)
+  }, [bindingReadyUntil])
   useEffect(() => {
     setNativeAvailable(canUseNativeOfferHandoff(nativeEnvironment()))
     setBindingApp(nativeBindingAppBridge(nativeEnvironment()) !== null)
@@ -61,7 +70,7 @@ export function GuideProviderStepB({ operation, locale, onOperation, onAccessReq
     return () => window.clearTimeout(timer)
   }, [view])
   const request = async (action: ProviderAction) => {
-    if (inFlight.current || !validOperation) return
+    if (inFlight.current || !validOperation || (bindingPending && action !== "cancel")) return
     const startedContext = nativeOfferContextKey(currentContext.current)
     // Starting a refresh/cancel invalidates the previous native affordance even
     // if its HTTP result is lost. No late button can reuse that offer.
@@ -107,7 +116,7 @@ export function GuideProviderStepB({ operation, locale, onOperation, onAccessReq
     if (result !== "sent" && result !== "already_sent") setNativeFailed(true)
   }
   return <section className={styles.card} data-testid="guide-provider-step" data-provider-phase={phase}>
-    {bindingApp && nativeSupported && phase === "issuance" ? <NativeHolderBindingB key={operation.operationId} operation={operation} locale={locale} /> : null}
+    {bindingApp && nativeSupported && phase === "issuance" ? <NativeHolderBindingB key={operation.operationId} operation={operation} locale={locale} onVerified={setBindingReadyUntil} /> : null}
     <h3>{t[phase]}</h3>
     {view ? <><p role="status">{status}</p>{qr ? <><img className={styles.qr} alt={t.qr} src={qr} /><p>{nativeSupported ? NATIVE_COPY[locale].instruction : t.instruction}</p></> : qrFailed ? <p role="alert" className={styles.notice}>{qrError}</p> : <p>{t.noOffer}</p>}</> : <p>{nativeSupported ? NATIVE_COPY[locale].instruction : t.sameDevice}</p>}
     {error || !validOperation ? <p role="alert" className={styles.notice}>{t.unavailable}</p> : null}
@@ -115,8 +124,8 @@ export function GuideProviderStepB({ operation, locale, onOperation, onAccessReq
     {nativeFailed ? <p role="alert">{NATIVE_COPY[locale].failed}</p> : null}
     <div className={styles.actions}>
       {nativeOffer ? <button type="button" className={styles.primary} disabled={busy || nativeSent} onClick={() => void openNativeOffer()} data-testid="guide-provider-native-open">{NATIVE_COPY[locale].open}</button> : null}
-      {!view && !error && validOperation ? <button type="button" className={styles.primary} disabled={busy} onClick={() => void request(`${phase}/start`)} data-testid="guide-provider-start">{t.start}</button> : null}
-      <button type="button" className={view ? styles.primary : styles.secondary} disabled={busy || !validOperation} onClick={() => void request(`${phase}/refresh`)} data-testid="guide-provider-refresh">{t.refresh}</button>
+      {!view && !error && validOperation ? <button type="button" className={styles.primary} disabled={busy || bindingPending} onClick={() => void request(`${phase}/start`)} data-testid="guide-provider-start">{t.start}</button> : null}
+      <button type="button" className={view ? styles.primary : styles.secondary} disabled={busy || !validOperation || bindingPending} onClick={() => void request(`${phase}/refresh`)} data-testid="guide-provider-refresh">{t.refresh}</button>
       <button type="button" className={styles.ghost} disabled={busy || !validOperation} onClick={() => void request("cancel")} data-testid="guide-provider-cancel">{t.cancel}</button>
     </div>
     <details className={styles.card}><summary>{t.details}</summary><p>{nativeSupported ? NATIVE_COPY[locale].instruction : t.sameDevice}</p></details>

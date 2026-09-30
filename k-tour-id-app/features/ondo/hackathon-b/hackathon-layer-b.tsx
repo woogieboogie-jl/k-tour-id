@@ -296,7 +296,9 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
     reuseIdentityRef.current = null
     setReuseIdentity(null)
   })
-  const identityStart = () => run("identity", async () => { if (op) setOp(await api.identityStart(op.operationId, isMobile)) })
+  // The isolated native app runs on an empty simulator. Its CX QR is scanned
+  // by the person's real phone; do not send them to a missing simulator ID app.
+  const identityStart = () => run("identity", async () => { if (op) setOp(await api.identityStart(op.operationId, localNativeOnly ? false : isMobile)) })
   const identityComplete = (sample?: { outcome: string; subjectSeed: string }) => run("identity", async () => { if (op) setOp(await api.identityComplete(op.operationId, sample)) })
   const issueAndAck = useCallback(() => run("issue", async () => {
     if (!op || guide) return
@@ -483,6 +485,7 @@ function Journey({ detail, onClose, guideProfile, onAccessRequired }: { detail: 
               <h3>{c.steps[1]}</h3>
               {!op.identity?.handoff ? <>
                 <p>{sampleIdentity ? c.sampleNote : tr("연결된 신분증 서비스에서 확인을 시작합니다. 결과를 받은 뒤 다음 단계로 진행합니다.", "Start a check with the connected identity service, then retrieve the result.", "接続された身分証サービスで確認後、結果を取得して次に進みます。")}</p>
+                {localNativeOnly ? <p data-testid="native-local-phone-qr">{tr("로컬 앱에 표시되는 QR을 실제 휴대폰의 모바일 신분증 앱으로 스캔한 뒤, 이 화면에서 결과를 확인해 주세요.", "Scan this local app’s QR with Mobile ID on your real phone, then check the result here.", "ローカルアプリのQRを実際のスマートフォンのモバイル身分証アプリで読み取り、この画面で結果を確認してください。")}</p> : null}
                 <div className={styles.actions}><button type="button" className={styles.primary} disabled={!!busy} onClick={identityStart} data-testid="hackathon-identity-start">{sampleIdentity ? tr("샘플 확인 시작", "Start sample check", "サンプル確認を始める") : c.startIdentity}</button><button type="button" className={styles.ghost} disabled={!!busy} onClick={cancel} data-testid="hackathon-cancel">{c.cancel}</button></div>
               </> : op.identity.handoff.kind === "mock" ? <>
                 <div className={styles.notice}>{c.sampleNote}</div>

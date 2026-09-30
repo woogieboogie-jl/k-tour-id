@@ -9,7 +9,7 @@ const TEXT = {
   en: { title: "Connect your identity check to a new wallet", info: "Bind verified CX evidence to proof of this wallet’s key ownership. A fresh wallet is required; an existing wallet is never reset. This does not approve pass issuance or perk execution.", start: "Agree and open new wallet connection", check: "Check connection result", cancel: "Stop connection", waiting: "Check the result here after the app request. Returning from the app does not mean the connection is verified.", verified: "The server verified the identity-to-wallet connection. Review the next pass request separately.", error: "The connection is unconfirmed. Check the same request; do not register again." },
   ja: { title: "本人確認結果を新しいウォレットに接続", info: "確認済みのCX情報と、このウォレットの鍵の所有証明を結び付けます。新しいウォレットが必要で、既存のものは初期化しません。パス発行や特典実行への同意とは別です。", start: "同意して新しいウォレットの接続を開く", check: "接続結果を確認", cancel: "接続を中止", waiting: "アプリでの操作後、この画面で結果を確認してください。戻っただけでは接続完了になりません。", verified: "サーバーで本人確認とウォレットの接続を確認しました。次のパス要求は別途ご確認ください。", error: "接続を確認できませんでした。再登録せず、同じ要求の結果を確認してください。" },
 } as const
-export function NativeHolderBindingB({ operation, locale }: { operation: OperationResult; locale: "ko" | "en" | "ja" }) {
+export function NativeHolderBindingB({ operation, locale, onVerified }: { operation: OperationResult; locale: "ko" | "en" | "ja"; onVerified?(expiresAt: number | null): void }) {
   const t = TEXT[locale], context = nativeOfferContextKey(nativeOfferContext(operation)), latest = useRef(context); latest.current = context
   const [state, setState] = useState<"idle" | "pending" | "verified" | "error" | "cancelled">("idle"), [busy, setBusy] = useState(false)
   const mounted = useRef(true), request = useRef<AbortController | null>(null), nativeRequest = useRef<{ id: string; bridge: NonNullable<ReturnType<typeof nativeBindingAppBridge>> } | null>(null)
@@ -40,8 +40,9 @@ export function NativeHolderBindingB({ operation, locale }: { operation: Operati
         const next = action === "cancel" && d.status === "cancelled" ? "cancelled" : d.status === "verified" && Date.parse(d.expiresAt) > Date.now() ? "verified" : ["challenge", "allocating", "allocated", "proved", "confirming", "unknown"].includes(String(d.status)) ? "pending" : "error"
         if (next === "verified" || next === "cancelled") needsCancel.current = false
         setState(next)
+        onVerified?.(next === "verified" ? Date.parse(d.expiresAt) : null)
       }
-    } catch { if (mounted.current && latest.current === started) setState("error") }
+    } catch { if (mounted.current && latest.current === started) { setState("error"); onVerified?.(null) } }
     finally { clearTimeout(timer); if (request.current === controller) { request.current = null; if (mounted.current) setBusy(false) } }
   }
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; request.current?.abort(); const n = nativeRequest.current; if (n) void cancelNativeAppRequest(n.bridge, n.id); nativeRequest.current = null

@@ -93,6 +93,15 @@ class GuideFixture {
       if (path === "/identity/eligibility") { await send({ error: { code: "fixture_unavailable" } }, 503); return }
       if (path === "/guide/operations" && req.method() === "POST") { this.op = operation(); await send(this.op); return }
       if (path === "/operations" && req.method() === "POST" && this.localFresh) { this.op = operation({ journey: undefined, campaignId: "ktour-local-native-3183-v1", phase: "identity", identity: null }); await send(this.op); return }
+      if (path === `/operations/${OP}/identity/start` && this.localFresh) {
+        const expiresAt = new Date(Date.now() + 300_000).toISOString()
+        this.op = { ...this.op!, revision: this.op!.revision + 1, identity: { evidenceId: "", subjectRef: "", source: "cx_mobile_id", mode: "cx", provider: "BROWSER FIXTURE ONLY", personVerified: false, adultVerified: null, verifiedAt: "", expiresAt, providerTransactionRef: "SYNTHETIC", handoff: { kind: "qr", qrBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=", cxId: "fixture-only", expiresAt } } }
+        await send(this.op); return
+      }
+      if (path === `/operations/${OP}/identity/complete` && this.localFresh) {
+        this.op = { ...this.op!, revision: this.op!.revision + 1, phase: "issuance", identity: { ...this.op!.identity!, evidenceId: "fixture-not-real-evidence", subjectRef: "fixture-not-real-person", personVerified: true, verifiedAt: now, handoff: null } }
+        await send(this.op); return
+      }
       if (path === `/operations/${OP}`) { if (this.operationResponseDelay) await new Promise(resolve => setTimeout(resolve, this.operationResponseDelay)); await send(this.missingResume ? { error: { code: "not_found" } } : this.op, this.missingResume ? 404 : 200); return }
       if (path === `/operations/${OP}/reconcile`) { await send(this.op); return }
       if (path.includes(`/operations/${OP}/native-binding/`)) {
@@ -468,6 +477,16 @@ test("NATIVE-LOCAL-01 purpose consent starts one local operation without JIT or 
   await expect(page.getByTestId("hackathon-identity-start")).toBeVisible()
   expect(f.calls.filter(c => c.path === "/operations" && c.method === "POST")).toHaveLength(1)
   expect(f.calls.some(c => c.path.startsWith("/identity/") || c.path.endsWith("/identity/start") || c.path.includes("/provider/"))).toBe(false)
+  await expect(page.getByTestId("native-local-phone-qr")).toBeVisible()
+  await page.getByTestId("hackathon-identity-start").click()
+  expect(f.calls.filter(c => c.path.endsWith("/identity/start")).map(c => c.body)).toEqual([{ mobile: false }])
+  await expect(page.getByAltText("Mobile ID QR")).toBeVisible()
+  await expect(page.getByTestId("hackathon-layer")).toHaveAttribute("data-phase", "identity")
+  expect(f.calls.some(c => c.path.endsWith("/identity/complete"))).toBe(false)
+  await page.getByTestId("hackathon-layer").getByRole("button", { name: "結果を確認", exact: true }).click()
+  await expect(page.getByTestId("hackathon-layer")).toHaveAttribute("data-phase", "issuance")
+  expect(f.calls.filter(c => c.path.endsWith("/identity/complete")).map(c => c.body)).toEqual([{}])
+  expect(f.calls.some(c => c.path.includes("/provider/") || c.path.includes("/native-binding/"))).toBe(false)
   expect(f.unexpected).toEqual([]); expect(f.errors).toEqual([])
 })
 test("NATIVE-LOCAL-02 local verification stops before AI chain or merchant execution", async ({ page, baseURL }) => {
@@ -480,14 +499,18 @@ test("NATIVE-LOCAL-02 local verification stops before AI chain or merchant execu
 test("NATIVE-BIND-01 explicit fresh binding never self-authorizes; server status then separate offer", async ({ page, baseURL }) => {
   const f = await nativeFixture(page, baseURL!, { boundApp: true })
   await expect(page.getByTestId("native-holder-binding")).toBeVisible()
+  await expect(page.getByTestId("guide-provider-start")).toBeDisabled()
+  await expect(page.getByTestId("guide-provider-refresh")).toBeDisabled()
   await page.getByTestId("native-binding-start").click()
   await expect.poll(() => page.evaluate(() => Number((window as unknown as Record<string, unknown>).__nativeBindCalls))).toBe(1)
   expect(f.calls.filter(c => c.path.includes("/provider/")).length).toBe(0)
   await expect(page.getByTestId("hackathon-layer")).toHaveAttribute("data-phase", "issuance")
   await page.getByTestId("native-binding-status").click()
   await expect(page.getByTestId("native-holder-binding")).not.toContainText("サーバーで本人確認とウォレットの接続を確認しました")
+  await expect(page.getByTestId("guide-provider-start")).toBeDisabled()
   f.bindingVerified = true; await page.getByTestId("native-binding-status").click()
   await expect(page.getByTestId("native-holder-binding")).toContainText("サーバーで本人確認とウォレットの接続を確認しました")
+  await expect(page.getByTestId("guide-provider-start")).toBeEnabled()
   await page.getByTestId("native-holder-binding").scrollIntoViewIfNeeded()
   await page.screenshot({ path: test.info().outputPath("native-binding-server-status.png"), fullPage: true })
   await page.getByTestId("guide-provider-start").click(); await page.getByTestId("guide-provider-native-open").click()
@@ -506,11 +529,13 @@ test("NATIVE-BIND-01 explicit fresh binding never self-authorizes; server status
 })
 test("NATIVE-BIND-02 absent server binding cannot dispatch an offer; explicit cancel has no retry", async ({ page, baseURL }) => {
   const f = await nativeFixture(page, baseURL!, { boundApp: true })
-  await page.getByTestId("guide-provider-start").click(); await expect(page.getByTestId("guide-provider-native-open")).toHaveCount(0)
+  await expect(page.getByTestId("guide-provider-start")).toBeDisabled(); await expect(page.getByTestId("guide-provider-native-open")).toHaveCount(0)
   await page.getByTestId("native-binding-start").click(); await page.getByTestId("native-binding-cancel").click()
   await expect(page.getByTestId("native-binding-start")).toHaveCount(0)
   expect(f.calls.filter(c => c.path.endsWith("/native-binding/start")).length).toBe(1)
   expect(f.calls.filter(c => c.path.endsWith("/native-binding/cancel")).length).toBe(1)
+  expect(f.calls.filter(c => c.path.includes("/provider/")).length).toBe(0)
+  await expect(page.getByTestId("guide-provider-start")).toBeDisabled()
   expect(await nativeCalls(page)).toBe(0); f.assertSafe()
 })
 
